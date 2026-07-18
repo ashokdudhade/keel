@@ -33,3 +33,29 @@ fn indexes_and_queries_a_fixture_repo() {
     let ignored = queries::find_definition(&conn, "should_not_index").unwrap();
     assert!(ignored.is_empty(), "ignored.rs must be skipped");
 }
+
+#[test]
+fn cli_binary_indexes_and_queries() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("main.rs"), "fn create_order() {}\nfn run() { create_order(); }\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_sb");
+
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let def_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["definition", "create_order"])
+        .output()
+        .unwrap();
+    assert!(def_out.status.success());
+    let stdout = String::from_utf8(def_out.stdout).unwrap();
+    assert!(stdout.contains("create_order"), "got: {stdout}");
+    assert!(stdout.contains(":1:"), "expected line 1 in: {stdout}");
+}
