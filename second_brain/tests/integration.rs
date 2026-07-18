@@ -37,6 +37,40 @@ fn indexes_and_queries_a_fixture_repo() {
 }
 
 #[test]
+fn reindexing_same_repo_does_not_duplicate_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub struct AuthService;\nfn create_order() {}\nfn caller() { create_order(); }\n",
+    )
+    .unwrap();
+
+    let mut conn = Connection::open_in_memory().unwrap();
+
+    let first = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(first, 1);
+    let defs_first = queries::find_definition(&conn, "AuthService").unwrap();
+    let refs_first = queries::find_references(&conn, "create_order").unwrap();
+    assert_eq!(defs_first.len(), 1);
+    assert_eq!(refs_first.len(), 1);
+
+    // Re-index the identical repo into the SAME connection.
+    let second = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(second, 1);
+
+    let defs_second = queries::find_definition(&conn, "AuthService").unwrap();
+    let refs_second = queries::find_references(&conn, "create_order").unwrap();
+    assert_eq!(defs_second.len(), 1, "re-index must not duplicate symbols");
+    assert_eq!(
+        refs_second.len(),
+        refs_first.len(),
+        "re-index must not duplicate references"
+    );
+}
+
+#[test]
 fn cli_binary_indexes_and_queries() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

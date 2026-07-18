@@ -22,7 +22,7 @@ pub struct ParsedFile {
 
 /// Collect all `.rs` files under `root`, honoring `.gitignore` (via `ignore`).
 pub fn collect_rust_files(root: &Path) -> Vec<PathBuf> {
-    WalkBuilder::new(root)
+    let mut files: Vec<PathBuf> = WalkBuilder::new(root)
         .standard_filters(true)
         // Honor `.gitignore` even when `root` is not inside a git repository;
         // by default the `ignore` crate only applies gitignore rules when a
@@ -33,7 +33,10 @@ pub fn collect_rust_files(root: &Path) -> Vec<PathBuf> {
         .filter(|entry| entry.file_type().map(|t| t.is_file()).unwrap_or(false))
         .map(|entry| entry.into_path())
         .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("rs"))
-        .collect()
+        .collect();
+    // Sort for deterministic insertion / `file_id` order across machines.
+    files.sort();
+    files
 }
 
 /// Read, parse, and extract a single file.

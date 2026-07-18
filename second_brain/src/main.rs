@@ -15,7 +15,7 @@ fn main() -> Result<()> {
         Commands::Definition { name } => {
             let defs = commands::run_definition(&name).context("querying definition")?;
             if defs.is_empty() {
-                println!("No definition found for {name}");
+                eprintln!("No definition found for {name}");
             }
             for s in defs {
                 println!(
@@ -31,7 +31,7 @@ fn main() -> Result<()> {
         Commands::References { name } => {
             let refs = commands::run_references(&name).context("querying references")?;
             if refs.is_empty() {
-                println!("No references found for {name}");
+                eprintln!("No references found for {name}");
             }
             for r in refs {
                 println!("{}:{}:{}\t{}", r.file.display(), r.start_line, r.start_col, r.name);
@@ -40,7 +40,7 @@ fn main() -> Result<()> {
         Commands::Callers { name } => {
             let refs = commands::run_references(&name).context("querying callers")?;
             if refs.is_empty() {
-                println!("No callers found for {name}");
+                eprintln!("No callers found for {name}");
             }
             for r in refs {
                 println!("{}:{}:{}\t{}", r.file.display(), r.start_line, r.start_col, r.name);

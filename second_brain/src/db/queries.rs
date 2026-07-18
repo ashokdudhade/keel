@@ -18,6 +18,20 @@ pub fn insert_file(conn: &Connection, node: &FileNode) -> Result<i64> {
     Ok(id)
 }
 
+/// Delete all `symbols` and `references` rows for `file_id`.
+///
+/// Called before re-inserting a file's rows so that re-indexing an unchanged
+/// repository is idempotent (identical repo state yields identical query
+/// output) instead of accumulating duplicate rows.
+pub fn clear_file_rows(conn: &Connection, file_id: i64) -> Result<()> {
+    conn.execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id])?;
+    conn.execute(
+        r#"DELETE FROM "references" WHERE file_id = ?1"#,
+        params![file_id],
+    )?;
+    Ok(())
+}
+
 /// Insert all symbols for a file.
 pub fn insert_symbols(conn: &Connection, file_id: i64, symbols: &[Symbol]) -> Result<()> {
     let mut stmt = conn.prepare(
