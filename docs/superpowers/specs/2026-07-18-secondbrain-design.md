@@ -76,17 +76,24 @@ or replace coding assistants. It will not use machine learning for resolution.
 
 Resolution is layered so there is always a working baseline and a precise upgrade:
 
-1. **Name index (baseline).** Every symbol and reference is stored in SQLite keyed
-   by name. Lookups match by name. Fast, simple, always available. On its own this
-   can return multiple same-named candidates.
-2. **Stack Graphs (precise).** `tree-sitter-stack-graphs` builds scope-aware
+1. **Name index (baseline — v0.1).** Every symbol and reference is stored in SQLite
+   keyed by name. Lookups match by name. Fast, simple, always available. On its own
+   this can return multiple same-named candidates, which the CLI reports as ranked
+   candidates.
+2. **Stack Graphs (precise — v0.2).** `tree-sitter-stack-graphs` builds scope-aware
    name-binding graphs from the parse tree. Resolution walks partial paths in the
-   stack graph so `definition`/`references`/`callers` resolve to the *correct*
-   symbol across files, disambiguating shadowing, imports, and scoping.
+   stack graph so `definition`/`references`/`callers` resolve to the *correct* symbol
+   across files, disambiguating shadowing, imports, and scoping. When present it is
+   authoritative; the name index remains the fallback and the substrate for
+   `kind`/location metadata.
 
-When a stack-graph resolution exists it is authoritative; the name index is the
-fallback (e.g., partial indexes, unsupported constructs) and the substrate for
-`kind`/location metadata.
+> **v0.1 scope decision.** The stack-graphs *framework* is published, but there is
+> no maintained published Rust rule crate (`tree-sitter-stack-graphs-rust` is not on
+> crates.io; only Python/Java/TypeScript rules are). Authoring complete Rust
+> name-binding rules is a substantial, research-grade effort. Therefore **v0.1 ships
+> the name-index layer only**, and the Stack Graphs precision layer is a dedicated
+> **v0.2** effort with its own plan. The architecture below keeps the plugin trait
+> and storage ready for that layer without blocking v0.1.
 
 ---
 
@@ -146,8 +153,8 @@ Tables:
 Indexes: `idx_symbols_name` on `symbols(name)`, `idx_references_name` on
 `references(name)`.
 
-Stack-graph data uses the `stack-graphs` SQLite storage backend (its own tables /
-db handle) for cross-file resolution.
+In v0.2, stack-graph data uses the `stack-graphs` SQLite storage backend (its own
+tables / db handle) for cross-file resolution; v0.1 does not create these tables.
 
 `content_hash` is populated from v0.1 but only *consumed* for incremental updates in
 v0.2. Schema changes go through a simple, versioned migration path.
@@ -160,15 +167,16 @@ pub trait LanguagePlugin {
     fn extensions(&self) -> &[&str];
     fn extract_symbols(&self, source_code: &str) -> Result<Vec<Symbol>, SecondBrainError>;
     fn extract_references(&self, source_code: &str) -> Result<Vec<Reference>, SecondBrainError>;
-    /// Contribute nodes/edges to the stack graph for scope-aware resolution.
-    fn build_stack_graph(&self, ctx: &mut StackGraphCtx, source_code: &str) -> Result<(), SecondBrainError>;
+    // v0.2: fn build_stack_graph(&self, ctx: &mut StackGraphCtx, source_code: &str)
+    //       -> Result<(), SecondBrainError>;  // scope-aware resolution
 }
 ```
 
 `rust.rs` implements this with Tree-sitter S-expression queries (functions,
-structs, traits, enums, impls, and their references) and the
-`tree-sitter-stack-graphs-rust` rules for name binding. A registry maps file
+structs, traits, enums, impls, and their references). A registry maps file
 extensions to plugins, so the core dispatches without knowing language specifics.
+The stack-graph rule method is added to the trait in v0.2 when the precision layer
+lands.
 
 ### 4.4 `index/` — indexing engine
 
@@ -203,12 +211,13 @@ context-rich top-level error reporting.
 
 **Indexing (`sb index <path>`):**
 crawl files → for each file in parallel: parse → extract symbols+references →
-build stack graph → batch insert into SQLite (`files`/`symbols`/`references` +
-stack-graph store).
+batch insert into SQLite (`files`/`symbols`/`references`). (v0.2 adds building the
+stack graph and persisting to the stack-graph store.)
 
 **Querying (`sb definition|references|callers <name>`):**
-load candidates from SQLite by name → attempt precise resolution via stack graph →
-fall back to name index if no precise path → format and print `path:line:col`.
+load candidates from SQLite by name → format and print `path:line:col`. Multiple
+same-named matches are all reported. (v0.2 adds precise stack-graph resolution ahead
+of the name-index fallback.) `callers` returns reference sites of a function name.
 
 ---
 
@@ -253,12 +262,14 @@ implementation plan when reached.
 - Cargo scaffolding, error types, domain types.
 - SQLite storage layer (schema, migrations, type-safe queries).
 - `LanguagePlugin` trait + Rust plugin (Tree-sitter extraction).
-- Stack Graphs integration for scope-aware cross-file resolution.
+- Name-index resolution (symbols/references matched by name).
 - Parallel indexing engine (`rayon`, `ignore`, `walkdir`).
 - CLI: `index`, `definition`, `references`, `callers`.
 
-### v0.2 — Incremental & richer graph
+### v0.2 — Precise resolution, incremental & richer graph
 
+- **Stack Graphs precision layer** for scope-aware cross-file resolution
+  (`tree-sitter-stack-graphs` framework + authored Rust `.tsg` rules).
 - Incremental indexing via `content_hash` diffing + `notify` file watching.
 - Dependency graph and `impact` analysis.
 - `implementations` and `dependencies` queries.
@@ -284,7 +295,8 @@ implementation plan when reached.
 | -------------------- | -------------------------------------------- |
 | Language             | Rust (Edition 2021)                          |
 | Parsing              | `tree-sitter`, `tree-sitter-rust`            |
-| Symbol resolution    | `stack-graphs`, `tree-sitter-stack-graphs`, `tree-sitter-stack-graphs-rust` |
+| Resolution (v0.1)    | Name index in SQLite                         |
+| Resolution (v0.2)    | `stack-graphs`, `tree-sitter-stack-graphs` + authored Rust `.tsg` rules |
 | Storage              | `rusqlite` (bundled SQLite)                  |
 | Parallelism          | `rayon`                                      |
 | CLI                  | `clap` (derive)                              |
@@ -313,9 +325,11 @@ implementation plan when reached.
 
 ## 11. Open Questions / Deferred Decisions
 
-- Exact stack-graphs storage layout coexistence with our name-index tables (single
-  vs. separate `.db` files) — settle during v0.1 implementation; default to a single
-  SQLite file with separate table namespaces.
-- Whether `callers` in v0.1 uses stack-graph call resolution or name-based
-  reference filtering to function symbols — default to stack-graph-backed with
-  name-index fallback.
+- **Stack Graphs Rust rules (v0.2):** no maintained published crate exists; v0.2 must
+  author/vendor the Rust `.tsg` name-binding rules and pin compatible `tree-sitter`
+  versions (`tree-sitter-stack-graphs` currently requires `tree-sitter ^0.24`).
+- **Stack-graph storage layout (v0.2):** single SQLite file with separate table
+  namespaces vs. a separate `.db` — default to a single file; settle during v0.2.
+- **`callers` semantics (v0.1):** name-based — reference sites whose name matches the
+  target function. This can over-report same-named functions until the v0.2
+  precision layer disambiguates.
