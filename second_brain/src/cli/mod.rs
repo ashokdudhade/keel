@@ -9,6 +9,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "sb", about = "SecondBrain: deterministic code intelligence")]
 pub struct Cli {
+    /// The subcommand to run.
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -17,11 +18,23 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Index a repository at PATH into `.secondbrain/index.db`.
-    Index { path: PathBuf },
+    Index {
+        /// Path to the repository to index.
+        path: PathBuf,
+    },
     /// Print definition location(s) for a symbol name.
-    Definition { name: String },
+    Definition {
+        /// Symbol name to look up.
+        name: String,
+    },
     /// Print reference location(s) for a name.
-    References { name: String },
+    References {
+        /// Name to find references for.
+        name: String,
+    },
     /// Print call/use sites of a function name (name-based in v0.1).
-    Callers { name: String },
+    Callers {
+        /// Function name to find call/use sites for.
+        name: String,
+    },
 }

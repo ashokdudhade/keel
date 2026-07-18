@@ -5,13 +5,21 @@ use std::path::PathBuf;
 /// The kind of a source symbol. Extensible via `Other` for future languages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymbolKind {
+    /// A function or method definition.
     Function,
+    /// A `struct` definition.
     Struct,
+    /// A `trait` definition.
     Trait,
+    /// An `enum` definition.
     Enum,
+    /// An `impl` block.
     Impl,
+    /// A module (`mod`) definition.
     Module,
+    /// A `const` (or `static`) definition.
     Const,
+    /// Any other kind, identified by its raw string label.
     Other(String),
 }
 
@@ -48,10 +56,15 @@ impl SymbolKind {
 /// A defined symbol. `file` is empty during extraction and populated on read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbol {
+    /// The symbol's identifier name.
     pub name: String,
+    /// The kind of symbol (function, struct, etc.).
     pub kind: SymbolKind,
+    /// Path to the file that defines the symbol.
     pub file: PathBuf,
+    /// 1-based line of the definition.
     pub start_line: u32,
+    /// 1-based column of the definition.
     pub start_col: u32,
 }
 
@@ -59,16 +72,22 @@ pub struct Symbol {
 /// extraction and populated on read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reference {
+    /// The referenced identifier name.
     pub name: String,
+    /// Path to the file containing the reference.
     pub file: PathBuf,
+    /// 1-based line of the reference.
     pub start_line: u32,
+    /// 1-based column of the reference.
     pub start_col: u32,
 }
 
 /// An indexed source file and its content hash (hash consumed in v0.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileNode {
+    /// Path to the indexed source file.
     pub path: PathBuf,
+    /// SHA-256 hash of the file contents (consumed for incremental indexing in v0.2).
     pub content_hash: String,
 }
 

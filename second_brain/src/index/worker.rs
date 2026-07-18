@@ -12,8 +12,11 @@ use std::path::{Path, PathBuf};
 
 /// A parsed file with its extracted symbols and references.
 pub struct ParsedFile {
+    /// The indexed file and its content hash.
     pub node: FileNode,
+    /// Symbols defined in the file.
     pub symbols: Vec<Symbol>,
+    /// References found in the file.
     pub references: Vec<Reference>,
 }
 

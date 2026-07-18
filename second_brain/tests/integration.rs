@@ -1,3 +1,5 @@
+//! End-to-end integration tests for the SecondBrain engine and `sb` CLI.
+
 use rusqlite::Connection;
 use second_brain::db::queries;
 use second_brain::graph::types::SymbolKind;
