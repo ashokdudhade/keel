@@ -43,6 +43,17 @@ pub enum SecondBrainError {
     /// The MCP stdio server failed.
     #[error("MCP server error: {0}")]
     Mcp(String),
+
+    /// The on-disk schema is newer than this build understands.
+    #[error(
+        "database schema version {found} is newer than supported version {supported}"
+    )]
+    UnsupportedSchema {
+        /// `PRAGMA user_version` found in the database.
+        found: i64,
+        /// Latest schema version this build can open.
+        supported: i64,
+    },
 }
 
 /// Convenience `Result` alias used throughout the library.

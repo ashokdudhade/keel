@@ -10,7 +10,7 @@
 //! therefore disambiguated by probing for the `files` table: if it exists the
 //! database is a legacy v0.1 that must be upgraded, otherwise it is truly fresh.
 
-use crate::error::Result;
+use crate::error::{Result, SecondBrainError};
 use rusqlite::Connection;
 
 /// The latest schema version this build understands.
@@ -24,11 +24,13 @@ const SCHEMA_VERSION: i64 = 2;
 /// - version 0 with an existing `files` table (unstamped legacy v0.1 database):
 ///   runs the v0.1 → v2 upgrade in place, preserving existing data;
 /// - version 1 (stamped v0.1 database): runs the same v0.1 → v2 upgrade;
-/// - version 2: no-op.
+/// - version 2: no-op;
+/// - version > [`SCHEMA_VERSION`]: returns [`SecondBrainError::UnsupportedSchema`]
+///   without stamping.
 ///
 /// The whole migration runs inside a single transaction so a partial failure
 /// cannot leave a half-migrated database, and `user_version` is stamped to
-/// [`SCHEMA_VERSION`] at the end.
+/// [`SCHEMA_VERSION`] at the end (only when the starting version is supported).
 ///
 /// `references` is a reserved SQL keyword, so it is always quoted.
 pub fn initialize(conn: &Connection) -> Result<()> {
@@ -47,6 +49,13 @@ pub fn initialize(conn: &Connection) -> Result<()> {
 /// Apply the migration steps for the given starting `version` and stamp the
 /// schema version. Must be called inside a transaction.
 fn migrate(conn: &Connection, version: i64) -> Result<()> {
+    if version > SCHEMA_VERSION {
+        return Err(SecondBrainError::UnsupportedSchema {
+            found: version,
+            supported: SCHEMA_VERSION,
+        });
+    }
+
     match version {
         // Version 0 is ambiguous: a truly fresh database, or an unstamped
         // legacy v0.1 database that already contains data. Probe for `files`.
@@ -325,5 +334,23 @@ mod tests {
             .query_row("SELECT path FROM files", [], |row| row.get(0))
             .expect("file preserved");
         assert_eq!(path, "src/a.rs");
+    }
+
+    #[test]
+    fn newer_schema_version_is_rejected() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch("PRAGMA user_version = 99;")
+            .expect("stamp future version");
+
+        let err = initialize(&conn).expect_err("must reject newer schema");
+        match err {
+            crate::error::SecondBrainError::UnsupportedSchema { found, supported } => {
+                assert_eq!(found, 99);
+                assert_eq!(supported, SCHEMA_VERSION);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        // Must not stamp down to SCHEMA_VERSION.
+        assert_eq!(user_version(&conn), 99);
     }
 }
