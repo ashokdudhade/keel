@@ -7,5 +7,6 @@ pub mod error;
 pub mod graph;
 pub mod index;
 pub mod languages;
+pub mod mcp;
 
 pub use error::{Result, SecondBrainError};

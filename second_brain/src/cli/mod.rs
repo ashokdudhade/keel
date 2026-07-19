@@ -63,4 +63,6 @@ pub enum Commands {
         #[arg(long, default_value_t = 7645)]
         port: u16,
     },
+    /// Serve the MCP stdio server (Content-Length framed JSON-RPC).
+    Mcp,
 }

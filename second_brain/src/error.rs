@@ -39,6 +39,10 @@ pub enum SecondBrainError {
     /// The JSON HTTP API server failed.
     #[error("API server error: {0}")]
     Api(String),
+
+    /// The MCP stdio server failed.
+    #[error("MCP server error: {0}")]
+    Mcp(String),
 }
 
 /// Convenience `Result` alias used throughout the library.

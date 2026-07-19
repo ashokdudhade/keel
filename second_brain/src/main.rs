@@ -99,6 +99,9 @@ fn main() -> Result<()> {
         Commands::Serve { port } => {
             commands::run_serve(port).context("serving JSON API")?;
         }
+        Commands::Mcp => {
+            commands::run_mcp().context("serving MCP")?;
+        }
     }
     Ok(())
 }

@@ -8,6 +8,7 @@ use crate::graph::impact;
 use crate::graph::resolve;
 use crate::graph::types::{ImplRecord, Reference, Symbol};
 use crate::index;
+use crate::mcp;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
@@ -103,4 +104,13 @@ pub fn run_serve(port: u16) -> Result<()> {
     let addr = format!("127.0.0.1:{port}");
     eprintln!("Serving SecondBrain JSON API on http://{addr}");
     api::serve(&addr, &db_path())
+}
+
+/// Serve the MCP stdio server using `.secondbrain/index.db` under CWD.
+pub fn run_mcp() -> Result<()> {
+    // Ensure the DB directory exists before opening; schema init is in mcp::serve.
+    std::fs::create_dir_all(DB_DIR)
+        .map_err(|source| SecondBrainError::Io { path: PathBuf::from(DB_DIR), source })?;
+    eprintln!("Serving SecondBrain MCP on stdio (db={})", db_path().display());
+    mcp::serve(&db_path())
 }
