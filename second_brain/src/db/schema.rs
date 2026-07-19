@@ -2,8 +2,13 @@
 //!
 //! The schema is versioned via SQLite's `PRAGMA user_version`. `initialize`
 //! acts as a migration runner: a fresh database (version 0) is created directly
-//! at the latest version, while a v0.1 database (version 1) is upgraded in place
+//! at the latest version, while an existing v0.1 database is upgraded in place
 //! without losing data. The runner is idempotent.
+//!
+//! v0.1 never stamped a version, so a real on-disk v0.1 database reports
+//! `user_version = 0` while already holding populated tables. Version 0 is
+//! therefore disambiguated by probing for the `files` table: if it exists the
+//! database is a legacy v0.1 that must be upgraded, otherwise it is truly fresh.
 
 use crate::error::Result;
 use rusqlite::Connection;
@@ -14,27 +19,77 @@ const SCHEMA_VERSION: i64 = 2;
 /// Create or migrate the schema to the latest version. Idempotent.
 ///
 /// Reads `PRAGMA user_version` and:
-/// - version 0 (fresh database): creates all v2 tables and indexes;
-/// - version 1 (v0.1 database): adds the new columns/tables/indexes in place,
-///   preserving existing data;
+/// - version 0 with no `files` table (truly fresh): creates all v2 tables and
+///   indexes;
+/// - version 0 with an existing `files` table (unstamped legacy v0.1 database):
+///   runs the v0.1 → v2 upgrade in place, preserving existing data;
+/// - version 1 (stamped v0.1 database): runs the same v0.1 → v2 upgrade;
 /// - version 2: no-op.
 ///
-/// Finally stamps `user_version` to [`SCHEMA_VERSION`].
+/// The whole migration runs inside a single transaction so a partial failure
+/// cannot leave a half-migrated database, and `user_version` is stamped to
+/// [`SCHEMA_VERSION`] at the end.
 ///
 /// `references` is a reserved SQL keyword, so it is always quoted.
 pub fn initialize(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
-    if version == 0 {
-        create_v2(conn)?;
-    } else if version == 1 {
-        migrate_v1_to_v2(conn)?;
+    conn.execute_batch("BEGIN;")?;
+    if let Err(e) = migrate(conn, version) {
+        // Best-effort rollback; surface the original migration error.
+        let _ = conn.execute_batch("ROLLBACK;");
+        return Err(e);
+    }
+    conn.execute_batch("COMMIT;")?;
+    Ok(())
+}
+
+/// Apply the migration steps for the given starting `version` and stamp the
+/// schema version. Must be called inside a transaction.
+fn migrate(conn: &Connection, version: i64) -> Result<()> {
+    match version {
+        // Version 0 is ambiguous: a truly fresh database, or an unstamped
+        // legacy v0.1 database that already contains data. Probe for `files`.
+        0 => {
+            if table_exists(conn, "files")? {
+                upgrade_to_v2(conn)?;
+            } else {
+                create_v2(conn)?;
+            }
+        }
+        1 => upgrade_to_v2(conn)?,
+        _ => {}
     }
 
     // PRAGMA does not accept bound parameters, and SCHEMA_VERSION is a trusted
     // integer constant, so formatting it into the statement is safe.
     conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))?;
     Ok(())
+}
+
+/// Return whether a table with the given `name` exists.
+fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [name],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+/// Return whether `table` already has a column named `column`.
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    // `table` is a trusted internal identifier; quote it to tolerate reserved
+    // words such as `references`. PRAGMA table_info cannot bind parameters.
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info(\"{table}\")"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Create the full v2 schema on a fresh database.
@@ -89,13 +144,30 @@ fn create_v2(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Upgrade an existing v0.1 (version 1) database to v2 in place.
-fn migrate_v1_to_v2(conn: &Connection) -> Result<()> {
+/// Upgrade an existing v0.1 database (stamped version 1, or an unstamped legacy
+/// database still reporting version 0) to v2 in place, preserving data.
+///
+/// Each `ALTER TABLE ... ADD COLUMN` is guarded by a `PRAGMA table_info` check
+/// so the upgrade is safe to re-run: SQLite has no `ADD COLUMN IF NOT EXISTS`
+/// and would otherwise error with "duplicate column name". New tables and
+/// indexes use `IF NOT EXISTS` and are already idempotent.
+fn upgrade_to_v2(conn: &Connection) -> Result<()> {
+    if !column_exists(conn, "symbols", "module_path")? {
+        conn.execute_batch("ALTER TABLE symbols ADD COLUMN module_path TEXT NOT NULL DEFAULT '';")?;
+    }
+    if !column_exists(conn, "references", "kind")? {
+        conn.execute_batch(
+            "ALTER TABLE \"references\" ADD COLUMN kind TEXT NOT NULL DEFAULT 'call';",
+        )?;
+    }
+    if !column_exists(conn, "references", "container")? {
+        conn.execute_batch(
+            "ALTER TABLE \"references\" ADD COLUMN container TEXT NOT NULL DEFAULT '';",
+        )?;
+    }
+
     conn.execute_batch(
         r#"
-        ALTER TABLE symbols ADD COLUMN module_path TEXT NOT NULL DEFAULT '';
-        ALTER TABLE "references" ADD COLUMN kind TEXT NOT NULL DEFAULT 'call';
-        ALTER TABLE "references" ADD COLUMN container TEXT NOT NULL DEFAULT '';
         CREATE TABLE IF NOT EXISTS imports (
             id          INTEGER PRIMARY KEY,
             file_id     INTEGER NOT NULL REFERENCES files(id),
@@ -192,6 +264,39 @@ mod tests {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         initialize(&conn).expect("init schema");
         initialize(&conn).expect("re-init schema");
+        assert_eq!(user_version(&conn), 2);
+    }
+
+    #[test]
+    fn legacy_v0_unstamped_db_upgrades_to_v2_preserving_files() {
+        // Simulate a REAL on-disk v0.1 database: the v0.1 tables exist and hold
+        // data, but `user_version` was never stamped, so it still reports 0.
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch(V1_SCHEMA).expect("create v0.1 schema");
+        conn.execute(
+            "INSERT INTO files (path, content_hash) VALUES ('src/legacy.rs', 'h0')",
+            [],
+        )
+        .expect("seed files");
+        // Deliberately DO NOT set user_version: it stays 0 like a real v0.1 db.
+        assert_eq!(user_version(&conn), 0);
+
+        initialize(&conn).expect("migrate legacy v0 db");
+
+        assert_eq!(user_version(&conn), 2);
+        assert!(table_has_column(&conn, "symbols", "module_path"));
+        assert!(table_has_column(&conn, "references", "kind"));
+        assert!(table_has_column(&conn, "references", "container"));
+        assert!(table_exists(&conn, "imports"));
+        assert!(table_exists(&conn, "impls"));
+
+        let path: String = conn
+            .query_row("SELECT path FROM files", [], |row| row.get(0))
+            .expect("file preserved");
+        assert_eq!(path, "src/legacy.rs");
+
+        // Re-running must stay green (idempotent) on a migrated legacy db.
+        initialize(&conn).expect("re-init migrated legacy db");
         assert_eq!(user_version(&conn), 2);
     }
 
