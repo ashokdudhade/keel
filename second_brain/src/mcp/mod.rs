@@ -136,6 +136,7 @@ pub fn serve(db_path: &Path) -> Result<()> {
         }
     }
     let mut conn = Connection::open(db_path)?;
+    crate::db::configure_connection(&conn)?;
     schema::initialize(&conn)?;
 
     let stdin = io::stdin();
@@ -386,6 +387,7 @@ struct IndexStatsDto {
     indexed: usize,
     skipped: usize,
     removed: usize,
+    errors: usize,
 }
 
 impl From<&IndexStats> for IndexStatsDto {
@@ -394,6 +396,7 @@ impl From<&IndexStats> for IndexStatsDto {
             indexed: s.indexed,
             skipped: s.skipped,
             removed: s.removed,
+            errors: s.errors,
         }
     }
 }

@@ -37,8 +37,8 @@ pub fn find_dependencies(conn: &Connection, target: &str) -> Result<Vec<Dependen
         }
 
         for name in queries::reference_names_in_file(conn, file)? {
-            let resolved = resolve::resolve_definition(conn, &name, file)?;
-            let Some(top) = resolved.first() else {
+            let ranked = resolve::resolve_definition_ranked(conn, &name, file)?;
+            let Some(top) = resolve::acceptable_top_match(&ranked) else {
                 continue;
             };
             if same_path(&top.file, file) {

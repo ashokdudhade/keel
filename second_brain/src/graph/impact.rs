@@ -2,48 +2,57 @@
 
 use crate::db::queries;
 use crate::error::Result;
+use crate::graph::resolve;
 use crate::graph::types::Symbol;
 use rusqlite::Connection;
 use std::collections::{BTreeSet, HashSet};
+use std::path::Path;
 
 /// Return the transitive set of symbols that reference `name`.
 ///
-/// Expansion: references to the current name → their `container` symbols →
-/// references to those containers, until fixpoint. Uses a sorted worklist and
-/// a visited set so cycles terminate. Results are ordered by
-/// `(name, path, line, col)` and de-duplicated by symbol identity
-/// `(name, module_path, path, line, col)`.
+/// Expansion uses qualified identities (`module_path::name` when module is
+/// non-empty). References are accepted only when
+/// [`resolve::resolve_definition_ranked`] from the reference's file yields an
+/// [`resolve::acceptable_top_match`] whose identity equals the worklist target.
+/// Results are ordered by `(name, path, line, col)` and de-duplicated by symbol
+/// identity `(name, module_path, path, line, col)`.
 pub fn find_impact(conn: &Connection, name: &str) -> Result<Vec<Symbol>> {
     let mut visited: HashSet<String> = HashSet::new();
-    visited.insert(name.to_string());
-
     let mut worklist: BTreeSet<String> = BTreeSet::new();
-    worklist.insert(name.to_string());
+
+    let defs = queries::find_definition(conn, name)?;
+    if defs.is_empty() {
+        let id = name.to_string();
+        visited.insert(id.clone());
+        worklist.insert(id);
+    } else {
+        for d in &defs {
+            let id = symbol_identity(d);
+            visited.insert(id.clone());
+            worklist.insert(id);
+        }
+    }
 
     let mut impact: Vec<Symbol> = Vec::new();
     let mut seen_symbols: HashSet<(String, String, String, u32, u32)> = HashSet::new();
 
-    while let Some(current) = pop_front(&mut worklist) {
-        for reference in queries::find_references(conn, &current)? {
-            let container = container_name(&reference.container);
+    while let Some(current_id) = pop_front(&mut worklist) {
+        let current_name = bare_name(&current_id);
+        for reference in queries::find_references(conn, current_name)? {
+            let from = reference.file.to_string_lossy();
+            let ranked = resolve::resolve_definition_ranked(conn, current_name, from.as_ref())?;
+            if !resolves_to_target(&ranked, &current_id) {
+                continue;
+            }
+
+            let container = reference.container.as_str();
             if container.is_empty() || visited.contains(container) {
                 continue;
             }
             visited.insert(container.to_string());
             worklist.insert(container.to_string());
 
-            for sym in queries::find_definition(conn, container)? {
-                let key = (
-                    sym.name.clone(),
-                    sym.module_path.clone(),
-                    sym.file.to_string_lossy().into_owned(),
-                    sym.start_line,
-                    sym.start_col,
-                );
-                if seen_symbols.insert(key) {
-                    impact.push(sym);
-                }
-            }
+            push_container_symbols(conn, container, &mut impact, &mut seen_symbols)?;
         }
     }
 
@@ -57,15 +66,95 @@ pub fn find_impact(conn: &Connection, name: &str) -> Result<Vec<Symbol>> {
     Ok(impact)
 }
 
+fn push_container_symbols(
+    conn: &Connection,
+    container: &str,
+    impact: &mut Vec<Symbol>,
+    seen_symbols: &mut HashSet<(String, String, String, u32, u32)>,
+) -> Result<()> {
+    // Qualified container: prefer module + bare name lookup.
+    if let Some((module, name)) = container.rsplit_once("::") {
+        if !looks_like_file_path(module) {
+            let qualified = queries::find_definition_by_qualified(conn, module, name)?;
+            if !qualified.is_empty() {
+                for sym in qualified {
+                    insert_impact_symbol(sym, impact, seen_symbols);
+                }
+                return Ok(());
+            }
+            for sym in queries::find_definition(conn, name)? {
+                if symbol_identity(&sym) == container {
+                    insert_impact_symbol(sym, impact, seen_symbols);
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    if looks_like_file_path(container) {
+        // File-path container (empty extraction scope): no single symbol to add.
+        return Ok(());
+    }
+
+    let bare = bare_name(container);
+    for sym in queries::find_definition(conn, bare)? {
+        insert_impact_symbol(sym, impact, seen_symbols);
+    }
+    Ok(())
+}
+
+fn insert_impact_symbol(
+    sym: Symbol,
+    impact: &mut Vec<Symbol>,
+    seen_symbols: &mut HashSet<(String, String, String, u32, u32)>,
+) {
+    let key = (
+        sym.name.clone(),
+        sym.module_path.clone(),
+        sym.file.to_string_lossy().into_owned(),
+        sym.start_line,
+        sym.start_col,
+    );
+    if seen_symbols.insert(key) {
+        impact.push(sym);
+    }
+}
+
+fn symbol_identity(sym: &Symbol) -> String {
+    if sym.module_path.is_empty() {
+        sym.name.clone()
+    } else {
+        format!("{}::{}", sym.module_path, sym.name)
+    }
+}
+
+fn bare_name(identity: &str) -> &str {
+    identity.rsplit("::").next().unwrap_or(identity)
+}
+
+fn looks_like_file_path(s: &str) -> bool {
+    s.contains('/') || s.contains('\\') || Path::new(s).extension().is_some()
+}
+
+fn resolves_to_target(ranked: &[(u8, Symbol)], target_id: &str) -> bool {
+    let Some(sym) = resolve::acceptable_top_match(ranked) else {
+        return false;
+    };
+    let id = symbol_identity(sym);
+    if id == target_id {
+        return true;
+    }
+    // Bare-name seed (no definitions found): accept precise/unique defs of that name.
+    if !target_id.contains("::") && sym.name == target_id {
+        return true;
+    }
+    false
+}
+
 fn pop_front(worklist: &mut BTreeSet<String>) -> Option<String> {
     let next = worklist.iter().next()?.clone();
     worklist.remove(&next);
     Some(next)
-}
-
-/// Bare identifier for a container (handles qualified `crate::mod::fn` values).
-fn container_name(container: &str) -> &str {
-    container.rsplit("::").next().unwrap_or(container)
 }
 
 #[cfg(test)]
@@ -140,7 +229,7 @@ mod tests {
                     start_line: 2,
                     start_col: 10,
                     kind: ReferenceKind::Call,
-                    container: "b".into(),
+                    container: "crate::b".into(),
                 },
                 Reference {
                     name: "b".into(),
@@ -148,7 +237,7 @@ mod tests {
                     start_line: 3,
                     start_col: 10,
                     kind: ReferenceKind::Call,
-                    container: "c".into(),
+                    container: "crate::c".into(),
                 },
             ],
         )
@@ -206,7 +295,7 @@ mod tests {
                     start_line: 2,
                     start_col: 10,
                     kind: ReferenceKind::Call,
-                    container: "y".into(),
+                    container: "crate::y".into(),
                 },
                 Reference {
                     name: "y".into(),
@@ -214,7 +303,7 @@ mod tests {
                     start_line: 3,
                     start_col: 10,
                     kind: ReferenceKind::Call,
-                    container: "z".into(),
+                    container: "crate::z".into(),
                 },
                 Reference {
                     name: "z".into(),
@@ -222,7 +311,7 @@ mod tests {
                     start_line: 1,
                     start_col: 10,
                     kind: ReferenceKind::Call,
-                    container: "x".into(),
+                    container: "crate::x".into(),
                 },
                 Reference {
                     name: "y".into(),
@@ -230,7 +319,7 @@ mod tests {
                     start_line: 1,
                     start_col: 20,
                     kind: ReferenceKind::Call,
-                    container: "x".into(),
+                    container: "crate::x".into(),
                 },
             ],
         )

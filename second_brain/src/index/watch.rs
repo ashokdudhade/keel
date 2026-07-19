@@ -31,8 +31,8 @@ pub fn watch_repository(root: &Path, conn: &mut Connection) -> Result<()> {
     // Initial index so the DB is warm before the first change.
     let stats = index::index_repository(root, conn)?;
     eprintln!(
-        "watch: initial index — indexed={}, skipped={}, removed={}",
-        stats.indexed, stats.skipped, stats.removed
+        "watch: initial index — indexed={}, skipped={}, removed={}, errors={}",
+        stats.indexed, stats.skipped, stats.removed, stats.errors
     );
 
     let mut pending = false;
@@ -60,8 +60,8 @@ pub fn watch_repository(root: &Path, conn: &mut Connection) -> Result<()> {
                     pending = false;
                     let stats = reindex_on_change(root, conn)?;
                     eprintln!(
-                        "watch: re-indexed — indexed={}, skipped={}, removed={}",
-                        stats.indexed, stats.skipped, stats.removed
+                        "watch: re-indexed — indexed={}, skipped={}, removed={}, errors={}",
+                        stats.indexed, stats.skipped, stats.removed, stats.errors
                     );
                 }
             }

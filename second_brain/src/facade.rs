@@ -25,6 +25,7 @@ impl Index {
     /// Open (or create) an on-disk index database at `path`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let conn = Connection::open(path.as_ref())?;
+        crate::db::configure_connection(&conn)?;
         schema::initialize(&conn)?;
         Ok(Self { conn })
     }
@@ -32,6 +33,7 @@ impl Index {
     /// Open an in-memory index (useful for tests and ephemeral analysis).
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
+        crate::db::configure_connection(&conn)?;
         schema::initialize(&conn)?;
         Ok(Self { conn })
     }

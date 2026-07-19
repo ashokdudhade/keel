@@ -24,6 +24,7 @@ fn open_db() -> Result<Connection> {
     std::fs::create_dir_all(DB_DIR)
         .map_err(|source| SecondBrainError::Io { path: PathBuf::from(DB_DIR), source })?;
     let conn = Connection::open(db_path())?;
+    crate::db::configure_connection(&conn)?;
     Ok(conn)
 }
 

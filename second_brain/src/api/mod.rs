@@ -1,6 +1,6 @@
 //! JSON HTTP API exposing symbol intelligence from a SecondBrain index.
 
-use crate::db::{queries, schema};
+use crate::db::{self, queries, schema};
 use crate::error::{Result, SecondBrainError};
 use crate::graph::deps::{self, Dependency};
 use crate::graph::resolve;
@@ -147,60 +147,70 @@ fn path_string(path: &std::path::Path) -> String {
 pub fn serve(addr: &str, db_path: &Path) -> Result<()> {
     let server = Server::http(addr).map_err(|e| SecondBrainError::Api(e.to_string()))?;
     for request in server.incoming_requests() {
-        if let Err(e) = handle_request(request, db_path) {
-            eprintln!("api request error: {e}");
-        }
+        handle_request(request, db_path);
     }
     Ok(())
 }
 
-fn handle_request(request: Request, db_path: &Path) -> Result<()> {
+/// Always responds; never drops a [`Request`] without a response body.
+fn handle_request(request: Request, db_path: &Path) {
     let method = request.method().clone();
     let url = request.url().to_string();
 
+    let (status, body) = match build_response(method, &url, db_path) {
+        Ok((status, body)) => (status, body),
+        Err(e) => {
+            eprintln!("api request error: {e}");
+            (
+                StatusCode(500),
+                format!(r#"{{"error":{}}}"#, json_string(&e.to_string())),
+            )
+        }
+    };
+
+    if let Err(e) = respond(request, status, &body, "application/json") {
+        eprintln!("api respond error: {e}");
+    }
+}
+
+fn build_response(method: Method, url: &str, db_path: &Path) -> Result<(StatusCode, String)> {
     if method != Method::Get {
-        return respond(
-            request,
+        return Ok((
             StatusCode(405),
-            r#"{"error":"method not allowed"}"#,
-            "application/json",
-        );
+            r#"{"error":"method not allowed"}"#.to_string(),
+        ));
     }
 
-    if url == "/health" {
+    let path = strip_query_fragment(url);
+
+    if path == "/health" {
         let body = serde_json::to_string(&HealthResponse {
             status: "ok".to_string(),
         })
         .map_err(|e| SecondBrainError::Api(e.to_string()))?;
-        return respond(request, StatusCode(200), &body, "application/json");
+        return Ok((StatusCode(200), body));
     }
 
-    if let Some(name) = url.strip_prefix("/symbol/") {
+    if let Some(name) = path.strip_prefix("/symbol/") {
         let name = percent_decode(name);
         if name.is_empty() {
-            return respond(
-                request,
+            return Ok((
                 StatusCode(400),
-                r#"{"error":"missing symbol name"}"#,
-                "application/json",
-            );
+                r#"{"error":"missing symbol name"}"#.to_string(),
+            ));
         }
         let payload = symbol_intelligence(db_path, &name)?;
         let body =
             serde_json::to_string(&payload).map_err(|e| SecondBrainError::Api(e.to_string()))?;
-        return respond(request, StatusCode(200), &body, "application/json");
+        return Ok((StatusCode(200), body));
     }
 
-    respond(
-        request,
-        StatusCode(404),
-        r#"{"error":"not found"}"#,
-        "application/json",
-    )
+    Ok((StatusCode(404), r#"{"error":"not found"}"#.to_string()))
 }
 
 fn symbol_intelligence(db_path: &Path, name: &str) -> Result<SymbolResponse> {
     let conn = Connection::open(db_path)?;
+    db::configure_connection(&conn)?;
     schema::initialize(&conn)?;
 
     let definition = queries::find_definition(&conn, name)?;
@@ -243,6 +253,22 @@ fn respond(request: Request, status: StatusCode, body: &str, content_type: &str)
         .map_err(|e| SecondBrainError::Api(e.to_string()))
 }
 
+/// Strip `?query` and `#fragment` from a URL path.
+fn strip_query_fragment(url: &str) -> &str {
+    let without_fragment = url.split('#').next().unwrap_or(url);
+    without_fragment.split('?').next().unwrap_or(without_fragment)
+}
+
+fn json_string(s: &str) -> String {
+    match serde_json::to_string(s) {
+        Ok(v) => v,
+        Err(_) => {
+            let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("\"{escaped}\"")
+        }
+    }
+}
+
 /// Decode a single path segment (`%20` → space). Leaves unknown escapes intact.
 fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
@@ -268,5 +294,19 @@ fn from_hex(b: u8) -> Option<u8> {
         b'a'..=b'f' => Some(b - b'a' + 10),
         b'A'..=b'F' => Some(b - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_query_and_fragment_from_symbol_path() {
+        assert_eq!(
+            strip_query_fragment("/symbol/Foo?x=1#frag"),
+            "/symbol/Foo"
+        );
+        assert_eq!(strip_query_fragment("/symbol/Bar"), "/symbol/Bar");
     }
 }

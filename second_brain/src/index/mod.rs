@@ -5,14 +5,11 @@ pub mod watch;
 pub mod worker;
 
 use crate::db::{queries, schema};
-use crate::error::{Result, SecondBrainError};
+use crate::error::Result;
 use crate::languages::Registry;
-use rayon::prelude::*;
 use rusqlite::Connection;
-use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Counts of files processed by an incremental indexing pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -23,6 +20,8 @@ pub struct IndexStats {
     pub skipped: usize,
     /// Files present in the DB but no longer on disk, whose rows were deleted.
     pub removed: usize,
+    /// Files that failed to hash or parse (indexing continued for others).
+    pub errors: usize,
 }
 
 /// Index every registered-language source file under `root` into `conn`.
@@ -32,6 +31,8 @@ pub struct IndexStats {
 ///
 /// Incremental: hashes candidate files first, skips unchanged paths, parses and
 /// persists new/changed files, and deletes DB rows for files gone from disk.
+/// Paths are stored relative to `root`. Per-file failures are counted in
+/// [`IndexStats::errors`] and do not abort the pass.
 pub fn index_repository(root: &Path, conn: &mut Connection) -> Result<IndexStats> {
     let registry = Registry::with_defaults();
     index_repository_with(root, conn, &registry)
@@ -48,29 +49,31 @@ pub fn index_repository_with(
     registry: &Registry,
 ) -> Result<IndexStats> {
     schema::initialize(conn)?;
-    let files = worker::collect_source_files(root, registry);
+    let abs_files = worker::collect_source_files(root, registry);
     let existing = queries::existing_hashes(conn)?;
 
-    // Hash every candidate in parallel so skip/parse decisions are cheap.
-    let hashed: Vec<(PathBuf, String)> = files
-        .par_iter()
-        .map(|path| hash_file(path).map(|hash| (path.clone(), hash)))
-        .collect::<Result<Vec<_>>>()?;
+    let outcomes = worker::hash_and_parse(root, &abs_files, &existing, registry);
 
-    let mut to_parse = Vec::new();
+    let mut parsed = Vec::new();
     let mut skipped = 0usize;
-    let mut on_disk: HashSet<String> = HashSet::with_capacity(hashed.len());
+    let mut errors = 0usize;
+    let mut on_disk: HashSet<String> = HashSet::with_capacity(abs_files.len());
 
-    for (path, hash) in hashed {
-        let key = path.to_string_lossy().into_owned();
-        on_disk.insert(key.clone());
-        match existing.get(&key) {
-            Some(prev) if prev == &hash => skipped += 1,
-            _ => to_parse.push(path),
-        }
+    for abs in &abs_files {
+        let rel = worker::normalize_path(root, abs);
+        on_disk.insert(rel.to_string_lossy().into_owned());
     }
 
-    let parsed = worker::parse_all(&to_parse, registry)?;
+    for outcome in outcomes {
+        match outcome {
+            worker::FileOutcome::Skipped => skipped += 1,
+            worker::FileOutcome::Parsed(pf) => parsed.push(pf),
+            worker::FileOutcome::Failed { path, message } => {
+                errors += 1;
+                eprintln!("index error: {}: {message}", path.display());
+            }
+        }
+    }
 
     let mut removed = 0usize;
     let tx = conn.transaction()?;
@@ -94,14 +97,51 @@ pub fn index_repository_with(
         indexed: parsed.len(),
         skipped,
         removed,
+        errors,
     })
 }
 
-/// SHA-256 hex digest of a file's bytes.
-fn hash_file(path: &Path) -> Result<String> {
-    let bytes = fs::read(path).map_err(|source| SecondBrainError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    Ok(hex::encode(Sha256::digest(&bytes)))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn stores_paths_relative_to_root() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "fn hello() {}\n").unwrap();
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        let stats = index_repository(root, &mut conn).unwrap();
+        assert_eq!(stats.indexed, 1);
+        assert_eq!(stats.errors, 0);
+
+        let path: String = conn
+            .query_row("SELECT path FROM files", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(path, "src/lib.rs");
+        assert!(!path.starts_with('/'));
+    }
+
+    #[test]
+    fn continues_when_one_file_fails_utf8() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/ok.rs"), "fn ok() {}\n").unwrap();
+        fs::write(root.join("src/bad.rs"), [0xff, 0xfe, b'f', b'n']).unwrap();
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        let stats = index_repository(root, &mut conn).unwrap();
+        assert_eq!(stats.indexed, 1);
+        assert_eq!(stats.errors, 1);
+
+        let defs = crate::db::queries::find_definition(&conn, "ok").unwrap();
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].file.as_os_str(), "src/ok.rs");
+    }
 }

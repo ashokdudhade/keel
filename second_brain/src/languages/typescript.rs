@@ -1,22 +1,16 @@
 //! TypeScript/TSX language plugin: Tree-sitter based symbol and reference extraction.
 //!
-//! `module_path` for extracted symbols is the fixed string `"module"`. The
-//! [`LanguagePlugin`] API only receives source text (no file path), so a
-//! path-stem module path like `src/auth/service` is not available here. Name-
-//! based lookup still works. Call containers use the same `"module"` prefix
-//! plus the enclosing function/method/class name when present.
+//! `module_path` is derived from the file path with the extension stripped
+//! (e.g. `src/auth/service`), using forward slashes.
 //!
 //! `.ts`/`.mts`/`.cts` parse with the TypeScript grammar; `.tsx` uses the TSX
 //! grammar. Extraction walks are shared.
 
-use super::LanguagePlugin;
+use super::{file_path_key, path_module_identity, LanguagePlugin};
 use crate::error::{Result, SecondBrainError};
 use crate::graph::types::{Import, Reference, ReferenceKind, Symbol, SymbolKind};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tree_sitter::{Language, Node, Parser, Tree};
-
-/// Fixed module path used when extracting from a source string alone.
-const MODULE_PATH: &str = "module";
 
 /// Extractor for TypeScript and TSX source using Tree-sitter.
 pub struct TypeScriptPlugin;
@@ -47,24 +41,34 @@ impl LanguagePlugin for TypeScriptPlugin {
         &["ts", "mts", "cts"]
     }
 
-    fn extract_symbols(&self, source_code: &str) -> Result<Vec<Symbol>> {
+    fn extract_symbols(&self, path: &Path, source_code: &str) -> Result<Vec<Symbol>> {
         let tree = Self::parse_ts(source_code)?;
         let src = source_code.as_bytes();
+        let module_path = path_module_identity(path);
         let mut out = Vec::new();
-        walk_symbols(tree.root_node(), src, &mut out)?;
+        walk_symbols(tree.root_node(), src, &module_path, &mut out)?;
         Ok(out)
     }
 
-    fn extract_references(&self, source_code: &str) -> Result<Vec<Reference>> {
+    fn extract_references(&self, path: &Path, source_code: &str) -> Result<Vec<Reference>> {
         let tree = Self::parse_ts(source_code)?;
         let src = source_code.as_bytes();
+        let file_key = file_path_key(path);
+        let module_path = path_module_identity(path);
         let mut scope: Vec<String> = Vec::new();
         let mut out = Vec::new();
-        walk_references(tree.root_node(), src, &mut scope, &mut out)?;
+        walk_references(
+            tree.root_node(),
+            src,
+            &file_key,
+            &module_path,
+            &mut scope,
+            &mut out,
+        )?;
         Ok(out)
     }
 
-    fn extract_imports(&self, source_code: &str) -> Result<Vec<Import>> {
+    fn extract_imports(&self, _path: &Path, source_code: &str) -> Result<Vec<Import>> {
         let tree = Self::parse_ts(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
@@ -78,24 +82,34 @@ impl LanguagePlugin for TsxPlugin {
         &["tsx"]
     }
 
-    fn extract_symbols(&self, source_code: &str) -> Result<Vec<Symbol>> {
+    fn extract_symbols(&self, path: &Path, source_code: &str) -> Result<Vec<Symbol>> {
         let tree = TypeScriptPlugin::parse_tsx(source_code)?;
         let src = source_code.as_bytes();
+        let module_path = path_module_identity(path);
         let mut out = Vec::new();
-        walk_symbols(tree.root_node(), src, &mut out)?;
+        walk_symbols(tree.root_node(), src, &module_path, &mut out)?;
         Ok(out)
     }
 
-    fn extract_references(&self, source_code: &str) -> Result<Vec<Reference>> {
+    fn extract_references(&self, path: &Path, source_code: &str) -> Result<Vec<Reference>> {
         let tree = TypeScriptPlugin::parse_tsx(source_code)?;
         let src = source_code.as_bytes();
+        let file_key = file_path_key(path);
+        let module_path = path_module_identity(path);
         let mut scope: Vec<String> = Vec::new();
         let mut out = Vec::new();
-        walk_references(tree.root_node(), src, &mut scope, &mut out)?;
+        walk_references(
+            tree.root_node(),
+            src,
+            &file_key,
+            &module_path,
+            &mut scope,
+            &mut out,
+        )?;
         Ok(out)
     }
 
-    fn extract_imports(&self, source_code: &str) -> Result<Vec<Import>> {
+    fn extract_imports(&self, _path: &Path, source_code: &str) -> Result<Vec<Import>> {
         let tree = TypeScriptPlugin::parse_tsx(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
@@ -115,40 +129,45 @@ fn node_text<'a>(node: Node, src: &'a [u8]) -> Result<&'a str> {
         .map_err(|e| SecondBrainError::TreeSitter(e.to_string()))
 }
 
-fn qualify_scope(scope: &[String]) -> String {
+fn qualify_scope(file_key: &str, module_path: &str, scope: &[String]) -> String {
     if scope.is_empty() {
-        String::new()
+        file_key.to_string()
     } else {
-        format!("{MODULE_PATH}::{}", scope.join("::"))
+        format!("{module_path}::{}", scope.join("::"))
     }
 }
 
-fn walk_symbols(node: Node, src: &[u8], out: &mut Vec<Symbol>) -> Result<()> {
+fn walk_symbols(
+    node: Node,
+    src: &[u8],
+    module_path: &str,
+    out: &mut Vec<Symbol>,
+) -> Result<()> {
     match node.kind() {
         "function_declaration" | "generator_function_declaration" => {
-            emit_named_symbol(node, SymbolKind::Function, out, src)?;
+            emit_named_symbol(node, SymbolKind::Function, module_path, out, src)?;
         }
         "class_declaration" | "abstract_class_declaration" => {
-            emit_named_symbol(node, SymbolKind::Struct, out, src)?;
+            emit_named_symbol(node, SymbolKind::Struct, module_path, out, src)?;
         }
         "interface_declaration" => {
-            emit_named_symbol(node, SymbolKind::Trait, out, src)?;
+            emit_named_symbol(node, SymbolKind::Trait, module_path, out, src)?;
         }
         "type_alias_declaration" => {
-            emit_named_symbol(node, SymbolKind::Other("type".into()), out, src)?;
+            emit_named_symbol(node, SymbolKind::Other("type".into()), module_path, out, src)?;
         }
         "enum_declaration" => {
-            emit_named_symbol(node, SymbolKind::Enum, out, src)?;
+            emit_named_symbol(node, SymbolKind::Enum, module_path, out, src)?;
         }
         "method_definition" => {
             // Constructors are still useful as Function symbols for name lookup.
-            emit_named_symbol(node, SymbolKind::Function, out, src)?;
+            emit_named_symbol(node, SymbolKind::Function, module_path, out, src)?;
         }
         _ => {}
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_symbols(child, src, out)?;
+        walk_symbols(child, src, module_path, out)?;
     }
     Ok(())
 }
@@ -156,19 +175,29 @@ fn walk_symbols(node: Node, src: &[u8], out: &mut Vec<Symbol>) -> Result<()> {
 fn emit_named_symbol(
     node: Node,
     kind: SymbolKind,
+    module_path: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
     if let Some(name) = node.child_by_field_name("name") {
         // Method names may be `property_identifier` or `identifier`.
-        if matches!(name.kind(), "identifier" | "property_identifier" | "type_identifier") {
-            push_symbol(name, kind, out, src)?;
+        if matches!(
+            name.kind(),
+            "identifier" | "property_identifier" | "type_identifier"
+        ) {
+            push_symbol(name, kind, module_path, out, src)?;
         }
     }
     Ok(())
 }
 
-fn push_symbol(name_node: Node, kind: SymbolKind, out: &mut Vec<Symbol>, src: &[u8]) -> Result<()> {
+fn push_symbol(
+    name_node: Node,
+    kind: SymbolKind,
+    module_path: &str,
+    out: &mut Vec<Symbol>,
+    src: &[u8],
+) -> Result<()> {
     let text = node_text(name_node, src)?;
     let pos = name_node.start_position();
     out.push(Symbol {
@@ -177,7 +206,7 @@ fn push_symbol(name_node: Node, kind: SymbolKind, out: &mut Vec<Symbol>, src: &[
         file: PathBuf::new(),
         start_line: pos.row as u32 + 1,
         start_col: pos.column as u32 + 1,
-        module_path: MODULE_PATH.to_string(),
+        module_path: module_path.to_string(),
     });
     Ok(())
 }
@@ -185,6 +214,8 @@ fn push_symbol(name_node: Node, kind: SymbolKind, out: &mut Vec<Symbol>, src: &[
 fn walk_references(
     node: Node,
     src: &[u8],
+    file_key: &str,
+    module_path: &str,
     scope: &mut Vec<String>,
     out: &mut Vec<Reference>,
 ) -> Result<()> {
@@ -195,12 +226,15 @@ fn walk_references(
         | "abstract_class_declaration"
         | "method_definition" => {
             if let Some(name) = node.child_by_field_name("name") {
-                if matches!(name.kind(), "identifier" | "property_identifier" | "type_identifier") {
+                if matches!(
+                    name.kind(),
+                    "identifier" | "property_identifier" | "type_identifier"
+                ) {
                     let text = node_text(name, src)?;
                     scope.push(text.to_string());
                     let mut cursor = node.walk();
                     for child in node.children(&mut cursor) {
-                        walk_references(child, src, scope, out)?;
+                        walk_references(child, src, file_key, module_path, scope, out)?;
                     }
                     scope.pop();
                     return Ok(());
@@ -209,14 +243,14 @@ fn walk_references(
         }
         "call_expression" => {
             if let Some(func) = node.child_by_field_name("function") {
-                emit_call_reference(func, src, scope, out)?;
+                emit_call_reference(func, src, file_key, module_path, scope, out)?;
             }
         }
         _ => {}
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_references(child, src, scope, out)?;
+        walk_references(child, src, file_key, module_path, scope, out)?;
     }
     Ok(())
 }
@@ -224,19 +258,37 @@ fn walk_references(
 fn emit_call_reference(
     func: Node,
     src: &[u8],
+    file_key: &str,
+    module_path: &str,
     scope: &[String],
     out: &mut Vec<Reference>,
 ) -> Result<()> {
     match func.kind() {
         "identifier" => {
             let text = node_text(func, src)?;
-            push_reference(text.to_string(), func, ReferenceKind::Call, scope, out);
+            push_reference(
+                text.to_string(),
+                func,
+                ReferenceKind::Call,
+                file_key,
+                module_path,
+                scope,
+                out,
+            );
         }
         "member_expression" => {
             if let Some(prop) = func.child_by_field_name("property") {
                 if matches!(prop.kind(), "property_identifier" | "identifier") {
                     let text = node_text(prop, src)?;
-                    push_reference(text.to_string(), prop, ReferenceKind::Method, scope, out);
+                    push_reference(
+                        text.to_string(),
+                        prop,
+                        ReferenceKind::Method,
+                        file_key,
+                        module_path,
+                        scope,
+                        out,
+                    );
                 }
             }
         }
@@ -249,6 +301,8 @@ fn push_reference(
     name: String,
     node: Node,
     kind: ReferenceKind,
+    file_key: &str,
+    module_path: &str,
     scope: &[String],
     out: &mut Vec<Reference>,
 ) {
@@ -259,7 +313,7 @@ fn push_reference(
         start_line: pos.row as u32 + 1,
         start_col: pos.column as u32 + 1,
         kind,
-        container: qualify_scope(scope),
+        container: qualify_scope(file_key, module_path, scope),
     });
 }
 
@@ -362,7 +416,8 @@ fn emit_import_clause(
 }
 
 fn strip_quotes(s: &str) -> String {
-    s.trim_matches(|c| c == '\'' || c == '"' || c == '`').to_string()
+    s.trim_matches(|c| c == '\'' || c == '"' || c == '`')
+        .to_string()
 }
 
 #[cfg(test)]
@@ -399,18 +454,25 @@ function run(): void {
 }
 ";
 
+    fn test_path() -> &'static Path {
+        Path::new("src/auth/service.ts")
+    }
+
     #[test]
     fn extracts_class_interface_function_type_enum_and_methods() {
         let plugin = TypeScriptPlugin;
-        let syms = plugin.extract_symbols(SOURCE).unwrap();
+        let syms = plugin.extract_symbols(test_path(), SOURCE).unwrap();
         let find = |n: &str| syms.iter().find(|s| s.name == n).cloned();
 
         let auth = find("AuthService").expect("AuthService");
         assert_eq!(auth.kind, SymbolKind::Struct);
-        assert_eq!(auth.module_path, "module");
+        assert_eq!(auth.module_path, "src/auth/service");
 
         assert_eq!(find("Storage").unwrap().kind, SymbolKind::Trait);
-        assert_eq!(find("UserId").unwrap().kind, SymbolKind::Other("type".into()));
+        assert_eq!(
+            find("UserId").unwrap().kind,
+            SymbolKind::Other("type".into())
+        );
         assert_eq!(find("Role").unwrap().kind, SymbolKind::Enum);
         assert_eq!(find("createOrder").unwrap().kind, SymbolKind::Function);
         assert_eq!(find("login").unwrap().kind, SymbolKind::Function);
@@ -418,9 +480,23 @@ function run(): void {
     }
 
     #[test]
+    fn different_files_get_different_module_paths() {
+        let plugin = TypeScriptPlugin;
+        let a = plugin
+            .extract_symbols(Path::new("src/a.ts"), "export function f() {}\n")
+            .unwrap();
+        let b = plugin
+            .extract_symbols(Path::new("src/b.ts"), "export function f() {}\n")
+            .unwrap();
+        assert_eq!(a[0].module_path, "src/a");
+        assert_eq!(b[0].module_path, "src/b");
+        assert_ne!(a[0].module_path, b[0].module_path);
+    }
+
+    #[test]
     fn extracts_named_and_default_imports() {
         let plugin = TypeScriptPlugin;
-        let imports = plugin.extract_imports(SOURCE).unwrap();
+        let imports = plugin.extract_imports(test_path(), SOURCE).unwrap();
 
         let named = imports
             .iter()
@@ -438,7 +514,7 @@ function run(): void {
     #[test]
     fn extracts_call_and_method_references() {
         let plugin = TypeScriptPlugin;
-        let refs = plugin.extract_references(SOURCE).unwrap();
+        let refs = plugin.extract_references(test_path(), SOURCE).unwrap();
 
         let call = refs
             .iter()

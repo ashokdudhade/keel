@@ -7,6 +7,22 @@ pub mod typescript;
 
 use crate::error::Result;
 use crate::graph::types::{Import, ImplRecord, Reference, Symbol};
+use std::path::Path;
+
+/// Path-based module identity: extension stripped, `/` separators.
+///
+/// Used by TypeScript (always) and Go (`package main`) so same-named symbols in
+/// different files do not collide.
+pub fn path_module_identity(path: &Path) -> String {
+    path.with_extension("")
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// Stable file-path string for empty-scope reference containers.
+pub fn file_path_key(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
 
 /// A language-specific extractor. Must be `Sync` so plugins can be shared across
 /// Rayon worker threads during parallel indexing.
@@ -15,23 +31,23 @@ pub trait LanguagePlugin: Sync {
     fn extensions(&self) -> &[&str];
 
     /// Extract defined symbols from source. Returned symbols have an empty `file`.
-    fn extract_symbols(&self, source_code: &str) -> Result<Vec<Symbol>>;
+    fn extract_symbols(&self, path: &Path, source_code: &str) -> Result<Vec<Symbol>>;
 
     /// Extract references (call/macro sites) from source. Returned references have
     /// an empty `file`.
-    fn extract_references(&self, source_code: &str) -> Result<Vec<Reference>>;
+    fn extract_references(&self, path: &Path, source_code: &str) -> Result<Vec<Reference>>;
 
     /// Extract `use`/import records from source. Returned imports have an empty
     /// `file`. Defaults to none so plugins can adopt this incrementally.
-    fn extract_imports(&self, source_code: &str) -> Result<Vec<Import>> {
-        let _ = source_code;
+    fn extract_imports(&self, path: &Path, source_code: &str) -> Result<Vec<Import>> {
+        let _ = (path, source_code);
         Ok(vec![])
     }
 
     /// Extract `impl` block records from source. Returned records have an empty
     /// `file`. Defaults to none so plugins can adopt this incrementally.
-    fn extract_impls(&self, source_code: &str) -> Result<Vec<ImplRecord>> {
-        let _ = source_code;
+    fn extract_impls(&self, path: &Path, source_code: &str) -> Result<Vec<ImplRecord>> {
+        let _ = (path, source_code);
         Ok(vec![])
     }
 }
@@ -105,7 +121,7 @@ mod tests {
             &["toy"]
         }
 
-        fn extract_symbols(&self, source_code: &str) -> Result<Vec<Symbol>> {
+        fn extract_symbols(&self, _path: &Path, source_code: &str) -> Result<Vec<Symbol>> {
             // One symbol per non-empty line: `symbol <name>`.
             let mut out = Vec::new();
             for (i, line) in source_code.lines().enumerate() {
@@ -128,7 +144,7 @@ mod tests {
             Ok(out)
         }
 
-        fn extract_references(&self, _source_code: &str) -> Result<Vec<Reference>> {
+        fn extract_references(&self, _path: &Path, _source_code: &str) -> Result<Vec<Reference>> {
             Ok(vec![])
         }
     }
@@ -155,5 +171,13 @@ mod tests {
     #[test]
     fn empty_registry_has_no_extensions() {
         assert!(Registry::empty().extensions().is_empty());
+    }
+
+    #[test]
+    fn path_module_identity_strips_extension() {
+        assert_eq!(
+            path_module_identity(Path::new("src/auth/service.ts")),
+            "src/auth/service"
+        );
     }
 }
