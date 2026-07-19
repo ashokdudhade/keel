@@ -24,8 +24,10 @@ pub struct ParsedFile {
     pub impls: Vec<ImplRecord>,
 }
 
-/// Collect all `.rs` files under `root`, honoring `.gitignore` (via `ignore`).
-pub fn collect_rust_files(root: &Path) -> Vec<PathBuf> {
+/// Collect all source files under `root` whose extension has a registered
+/// plugin, honoring `.gitignore` (via `ignore`).
+pub fn collect_source_files(root: &Path, registry: &Registry) -> Vec<PathBuf> {
+    let exts = registry.extensions();
     let mut files: Vec<PathBuf> = WalkBuilder::new(root)
         .standard_filters(true)
         // Honor `.gitignore` even when `root` is not inside a git repository;
@@ -36,7 +38,11 @@ pub fn collect_rust_files(root: &Path) -> Vec<PathBuf> {
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.file_type().map(|t| t.is_file()).unwrap_or(false))
         .map(|entry| entry.into_path())
-        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("rs"))
+        .filter(|path| {
+            path.extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|ext| exts.contains(&ext))
+        })
         .collect();
     // Sort for deterministic insertion / `file_id` order across machines.
     files.sort();

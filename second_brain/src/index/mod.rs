@@ -25,14 +25,14 @@ pub struct IndexStats {
     pub removed: usize,
 }
 
-/// Index every `.rs` file under `root` into `conn`.
+/// Index every registered-language source file under `root` into `conn`.
 ///
 /// Incremental: hashes candidate files first, skips unchanged paths, parses and
 /// persists new/changed files, and deletes DB rows for files gone from disk.
 pub fn index_repository(root: &Path, conn: &mut Connection) -> Result<IndexStats> {
     schema::initialize(conn)?;
     let registry = Registry::with_defaults();
-    let files = worker::collect_rust_files(root);
+    let files = worker::collect_source_files(root, &registry);
     let existing = queries::existing_hashes(conn)?;
 
     // Hash every candidate in parallel so skip/parse decisions are cheap.

@@ -2,6 +2,7 @@
 //! extension without knowing any language specifics.
 
 pub mod rust;
+pub mod typescript;
 
 use crate::error::Result;
 use crate::graph::types::{Import, ImplRecord, Reference, Symbol};
@@ -40,9 +41,24 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// A registry with all built-in plugins (Rust in v0.1).
+    /// A registry with all built-in plugins (Rust, TypeScript/TSX).
     pub fn with_defaults() -> Self {
-        Registry { plugins: vec![Box::new(rust::RustPlugin)] }
+        let mut plugins: Vec<Box<dyn LanguagePlugin>> = vec![Box::new(rust::RustPlugin)];
+        typescript::register(&mut plugins);
+        Registry { plugins }
+    }
+
+    /// Every extension claimed by a registered plugin (deduplicated, unsorted).
+    pub fn extensions(&self) -> Vec<&str> {
+        let mut out = Vec::new();
+        for plugin in &self.plugins {
+            for ext in plugin.extensions() {
+                if !out.contains(ext) {
+                    out.push(*ext);
+                }
+            }
+        }
+        out
     }
 
     /// The first plugin registered for `ext`, if any.

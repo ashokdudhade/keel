@@ -458,3 +458,27 @@ fn http_get(port: u16, path: &str) -> String {
         .expect("HTTP response missing header/body separator");
     text[split + 4..].to_string()
 }
+
+#[test]
+fn indexes_typescript_fixture_and_finds_symbol() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/auth.ts"),
+        "export class AuthService {\n  login(): void {}\n}\nexport function createOrder(): void {}\n",
+    )
+    .unwrap();
+
+    let mut conn = Connection::open_in_memory().unwrap();
+    let stats = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(stats.indexed, 1);
+
+    let defs = queries::find_definition(&conn, "AuthService").unwrap();
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].kind, SymbolKind::Struct);
+
+    let fns = queries::find_definition(&conn, "createOrder").unwrap();
+    assert_eq!(fns.len(), 1);
+    assert_eq!(fns[0].kind, SymbolKind::Function);
+}
