@@ -2,7 +2,7 @@
 
 use super::LanguagePlugin;
 use crate::error::{Result, SecondBrainError};
-use crate::graph::types::{Reference, Symbol, SymbolKind};
+use crate::graph::types::{Reference, ReferenceKind, Symbol, SymbolKind};
 use std::path::PathBuf;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, Query, QueryCursor, Tree};
@@ -67,6 +67,7 @@ impl LanguagePlugin for RustPlugin {
                     file: PathBuf::new(),
                     start_line: pos.row as u32 + 1,
                     start_col: pos.column as u32 + 1,
+                    module_path: String::new(),
                 });
             }
         }
@@ -94,6 +95,8 @@ impl LanguagePlugin for RustPlugin {
                     file: PathBuf::new(),
                     start_line: pos.row as u32 + 1,
                     start_col: pos.column as u32 + 1,
+                    kind: ReferenceKind::Call,
+                    container: String::new(),
                 });
             }
         }
