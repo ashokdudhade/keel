@@ -80,6 +80,22 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Impact { name } => {
+            let impacted = commands::run_impact(&name).context("querying impact")?;
+            if impacted.is_empty() {
+                eprintln!("No impact found for {name}");
+            }
+            for s in impacted {
+                println!(
+                    "{}:{}:{}\t{}\t{}",
+                    s.file.display(),
+                    s.start_line,
+                    s.start_col,
+                    s.kind.as_db(),
+                    s.name
+                );
+            }
+        }
     }
     Ok(())
 }

@@ -52,4 +52,9 @@ pub enum Commands {
         /// Module path or symbol name to analyze.
         name: String,
     },
+    /// Print symbols transitively impacted by changing a name.
+    Impact {
+        /// Symbol name to analyze impact for.
+        name: String,
+    },
 }

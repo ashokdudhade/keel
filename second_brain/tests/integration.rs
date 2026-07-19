@@ -3,6 +3,7 @@
 use rusqlite::Connection;
 use second_brain::db::queries;
 use second_brain::graph::deps;
+use second_brain::graph::impact;
 use second_brain::graph::types::SymbolKind;
 use second_brain::index;
 use std::fs;
@@ -313,4 +314,58 @@ fn cli_dependencies_prints_imported_modules() {
         stdout.lines().any(|l| l.starts_with("crate::b")),
         "expected crate::b in: {stdout}"
     );
+}
+
+#[test]
+fn find_impact_from_indexed_call_chain() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "fn a() {}\nfn b() { a(); }\nfn c() { b(); }\nfn lonely() {}\n",
+    )
+    .unwrap();
+
+    let mut conn = Connection::open_in_memory().unwrap();
+    index::index_repository(root, &mut conn).unwrap();
+
+    let impacted = impact::find_impact(&conn, "a").unwrap();
+    let names: Vec<&str> = impacted.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, vec!["b", "c"], "got {names:?}");
+
+    let none = impact::find_impact(&conn, "lonely").unwrap();
+    assert!(none.is_empty(), "lonely must have empty impact: {none:?}");
+}
+
+#[test]
+fn cli_impact_prints_transitive_callers() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "fn a() {}\nfn b() { a(); }\nfn c() { b(); }\n",
+    )
+    .unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_sb");
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let impact_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["impact", "a"])
+        .output()
+        .unwrap();
+    assert!(impact_out.status.success(), "impact failed: {:?}", impact_out);
+    let stdout = String::from_utf8(impact_out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "got: {stdout}");
+    assert!(lines[0].ends_with("\tb"), "got: {}", lines[0]);
+    assert!(lines[1].ends_with("\tc"), "got: {}", lines[1]);
 }

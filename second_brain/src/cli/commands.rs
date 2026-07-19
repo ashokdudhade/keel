@@ -3,6 +3,7 @@
 use crate::db::{queries, schema};
 use crate::error::{Result, SecondBrainError};
 use crate::graph::deps::{self, Dependency};
+use crate::graph::impact;
 use crate::graph::resolve;
 use crate::graph::types::{ImplRecord, Reference, Symbol};
 use crate::index;
@@ -83,4 +84,11 @@ pub fn run_dependencies(name: &str) -> Result<Vec<Dependency>> {
     let conn = open_db()?;
     schema::initialize(&conn)?;
     deps::find_dependencies(&conn, name)
+}
+
+/// Look up symbols transitively impacted by changing `name`.
+pub fn run_impact(name: &str) -> Result<Vec<Symbol>> {
+    let conn = open_db()?;
+    schema::initialize(&conn)?;
+    impact::find_impact(&conn, name)
 }
