@@ -11,8 +11,8 @@ fn main() -> Result<()> {
             let stats = commands::run_index(&path)
                 .with_context(|| format!("indexing {}", path.display()))?;
             println!(
-                "Indexed {} file(s) (skipped {}, removed {}).",
-                stats.indexed, stats.skipped, stats.removed
+                "Indexed {} file(s) (skipped {}, removed {}, errors {}).",
+                stats.indexed, stats.skipped, stats.removed, stats.errors
             );
         }
         Commands::Watch { path } => {
