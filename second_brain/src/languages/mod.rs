@@ -4,7 +4,7 @@
 pub mod rust;
 
 use crate::error::Result;
-use crate::graph::types::{Reference, Symbol};
+use crate::graph::types::{Import, ImplRecord, Reference, Symbol};
 
 /// A language-specific extractor. Must be `Sync` so plugins can be shared across
 /// Rayon worker threads during parallel indexing.
@@ -18,6 +18,20 @@ pub trait LanguagePlugin: Sync {
     /// Extract references (call/macro sites) from source. Returned references have
     /// an empty `file`.
     fn extract_references(&self, source_code: &str) -> Result<Vec<Reference>>;
+
+    /// Extract `use`/import records from source. Returned imports have an empty
+    /// `file`. Defaults to none so plugins can adopt this incrementally.
+    fn extract_imports(&self, source_code: &str) -> Result<Vec<Import>> {
+        let _ = source_code;
+        Ok(vec![])
+    }
+
+    /// Extract `impl` block records from source. Returned records have an empty
+    /// `file`. Defaults to none so plugins can adopt this incrementally.
+    fn extract_impls(&self, source_code: &str) -> Result<Vec<ImplRecord>> {
+        let _ = source_code;
+        Ok(vec![])
+    }
 }
 
 /// Holds the set of available language plugins.

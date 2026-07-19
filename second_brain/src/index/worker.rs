@@ -2,7 +2,7 @@
 //! database writes are serialized by the orchestrator in `index::index_repository`.
 
 use crate::error::{Result, SecondBrainError};
-use crate::graph::types::{FileNode, Reference, Symbol};
+use crate::graph::types::{FileNode, ImplRecord, Import, Reference, Symbol};
 use crate::languages::Registry;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
@@ -18,6 +18,10 @@ pub struct ParsedFile {
     pub symbols: Vec<Symbol>,
     /// References found in the file.
     pub references: Vec<Reference>,
+    /// `use`/import records found in the file.
+    pub imports: Vec<Import>,
+    /// `impl` block records found in the file.
+    pub impls: Vec<ImplRecord>,
 }
 
 /// Collect all `.rs` files under `root`, honoring `.gitignore` (via `ignore`).
@@ -50,12 +54,16 @@ pub fn parse_file(path: &Path, registry: &Registry) -> Result<ParsedFile> {
 
     let symbols = plugin.extract_symbols(&source)?;
     let references = plugin.extract_references(&source)?;
+    let imports = plugin.extract_imports(&source)?;
+    let impls = plugin.extract_impls(&source)?;
     let content_hash = hex::encode(Sha256::digest(source.as_bytes()));
 
     Ok(ParsedFile {
         node: FileNode { path: path.to_path_buf(), content_hash },
         symbols,
         references,
+        imports,
+        impls,
     })
 }
 

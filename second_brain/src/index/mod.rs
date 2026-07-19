@@ -24,6 +24,8 @@ pub fn index_repository(root: &Path, conn: &mut Connection) -> Result<usize> {
         queries::clear_file_rows(&tx, file_id)?;
         queries::insert_symbols(&tx, file_id, &pf.symbols)?;
         queries::insert_references(&tx, file_id, &pf.references)?;
+        queries::insert_imports(&tx, file_id, &pf.imports)?;
+        queries::insert_impls(&tx, file_id, &pf.impls)?;
         count += 1;
     }
     tx.commit()?;
