@@ -257,7 +257,7 @@ TDD throughout — write the failing test first.
 The spec covers the full roadmap; each version beyond v0.1 gets its own
 implementation plan when reached.
 
-### v0.1 — Foundation (detailed plan written now)
+### v0.1 — Foundation (shipped)
 
 - Cargo scaffolding, error types, domain types.
 - SQLite storage layer (schema, migrations, type-safe queries).
@@ -266,26 +266,27 @@ implementation plan when reached.
 - Parallel indexing engine (`rayon`, `ignore`, `walkdir`).
 - CLI: `index`, `definition`, `references`, `callers`.
 
-### v0.2 — Precise resolution, incremental & richer graph
+### v0.2 — Precise resolution, incremental & richer graph (shipped)
 
-- **Stack Graphs precision layer** for scope-aware cross-file resolution
-  (`tree-sitter-stack-graphs` framework + authored Rust `.tsg` rules).
-- Incremental indexing via `content_hash` diffing + `notify` file watching.
+- **In-house deterministic module/import-aware resolver** (Stack Graphs deferred;
+  no published Rust `.tsg` crate — see decision in v0.2 plan).
+- Incremental indexing via `content_hash` diffing + `notify` file watching (`sb watch`).
 - Dependency graph and `impact` analysis.
 - `implementations` and `dependencies` queries.
-- JSON API (`GET /symbol/<name>` returning definition/references/impls/deps/callers).
+- JSON API (`sb serve` — `GET /symbol/<name>`, `GET /health`).
 
-### v0.3 — More languages & MCP
+### v0.3 — More languages & MCP (shipped)
 
-- MCP server (interface over the same core).
-- TypeScript plugin, Go plugin.
+- MCP server (`sb mcp` — stdio JSON-RPC tools over the same core).
+- TypeScript/TSX plugin, Go plugin.
 
-### v1.0 — Multi-language & stability
+### v1.0 — Multi-language & stability (shipped 2026-07-19)
 
 - Multi-language monorepo support.
 - Full impact analysis.
-- Plugin system for community language contributions.
-- Stable public APIs + documentation.
+- Plugin system for community language contributions (`Registry::register`).
+- Stable public APIs (`Index` facade) + documentation.
+- Crate version `1.0.0`; see `second_brain/CHANGELOG.md`.
 
 ---
 
@@ -296,7 +297,9 @@ implementation plan when reached.
 | Language             | Rust (Edition 2021)                          |
 | Parsing              | `tree-sitter`, `tree-sitter-rust`            |
 | Resolution (v0.1)    | Name index in SQLite                         |
-| Resolution (v0.2)    | `stack-graphs`, `tree-sitter-stack-graphs` + authored Rust `.tsg` rules |
+| Resolution (v0.2+)   | Module/import-aware deterministic resolver (Stack Graphs optional future) |
+| Languages            | Rust, TypeScript/TSX, Go                                 |
+| Agent interfaces     | CLI (`sb`), JSON HTTP (`sb serve`), MCP (`sb mcp`)       |
 | Storage              | `rusqlite` (bundled SQLite)                  |
 | Parallelism          | `rayon`                                      |
 | CLI                  | `clap` (derive)                              |

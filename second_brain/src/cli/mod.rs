@@ -37,4 +37,32 @@ pub enum Commands {
         /// Function name to find call/use sites for.
         name: String,
     },
+    /// Watch a repository and re-index on registered source file changes.
+    Watch {
+        /// Path to the repository to watch.
+        path: PathBuf,
+    },
+    /// Print implementations of a trait.
+    Implementations {
+        /// Trait name to find implementations for.
+        name: String,
+    },
+    /// Print modules/files that a module or symbol depends on.
+    Dependencies {
+        /// Module path or symbol name to analyze.
+        name: String,
+    },
+    /// Print symbols transitively impacted by changing a name.
+    Impact {
+        /// Symbol name to analyze impact for.
+        name: String,
+    },
+    /// Serve the JSON HTTP API (`GET /symbol/{name}`, `GET /health`).
+    Serve {
+        /// TCP port to listen on (default 7645).
+        #[arg(long, default_value_t = 7645)]
+        port: u16,
+    },
+    /// Serve the MCP stdio server (Content-Length framed JSON-RPC).
+    Mcp,
 }

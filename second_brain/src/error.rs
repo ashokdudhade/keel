@@ -31,6 +31,18 @@ pub enum SecondBrainError {
     /// No language plugin is registered for the given file extension.
     #[error("no language plugin registered for extension {0:?}")]
     UnsupportedExtension(String),
+
+    /// A filesystem watch operation failed.
+    #[error("watch error: {0}")]
+    Watch(String),
+
+    /// The JSON HTTP API server failed.
+    #[error("API server error: {0}")]
+    Api(String),
+
+    /// The MCP stdio server failed.
+    #[error("MCP server error: {0}")]
+    Mcp(String),
 }
 
 /// Convenience `Result` alias used throughout the library.

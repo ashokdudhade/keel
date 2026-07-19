@@ -8,9 +8,16 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Index { path } => {
-            let n = commands::run_index(&path)
+            let stats = commands::run_index(&path)
                 .with_context(|| format!("indexing {}", path.display()))?;
-            println!("Indexed {n} file(s).");
+            println!(
+                "Indexed {} file(s) (skipped {}, removed {}).",
+                stats.indexed, stats.skipped, stats.removed
+            );
+        }
+        Commands::Watch { path } => {
+            commands::run_watch(&path)
+                .with_context(|| format!("watching {}", path.display()))?;
         }
         Commands::Definition { name } => {
             let defs = commands::run_definition(&name).context("querying definition")?;
@@ -38,13 +45,62 @@ fn main() -> Result<()> {
             }
         }
         Commands::Callers { name } => {
-            let refs = commands::run_references(&name).context("querying callers")?;
+            let refs = commands::run_callers(&name).context("querying callers")?;
             if refs.is_empty() {
                 eprintln!("No callers found for {name}");
             }
             for r in refs {
                 println!("{}:{}:{}\t{}", r.file.display(), r.start_line, r.start_col, r.name);
             }
+        }
+        Commands::Implementations { name } => {
+            let impls = commands::run_implementations(&name).context("querying implementations")?;
+            if impls.is_empty() {
+                eprintln!("No implementations found for {name}");
+            }
+            for i in impls {
+                println!(
+                    "{}:{}:{}\t{}",
+                    i.file.display(),
+                    i.start_line,
+                    i.start_col,
+                    i.type_name
+                );
+            }
+        }
+        Commands::Dependencies { name } => {
+            let deps = commands::run_dependencies(&name).context("querying dependencies")?;
+            if deps.is_empty() {
+                eprintln!("No dependencies found for {name}");
+            }
+            for d in deps {
+                match &d.file {
+                    Some(file) => println!("{}\t{}", d.module_path, file.display()),
+                    None => println!("{}", d.module_path),
+                }
+            }
+        }
+        Commands::Impact { name } => {
+            let impacted = commands::run_impact(&name).context("querying impact")?;
+            if impacted.is_empty() {
+                eprintln!("No impact found for {name}");
+            }
+            for s in impacted {
+                println!(
+                    "{}:{}:{}\t{}\t{}",
+                    s.file.display(),
+                    s.start_line,
+                    s.start_col,
+                    s.kind.as_db(),
+                    s.name
+                );
+            }
+        }
+        Commands::Serve { port } => {
+            commands::run_serve(port).context("serving JSON API")?;
+        }
+        Commands::Mcp => {
+            commands::run_mcp().context("serving MCP")?;
         }
     }
     Ok(())
