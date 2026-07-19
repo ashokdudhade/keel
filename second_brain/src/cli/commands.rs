@@ -2,6 +2,7 @@
 
 use crate::db::{queries, schema};
 use crate::error::{Result, SecondBrainError};
+use crate::graph::resolve;
 use crate::graph::types::{Reference, Symbol};
 use crate::index;
 use rusqlite::Connection;
@@ -46,4 +47,25 @@ pub fn run_references(name: &str) -> Result<Vec<Reference>> {
     let conn = open_db()?;
     schema::initialize(&conn)?;
     queries::find_references(&conn, name)
+}
+
+/// Look up callers of `name` with import-aware precision when a unique
+/// definition module can be determined; otherwise falls back to all sites.
+pub fn run_callers(name: &str) -> Result<Vec<Reference>> {
+    let conn = open_db()?;
+    schema::initialize(&conn)?;
+    let defs = queries::find_definition(&conn, name)?;
+    let target_module = unique_module(&defs);
+    resolve::find_callers(&conn, name, target_module.as_deref())
+}
+
+/// When every definition shares one `module_path`, return it for precise
+/// caller filtering; otherwise `None` (name-based fallback).
+fn unique_module(defs: &[Symbol]) -> Option<String> {
+    let first = defs.first()?.module_path.clone();
+    if defs.iter().all(|d| d.module_path == first) {
+        Some(first)
+    } else {
+        None
+    }
 }

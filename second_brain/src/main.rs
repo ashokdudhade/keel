@@ -45,7 +45,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::Callers { name } => {
-            let refs = commands::run_references(&name).context("querying callers")?;
+            let refs = commands::run_callers(&name).context("querying callers")?;
             if refs.is_empty() {
                 eprintln!("No callers found for {name}");
             }

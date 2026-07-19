@@ -138,6 +138,69 @@ pub fn insert_impls(conn: &Connection, file_id: i64, impls: &[ImplRecord]) -> Re
     Ok(())
 }
 
+/// Find definitions matching both `module_path` and `name`, ordered by location.
+pub fn find_definition_by_qualified(
+    conn: &Connection,
+    module_path: &str,
+    name: &str,
+) -> Result<Vec<Symbol>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path
+         FROM symbols s JOIN files f ON s.file_id = f.id
+         WHERE s.module_path = ?1 AND s.name = ?2
+         ORDER BY f.path, s.start_line, s.start_col",
+    )?;
+    let rows = stmt.query_map(params![module_path, name], |row| {
+        Ok(Symbol {
+            name: row.get::<_, String>(0)?,
+            kind: SymbolKind::from_db(&row.get::<_, String>(1)?),
+            file: PathBuf::from(row.get::<_, String>(2)?),
+            start_line: row.get::<_, i64>(3)? as u32,
+            start_col: row.get::<_, i64>(4)? as u32,
+            module_path: row.get::<_, String>(5)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// Imports recorded for the file at `path` (`module_path`, optional `alias`).
+pub fn imports_for_file(conn: &Connection, path: &str) -> Result<Vec<(String, Option<String>)>> {
+    let mut stmt = conn.prepare(
+        "SELECT i.module_path, i.alias
+         FROM imports i JOIN files f ON i.file_id = f.id
+         WHERE f.path = ?1
+         ORDER BY i.module_path, i.alias",
+    )?;
+    let rows = stmt.query_map(params![path], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// Distinct `module_path` values of symbols defined in the file at `path`.
+pub fn module_paths_in_file(conn: &Connection, path: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT s.module_path
+         FROM symbols s JOIN files f ON s.file_id = f.id
+         WHERE f.path = ?1
+         ORDER BY s.module_path",
+    )?;
+    let rows = stmt.query_map(params![path], |row| row.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 /// Find all symbol definitions matching `name`, ordered deterministically.
 pub fn find_definition(conn: &Connection, name: &str) -> Result<Vec<Symbol>> {
     let mut stmt = conn.prepare(
