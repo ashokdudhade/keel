@@ -23,9 +23,22 @@ pub fn resolve_definition(
     name: &str,
     from_file_or_module: &str,
 ) -> Result<Vec<Symbol>> {
+    Ok(resolve_definition_ranked(conn, name, from_file_or_module)?
+        .into_iter()
+        .map(|(_, s)| s)
+        .collect())
+}
+
+/// Like [`resolve_definition`], but each symbol is paired with its ranking tier
+/// (1 = import, 2 = same-module, 3 = name-only fallback).
+pub fn resolve_definition_ranked(
+    conn: &Connection,
+    name: &str,
+    from_file_or_module: &str,
+) -> Result<Vec<(u8, Symbol)>> {
     let candidates = queries::find_definition(conn, name)?;
     if candidates.is_empty() {
-        return Ok(candidates);
+        return Ok(Vec::new());
     }
 
     let imports = queries::imports_for_file(conn, from_file_or_module)?;
@@ -46,7 +59,18 @@ pub fn resolve_definition(
             .then_with(|| a.start_col.cmp(&b.start_col))
     });
 
-    Ok(ranked.into_iter().map(|(_, s)| s).collect())
+    Ok(ranked)
+}
+
+/// Accept a top match for dependency / impact edges only when it is unique or
+/// ranked at tier ≤ 2 (never rely on tier-3 path order alone).
+pub fn acceptable_top_match(ranked: &[(u8, Symbol)]) -> Option<&Symbol> {
+    match ranked {
+        [] => None,
+        [(_, sym)] => Some(sym),
+        [(tier, sym), ..] if *tier <= 2 => Some(sym),
+        _ => None,
+    }
 }
 
 /// Find call sites of `name`.
