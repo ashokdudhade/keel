@@ -68,6 +68,18 @@ fn main() -> Result<()> {
                 );
             }
         }
+        Commands::Dependencies { name } => {
+            let deps = commands::run_dependencies(&name).context("querying dependencies")?;
+            if deps.is_empty() {
+                eprintln!("No dependencies found for {name}");
+            }
+            for d in deps {
+                match &d.file {
+                    Some(file) => println!("{}\t{}", d.module_path, file.display()),
+                    None => println!("{}", d.module_path),
+                }
+            }
+        }
     }
     Ok(())
 }

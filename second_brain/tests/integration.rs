@@ -2,6 +2,7 @@
 
 use rusqlite::Connection;
 use second_brain::db::queries;
+use second_brain::graph::deps;
 use second_brain::graph::types::SymbolKind;
 use second_brain::index;
 use std::fs;
@@ -239,4 +240,77 @@ fn cli_implementations_prints_trait_impls() {
     assert!(lines[0].ends_with("\tA"), "got: {}", lines[0]);
     assert!(lines[1].ends_with("\tB"), "got: {}", lines[1]);
     assert!(lines[0].contains(':'), "expected path:line:col in: {}", lines[0]);
+}
+
+#[test]
+fn find_dependencies_from_indexed_fixture() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    // `a`/`b` share a file (imports are file-scoped); `leaf` is a separate
+    // file with no imports so the empty-deps case is meaningful under indexing.
+    fs::write(
+        root.join("src/lib.rs"),
+        r#"
+mod leaf;
+
+mod b {
+    pub fn f() {}
+}
+
+mod a {
+    use crate::b;
+    pub fn g() {
+        b::f();
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(root.join("src/leaf.rs"), "pub fn alone() {}\n").unwrap();
+
+    let mut conn = Connection::open_in_memory().unwrap();
+    index::index_repository(root, &mut conn).unwrap();
+
+    let deps = deps::find_dependencies(&conn, "crate::a").unwrap();
+    let paths: Vec<&str> = deps.iter().map(|d| d.module_path.as_str()).collect();
+    assert!(
+        paths.contains(&"crate::b"),
+        "expected crate::b dependency, got {paths:?}"
+    );
+
+    let leaf = deps::find_dependencies(&conn, "alone").unwrap();
+    assert!(leaf.is_empty(), "leaf must have no deps: {leaf:?}");
+}
+
+#[test]
+fn cli_dependencies_prints_imported_modules() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "mod b { pub fn f() {} }\nmod a { use crate::b; pub fn g() { b::f(); } }\n",
+    )
+    .unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_sb");
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let dep_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["dependencies", "crate::a"])
+        .output()
+        .unwrap();
+    assert!(dep_out.status.success(), "dependencies failed: {:?}", dep_out);
+    let stdout = String::from_utf8(dep_out.stdout).unwrap();
+    assert!(
+        stdout.lines().any(|l| l.starts_with("crate::b")),
+        "expected crate::b in: {stdout}"
+    );
 }

@@ -277,6 +277,44 @@ pub fn find_implementations(conn: &Connection, trait_name: &str) -> Result<Vec<I
     Ok(out)
 }
 
+/// Distinct file paths that define symbols in `module_path`, ordered by path.
+pub fn files_for_module_path(conn: &Connection, module_path: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT f.path
+         FROM symbols s JOIN files f ON s.file_id = f.id
+         WHERE s.module_path = ?1
+         ORDER BY f.path",
+    )?;
+    let rows = stmt.query_map(params![module_path], |row| row.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// First file (by path order) that defines a symbol in `module_path`, if any.
+pub fn first_file_for_module_path(conn: &Connection, module_path: &str) -> Result<Option<PathBuf>> {
+    let files = files_for_module_path(conn, module_path)?;
+    Ok(files.into_iter().next().map(PathBuf::from))
+}
+
+/// Reference names recorded in the file at `path`, ordered deterministically.
+pub fn reference_names_in_file(conn: &Connection, path: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        r#"SELECT DISTINCT r.name
+           FROM "references" r JOIN files f ON r.file_id = f.id
+           WHERE f.path = ?1
+           ORDER BY r.name"#,
+    )?;
+    let rows = stmt.query_map(params![path], |row| row.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

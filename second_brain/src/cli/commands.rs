@@ -2,6 +2,7 @@
 
 use crate::db::{queries, schema};
 use crate::error::{Result, SecondBrainError};
+use crate::graph::deps::{self, Dependency};
 use crate::graph::resolve;
 use crate::graph::types::{ImplRecord, Reference, Symbol};
 use crate::index;
@@ -75,4 +76,11 @@ pub fn run_implementations(trait_name: &str) -> Result<Vec<ImplRecord>> {
     let conn = open_db()?;
     schema::initialize(&conn)?;
     queries::find_implementations(&conn, trait_name)
+}
+
+/// Look up modules/files that `name` (module path or symbol) depends on.
+pub fn run_dependencies(name: &str) -> Result<Vec<Dependency>> {
+    let conn = open_db()?;
+    schema::initialize(&conn)?;
+    deps::find_dependencies(&conn, name)
 }

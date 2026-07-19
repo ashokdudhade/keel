@@ -47,4 +47,9 @@ pub enum Commands {
         /// Trait name to find implementations for.
         name: String,
     },
+    /// Print modules/files that a module or symbol depends on.
+    Dependencies {
+        /// Module path or symbol name to analyze.
+        name: String,
+    },
 }
