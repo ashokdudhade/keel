@@ -1,8 +1,8 @@
-//! `sb` binary entry point. Uses `anyhow` for context-rich top-level errors.
+//! `keel` binary entry point. Uses `anyhow` for context-rich top-level errors.
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use second_brain::cli::{commands, Cli, Commands};
+use keel::cli::{commands, Cli, Commands};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();

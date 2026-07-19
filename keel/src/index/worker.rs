@@ -1,7 +1,7 @@
 //! Parallel file parsing pipeline. CPU-bound parse/extract runs in parallel;
 //! database writes are serialized by the orchestrator in `index::index_repository`.
 
-use crate::error::{Result, SecondBrainError};
+use crate::error::{Result, KeelError};
 use crate::graph::types::{FileNode, ImplRecord, Import, Reference, Symbol};
 use crate::languages::Registry;
 use ignore::WalkBuilder;
@@ -71,7 +71,7 @@ pub fn parse_file_contents(
     let ext = rel_path.extension().and_then(|s| s.to_str()).unwrap_or("");
     let plugin = registry
         .for_extension(ext)
-        .ok_or_else(|| SecondBrainError::UnsupportedExtension(ext.to_string()))?;
+        .ok_or_else(|| KeelError::UnsupportedExtension(ext.to_string()))?;
 
     let symbols = plugin.extract_symbols(rel_path, source)?;
     let references = plugin.extract_references(rel_path, source)?;
@@ -92,12 +92,12 @@ pub fn parse_file_contents(
 
 /// Read, parse, and extract a single file (absolute `abs_path`, stored as `rel_path`).
 pub fn parse_file(abs_path: &Path, rel_path: &Path, registry: &Registry) -> Result<ParsedFile> {
-    let bytes = fs::read(abs_path).map_err(|source| SecondBrainError::Io {
+    let bytes = fs::read(abs_path).map_err(|source| KeelError::Io {
         path: abs_path.to_path_buf(),
         source,
     })?;
     let content_hash = hex::encode(Sha256::digest(&bytes));
-    let source = std::str::from_utf8(&bytes).map_err(|_| SecondBrainError::Parse)?;
+    let source = std::str::from_utf8(&bytes).map_err(|_| KeelError::Parse)?;
     parse_file_contents(rel_path, source, content_hash, registry)
 }
 
@@ -149,7 +149,7 @@ fn process_one(
     existing: &std::collections::HashMap<String, String>,
     registry: &Registry,
 ) -> Result<FileOutcome> {
-    let bytes = fs::read(abs_path).map_err(|source| SecondBrainError::Io {
+    let bytes = fs::read(abs_path).map_err(|source| KeelError::Io {
         path: abs_path.to_path_buf(),
         source,
     })?;

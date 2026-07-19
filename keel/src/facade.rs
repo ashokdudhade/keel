@@ -1,4 +1,4 @@
-//! Stable public library facade for SecondBrain 1.0 consumers.
+//! Stable public library facade for Keel 1.0 consumers.
 //!
 //! Prefer [`Index`] over reaching into `db` / `graph` / `index` modules directly.
 //! Internals remain available for the CLI and advanced use.
@@ -14,7 +14,7 @@ use crate::languages::Registry;
 use rusqlite::Connection;
 use std::path::Path;
 
-/// Opened SecondBrain index (SQLite-backed).
+/// Opened Keel index (SQLite-backed).
 ///
 /// This is the stable 1.0 library entry point for indexing and querying.
 pub struct Index {

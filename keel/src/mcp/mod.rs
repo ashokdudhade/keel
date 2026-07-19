@@ -4,7 +4,7 @@
 
 use crate::api::{DependencyDto, ImplDto, ReferenceDto, SymbolDto};
 use crate::db::{queries, schema};
-use crate::error::{Result, SecondBrainError};
+use crate::error::{Result, KeelError};
 use crate::graph::deps;
 use crate::graph::impact;
 use crate::graph::resolve;
@@ -17,7 +17,7 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
-const SERVER_NAME: &str = "secondbrain";
+const SERVER_NAME: &str = "keel";
 
 /// Encode a JSON-RPC body as a Content-Length framed MCP message.
 pub fn encode_message(body: &[u8]) -> Vec<u8> {
@@ -39,12 +39,12 @@ pub fn read_message(reader: &mut impl BufRead) -> Result<Vec<u8>> {
         let mut line = String::new();
         let n = reader
             .read_line(&mut line)
-            .map_err(|source| SecondBrainError::Io {
+            .map_err(|source| KeelError::Io {
                 path: PathBuf::from("stdin"),
                 source,
             })?;
         if n == 0 {
-            return Err(SecondBrainError::Mcp("unexpected EOF while reading headers".into()));
+            return Err(KeelError::Mcp("unexpected EOF while reading headers".into()));
         }
         let trimmed = line.trim_end_matches(['\r', '\n']);
         if trimmed.is_empty() {
@@ -52,7 +52,7 @@ pub fn read_message(reader: &mut impl BufRead) -> Result<Vec<u8>> {
         }
         if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
             let len = rest.trim().parse::<usize>().map_err(|_| {
-                SecondBrainError::Mcp(format!("invalid Content-Length: {rest:?}"))
+                KeelError::Mcp(format!("invalid Content-Length: {rest:?}"))
             })?;
             content_length = Some(len);
         }
@@ -60,11 +60,11 @@ pub fn read_message(reader: &mut impl BufRead) -> Result<Vec<u8>> {
     }
 
     let len = content_length
-        .ok_or_else(|| SecondBrainError::Mcp("missing Content-Length header".into()))?;
+        .ok_or_else(|| KeelError::Mcp("missing Content-Length header".into()))?;
     let mut body = vec![0u8; len];
     reader
         .read_exact(&mut body)
-        .map_err(|source| SecondBrainError::Io {
+        .map_err(|source| KeelError::Io {
             path: PathBuf::from("stdin"),
             source,
         })?;
@@ -78,7 +78,7 @@ pub fn handle_message(conn: &mut Connection, msg: &Value) -> Result<Option<Value
     let method = msg
         .get("method")
         .and_then(|m| m.as_str())
-        .ok_or_else(|| SecondBrainError::Mcp("missing method".into()))?;
+        .ok_or_else(|| KeelError::Mcp("missing method".into()))?;
     let id = msg.get("id").cloned();
 
     // Notifications have no `id` and must not produce a response.
@@ -129,7 +129,7 @@ pub fn handle_message(conn: &mut Connection, msg: &Value) -> Result<Option<Value
 pub fn serve(db_path: &Path) -> Result<()> {
     if let Some(parent) = db_path.parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|source| SecondBrainError::Io {
+            std::fs::create_dir_all(parent).map_err(|source| KeelError::Io {
                 path: parent.to_path_buf(),
                 source,
             })?;
@@ -146,7 +146,7 @@ pub fn serve(db_path: &Path) -> Result<()> {
     loop {
         let body = match read_message(&mut reader) {
             Ok(b) => b,
-            Err(SecondBrainError::Io { source, .. })
+            Err(KeelError::Io { source, .. })
                 if source.kind() == io::ErrorKind::UnexpectedEof =>
             {
                 break;
@@ -187,15 +187,15 @@ pub fn serve(db_path: &Path) -> Result<()> {
 
 fn write_response(stdout: &mut impl Write, response: &Value) -> Result<()> {
     let body =
-        serde_json::to_vec(response).map_err(|e| SecondBrainError::Mcp(e.to_string()))?;
+        serde_json::to_vec(response).map_err(|e| KeelError::Mcp(e.to_string()))?;
     let framed = encode_message(&body);
     stdout
         .write_all(&framed)
-        .map_err(|source| SecondBrainError::Io {
+        .map_err(|source| KeelError::Io {
             path: PathBuf::from("stdout"),
             source,
         })?;
-    stdout.flush().map_err(|source| SecondBrainError::Io {
+    stdout.flush().map_err(|source| KeelError::Io {
         path: PathBuf::from("stdout"),
         source,
     })?;
@@ -261,7 +261,7 @@ fn tools_list_result() -> Value {
             ),
             tool_def(
                 "index",
-                "Index a repository path into the SecondBrain database.",
+                "Index a repository path into the Keel database.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -302,7 +302,7 @@ fn call_tool(conn: &mut Connection, params: &Value) -> Result<Value> {
     let name = params
         .get("name")
         .and_then(|n| n.as_str())
-        .ok_or_else(|| SecondBrainError::Mcp("tools/call missing name".into()))?;
+        .ok_or_else(|| KeelError::Mcp("tools/call missing name".into()))?;
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
     let payload = match name {
@@ -344,7 +344,7 @@ fn call_tool(conn: &mut Connection, params: &Value) -> Result<Value> {
             json_text(IndexStatsDto::from(&stats))?
         }
         other => {
-            return Err(SecondBrainError::Mcp(format!("unknown tool: {other}")));
+            return Err(KeelError::Mcp(format!("unknown tool: {other}")));
         }
     };
 
@@ -356,12 +356,12 @@ fn require_string_arg(arguments: &Value, key: &str) -> Result<String> {
         .get(key)
         .and_then(|v| v.as_str())
         .map(str::to_owned)
-        .ok_or_else(|| SecondBrainError::Mcp(format!("missing required argument: {key}")))
+        .ok_or_else(|| KeelError::Mcp(format!("missing required argument: {key}")))
 }
 
 fn json_text<T: Serialize>(value: T) -> Result<Value> {
     let text =
-        serde_json::to_string(&value).map_err(|e| SecondBrainError::Mcp(e.to_string()))?;
+        serde_json::to_string(&value).map_err(|e| KeelError::Mcp(e.to_string()))?;
     Ok(json!({
         "content": [
             {
@@ -449,7 +449,7 @@ mod tests {
         assert_eq!(resp["jsonrpc"], "2.0");
         assert_eq!(resp["id"], 1);
         assert!(resp["result"]["capabilities"]["tools"].is_object());
-        assert_eq!(resp["result"]["serverInfo"]["name"], "secondbrain");
+        assert_eq!(resp["result"]["serverInfo"]["name"], "keel");
     }
 
     #[test]

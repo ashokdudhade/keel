@@ -4,7 +4,9 @@
 *.db
 *.sqlite
 
-.secondbrain/
-reports/sb
+.keel/
+reports/keel
 reports/run-A/
 reports/run-B/
+.secondbrain/
+reports/sb

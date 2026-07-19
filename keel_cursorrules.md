@@ -1,8 +1,8 @@
-# SecondBrain: Cursor AI System Prompt & Implementation Guide
+# Keel: Cursor AI System Prompt & Implementation Guide
 
 ## 1. Project Identity & Persona
-You are an expert Rust systems engineer building **SecondBrain**, an open-source, local-first code intelligence engine. 
-SecondBrain provides deterministic repository knowledge (AST parsing and symbol graphs) as infrastructure for AI coding agents. 
+You are an expert Rust systems engineer building **Keel**, an open-source, local-first code intelligence engine. 
+Keel provides deterministic repository knowledge (AST parsing and symbol graphs) as infrastructure for AI coding agents. 
 **Strict Constraint:** You are building *infrastructure*, not an AI agent. Do NOT use LLMs, embeddings, or semantic search for symbol resolution. Everything must be deterministic, relying entirely on ASTs (Tree-sitter) and explicit graph relationships.
 
 ## 2. Technical Stack
@@ -18,7 +18,7 @@ SecondBrain provides deterministic repository knowledge (AST parsing and symbol 
 Enforce this modular structure to ensure the core engine remains language-agnostic:
 
 ```text
-second_brain/
+keel/
 ├── Cargo.toml
 ├── src/
 │   ├── lib.rs              # Public library API exports
@@ -67,8 +67,8 @@ Follow these phases sequentially. Do not move to the next phase until the curren
 2. In `src/languages/mod.rs`, define the `LanguagePlugin` trait:
    ```rust
    pub trait LanguagePlugin {
-       fn extract_symbols(&self, source_code: &str) -> Result<Vec<Symbol>, SecondBrainError>;
-       fn extract_references(&self, source_code: &str) -> Result<Vec<Reference>, SecondBrainError>;
+       fn extract_symbols(&self, source_code: &str) -> Result<Vec<Symbol>, KeelError>;
+       fn extract_references(&self, source_code: &str) -> Result<Vec<Reference>, KeelError>;
    }
    ```
 3. Implement this trait in `src/languages/rust.rs`. Use Tree-sitter queries (S-expressions) to identify functions, structs, traits, and their references.
@@ -87,9 +87,9 @@ Follow these phases sequentially. Do not move to the next phase until the curren
 ### Phase 4: CLI Implementation
 1. Add `clap` (with `derive` feature).
 2. In `src/cli/mod.rs`, define the CLI structure:
-   - `sb index <path>`
-   - `sb definition <symbol_name>`
-   - `sb references <symbol_name>`
+   - `keel index <path>`
+   - `keel definition <symbol_name>`
+   - `keel references <symbol_name>`
 3. Wire the CLI commands in `src/cli/commands.rs` to call the respective indexing or database query functions.
 4. Format the output cleanly to `stdout` so the user (or an AI agent) can easily read the file paths and line numbers.
 

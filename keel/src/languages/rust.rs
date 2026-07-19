@@ -12,7 +12,7 @@
 //! - Go has no trait-impl form; `implementations` stays empty for Go sources.
 
 use super::{file_path_key, LanguagePlugin};
-use crate::error::{Result, SecondBrainError};
+use crate::error::{Result, KeelError};
 use crate::graph::types::{ImplRecord, Import, Reference, ReferenceKind, Symbol, SymbolKind};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -40,8 +40,8 @@ impl RustPlugin {
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_rust::LANGUAGE.into())
-            .map_err(|e| SecondBrainError::TreeSitter(e.to_string()))?;
-        parser.parse(source, None).ok_or(SecondBrainError::Parse)
+            .map_err(|e| KeelError::TreeSitter(e.to_string()))?;
+        parser.parse(source, None).ok_or(KeelError::Parse)
     }
 }
 
@@ -115,7 +115,7 @@ impl LanguagePlugin for RustPlugin {
 /// UTF-8 text of a node, surfacing decode errors as `TreeSitter`.
 fn node_text<'a>(node: Node, src: &'a [u8]) -> Result<&'a str> {
     node.utf8_text(src)
-        .map_err(|e| SecondBrainError::TreeSitter(e.to_string()))
+        .map_err(|e| KeelError::TreeSitter(e.to_string()))
 }
 
 /// Qualified module path for an item nested under `mods` (top level = `crate`).

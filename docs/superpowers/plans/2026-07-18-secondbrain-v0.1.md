@@ -1,8 +1,8 @@
-# SecondBrain v0.1 Implementation Plan
+# Keel v0.1 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the v0.1 foundation of SecondBrain — a local-first Rust engine that indexes a Rust repository into SQLite and answers `definition`/`references`/`callers` queries deterministically by name.
+**Goal:** Build the v0.1 foundation of Keel — a local-first Rust engine that indexes a Rust repository into SQLite and answers `definition`/`references`/`callers` queries deterministically by name.
 
 **Architecture:** A language-agnostic core (SQLite storage, parallel indexer, CLI) with Rust-specific logic isolated behind a `LanguagePlugin` trait. Tree-sitter extracts symbols and call/macro references; results are stored in SQLite and looked up by name. No LLMs, embeddings, or semantic search anywhere.
 
@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Rust edition 2021. Crate name `second_brain`; binary name `sb`.
+- Rust edition 2021. Crate name `keel`; binary name `keel`.
 - No `.unwrap()` / `.expect()` outside `#[cfg(test)]` code. Propagate with `?`.
 - No `unsafe` blocks anywhere.
 - Strong types for domain concepts: file paths are `std::path::PathBuf`, never `String`.
@@ -20,14 +20,14 @@
 - Determinism: identical repo state must produce identical query output. Query results are ordered by `(path, start_line, start_col)`.
 - Position convention: `start_line` and `start_col` are **1-based** (tree-sitter row/column + 1).
 - The SQL word `references` is reserved; it MUST always be quoted as `"references"` in SQL.
-- The on-disk index lives at `.secondbrain/index.db` relative to the current working directory.
+- The on-disk index lives at `.keel/index.db` relative to the current working directory.
 
 ---
 
 ## File Structure
 
 ```text
-second_brain/
+keel/
 ├── Cargo.toml              # Task 1
 ├── README.md               # Task 6
 ├── .gitignore              # already present at repo root
@@ -55,23 +55,23 @@ second_brain/
     └── integration.rs      # Task 4 / Task 5
 ```
 
-> **Working directory note:** All `cargo` commands below run from the `second_brain/` package directory created in Task 1. The design docs live one level up in `docs/`, so from the repo root you will `cd second_brain` after Task 1, Step 1.
+> **Working directory note:** All `cargo` commands below run from the `keel/` package directory created in Task 1. The design docs live one level up in `docs/`, so from the repo root you will `cd keel` after Task 1, Step 1.
 
 ---
 
 ## Task 1: Scaffolding, Error Types, Domain Types
 
 **Files:**
-- Create: `second_brain/Cargo.toml`
-- Create: `second_brain/src/lib.rs`
-- Create: `second_brain/src/error.rs`
-- Create: `second_brain/src/graph/mod.rs`
-- Create: `second_brain/src/graph/types.rs`
+- Create: `keel/Cargo.toml`
+- Create: `keel/src/lib.rs`
+- Create: `keel/src/error.rs`
+- Create: `keel/src/graph/mod.rs`
+- Create: `keel/src/graph/types.rs`
 
 **Interfaces:**
 - Produces:
-  - `second_brain::error::SecondBrainError` (enum) and `second_brain::error::Result<T> = std::result::Result<T, SecondBrainError>`.
-  - `second_brain::graph::types::{Symbol, Reference, FileNode, SymbolKind}`.
+  - `keel::error::KeelError` (enum) and `keel::error::Result<T> = std::result::Result<T, KeelError>`.
+  - `keel::graph::types::{Symbol, Reference, FileNode, SymbolKind}`.
   - `Symbol { name: String, kind: SymbolKind, file: PathBuf, start_line: u32, start_col: u32 }`.
   - `Reference { name: String, file: PathBuf, start_line: u32, start_col: u32 }`.
   - `FileNode { path: PathBuf, content_hash: String }`.
@@ -79,11 +79,11 @@ second_brain/
 
 - [ ] **Step 1: Create the Cargo package and add dependencies**
 
-Run from the repo root (`/Users/ashokdudhade/os/second-brain`):
+Run from the repo root (`/Users/ashokdudhade/os/keel`):
 
 ```bash
-cargo new second_brain --lib
-cd second_brain
+cargo new keel --lib
+cd keel
 cargo add rusqlite --features bundled
 cargo add tree-sitter@0.25
 cargo add tree-sitter-rust@0.24
@@ -94,17 +94,17 @@ cargo add thiserror
 cargo add --dev tempfile
 ```
 
-Then set the binary name and edition. Edit `second_brain/Cargo.toml` so the `[package]` uses `edition = "2021"` and append:
+Then set the binary name and edition. Edit `keel/Cargo.toml` so the `[package]` uses `edition = "2021"` and append:
 
 ```toml
 [[bin]]
-name = "sb"
+name = "keel"
 path = "src/main.rs"
 ```
 
 - [ ] **Step 2: Write the failing test for `SymbolKind` DB round-trip**
 
-Create `second_brain/src/graph/types.rs` with only this test module for now:
+Create `keel/src/graph/types.rs` with only this test module for now:
 
 ```rust
 #[cfg(test)]
@@ -137,7 +137,7 @@ Expected: FAIL to compile — `SymbolKind` not found.
 
 - [ ] **Step 4: Implement domain types and error module**
 
-Prepend to `second_brain/src/graph/types.rs` (above the test module):
+Prepend to `keel/src/graph/types.rs` (above the test module):
 
 ```rust
 //! Core domain types shared across the engine.
@@ -215,7 +215,7 @@ pub struct FileNode {
 }
 ```
 
-Create `second_brain/src/graph/mod.rs`:
+Create `keel/src/graph/mod.rs`:
 
 ```rust
 //! Domain graph types and (later) query surface.
@@ -223,17 +223,17 @@ Create `second_brain/src/graph/mod.rs`:
 pub mod types;
 ```
 
-Create `second_brain/src/error.rs`:
+Create `keel/src/error.rs`:
 
 ```rust
-//! Core error type for the SecondBrain library.
+//! Core error type for the Keel library.
 
 use std::path::PathBuf;
 use thiserror::Error;
 
-/// All errors produced by the SecondBrain library.
+/// All errors produced by the Keel library.
 #[derive(Debug, Error)]
-pub enum SecondBrainError {
+pub enum KeelError {
     #[error("I/O error for {path}")]
     Io {
         path: PathBuf,
@@ -255,18 +255,18 @@ pub enum SecondBrainError {
 }
 
 /// Convenience `Result` alias used throughout the library.
-pub type Result<T> = std::result::Result<T, SecondBrainError>;
+pub type Result<T> = std::result::Result<T, KeelError>;
 ```
 
-Replace `second_brain/src/lib.rs` with:
+Replace `keel/src/lib.rs` with:
 
 ```rust
-//! SecondBrain: deterministic, local-first code intelligence engine.
+//! Keel: deterministic, local-first code intelligence engine.
 
 pub mod error;
 pub mod graph;
 
-pub use error::{Result, SecondBrainError};
+pub use error::{Result, KeelError};
 ```
 
 - [ ] **Step 5: Run the test to verify it passes**
@@ -282,8 +282,8 @@ Expected: no warnings/errors.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add second_brain
-git commit -m "feat: scaffold second_brain crate with error and domain types"
+git add keel
+git commit -m "feat: scaffold keel crate with error and domain types"
 ```
 
 ---
@@ -291,10 +291,10 @@ git commit -m "feat: scaffold second_brain crate with error and domain types"
 ## Task 2: SQLite Storage Layer
 
 **Files:**
-- Create: `second_brain/src/db/mod.rs`
-- Create: `second_brain/src/db/schema.rs`
-- Create: `second_brain/src/db/queries.rs`
-- Modify: `second_brain/src/lib.rs` (add `pub mod db;`)
+- Create: `keel/src/db/mod.rs`
+- Create: `keel/src/db/schema.rs`
+- Create: `keel/src/db/queries.rs`
+- Modify: `keel/src/lib.rs` (add `pub mod db;`)
 
 **Interfaces:**
 - Consumes: `Symbol`, `Reference`, `FileNode`, `SymbolKind` from `graph::types`; `Result` from `error`.
@@ -308,7 +308,7 @@ git commit -m "feat: scaffold second_brain crate with error and domain types"
 
 - [ ] **Step 1: Write the failing tests (in-memory SQLite)**
 
-Create `second_brain/src/db/queries.rs` with only this test module for now:
+Create `keel/src/db/queries.rs` with only this test module for now:
 
 ```rust
 #[cfg(test)]
@@ -392,7 +392,7 @@ Expected: FAIL to compile — `insert_file`, `schema`, etc. not found.
 
 - [ ] **Step 3: Implement the schema**
 
-Create `second_brain/src/db/schema.rs`:
+Create `keel/src/db/schema.rs`:
 
 ```rust
 //! SQLite schema definition and initialization.
@@ -436,7 +436,7 @@ pub fn initialize(conn: &Connection) -> Result<()> {
 
 - [ ] **Step 4: Implement the queries**
 
-Prepend to `second_brain/src/db/queries.rs` (above the test module):
+Prepend to `keel/src/db/queries.rs` (above the test module):
 
 ```rust
 //! Type-safe insert/select wrappers over the SQLite tables.
@@ -529,7 +529,7 @@ pub fn find_references(conn: &Connection, name: &str) -> Result<Vec<Reference>> 
 }
 ```
 
-Create `second_brain/src/db/mod.rs`:
+Create `keel/src/db/mod.rs`:
 
 ```rust
 //! SQLite storage layer: schema and type-safe queries.
@@ -538,7 +538,7 @@ pub mod queries;
 pub mod schema;
 ```
 
-Add `pub mod db;` to `second_brain/src/lib.rs` (below `pub mod error;`):
+Add `pub mod db;` to `keel/src/lib.rs` (below `pub mod error;`):
 
 ```rust
 pub mod db;
@@ -559,7 +559,7 @@ Expected: no warnings.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add second_brain
+git add keel
 git commit -m "feat: add SQLite schema and type-safe query layer"
 ```
 
@@ -568,12 +568,12 @@ git commit -m "feat: add SQLite schema and type-safe query layer"
 ## Task 3: Language Plugin Trait + Rust Extraction
 
 **Files:**
-- Create: `second_brain/src/languages/mod.rs`
-- Create: `second_brain/src/languages/rust.rs`
-- Modify: `second_brain/src/lib.rs` (add `pub mod languages;`)
+- Create: `keel/src/languages/mod.rs`
+- Create: `keel/src/languages/rust.rs`
+- Modify: `keel/src/lib.rs` (add `pub mod languages;`)
 
 **Interfaces:**
-- Consumes: `Symbol`, `Reference`, `SymbolKind` from `graph::types`; `Result`, `SecondBrainError` from `error`.
+- Consumes: `Symbol`, `Reference`, `SymbolKind` from `graph::types`; `Result`, `KeelError` from `error`.
 - Produces:
   - `trait languages::LanguagePlugin: Sync` with `fn extensions(&self) -> &[&str]`, `fn extract_symbols(&self, source_code: &str) -> Result<Vec<Symbol>>`, `fn extract_references(&self, source_code: &str) -> Result<Vec<Reference>>`.
   - `languages::Registry` with `fn with_defaults() -> Self` and `fn for_extension(&self, ext: &str) -> Option<&dyn LanguagePlugin>`.
@@ -582,7 +582,7 @@ git commit -m "feat: add SQLite schema and type-safe query layer"
 
 - [ ] **Step 1: Write the failing extraction tests**
 
-Create `second_brain/src/languages/rust.rs` with only this test module for now:
+Create `keel/src/languages/rust.rs` with only this test module for now:
 
 ```rust
 #[cfg(test)]
@@ -636,7 +636,7 @@ Expected: FAIL to compile — `RustPlugin` not found.
 
 - [ ] **Step 3: Define the trait and registry**
 
-Create `second_brain/src/languages/mod.rs`:
+Create `keel/src/languages/mod.rs`:
 
 ```rust
 //! Language plugin trait and registry. The core dispatches to plugins by file
@@ -684,13 +684,13 @@ impl Registry {
 
 - [ ] **Step 4: Implement the Rust plugin**
 
-Prepend to `second_brain/src/languages/rust.rs` (above the test module):
+Prepend to `keel/src/languages/rust.rs` (above the test module):
 
 ```rust
 //! Rust language plugin: Tree-sitter based symbol and reference extraction.
 
 use super::LanguagePlugin;
-use crate::error::{Result, SecondBrainError};
+use crate::error::{Result, KeelError};
 use crate::graph::types::{Reference, Symbol, SymbolKind};
 use std::path::PathBuf;
 use streaming_iterator::StreamingIterator;
@@ -723,8 +723,8 @@ impl RustPlugin {
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_rust::LANGUAGE.into())
-            .map_err(|e| SecondBrainError::TreeSitter(e.to_string()))?;
-        parser.parse(source, None).ok_or(SecondBrainError::Parse)
+            .map_err(|e| KeelError::TreeSitter(e.to_string()))?;
+        parser.parse(source, None).ok_or(KeelError::Parse)
     }
 }
 
@@ -737,7 +737,7 @@ impl LanguagePlugin for RustPlugin {
         let tree = Self::parse(source_code)?;
         let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
         let query = Query::new(&language, SYMBOL_QUERY)
-            .map_err(|e| SecondBrainError::TreeSitter(e.to_string()))?;
+            .map_err(|e| KeelError::TreeSitter(e.to_string()))?;
         let names = query.capture_names();
 
         let mut cursor = QueryCursor::new();
@@ -748,7 +748,7 @@ impl LanguagePlugin for RustPlugin {
                 let node = cap.node;
                 let text = node
                     .utf8_text(source_code.as_bytes())
-                    .map_err(|e| SecondBrainError::TreeSitter(e.to_string()))?;
+                    .map_err(|e| KeelError::TreeSitter(e.to_string()))?;
                 let pos = node.start_position();
                 out.push(Symbol {
                     name: text.to_string(),
@@ -766,7 +766,7 @@ impl LanguagePlugin for RustPlugin {
         let tree = Self::parse(source_code)?;
         let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
         let query = Query::new(&language, REFERENCE_QUERY)
-            .map_err(|e| SecondBrainError::TreeSitter(e.to_string()))?;
+            .map_err(|e| KeelError::TreeSitter(e.to_string()))?;
 
         let mut cursor = QueryCursor::new();
         let mut out = Vec::new();
@@ -776,7 +776,7 @@ impl LanguagePlugin for RustPlugin {
                 let node = cap.node;
                 let text = node
                     .utf8_text(source_code.as_bytes())
-                    .map_err(|e| SecondBrainError::TreeSitter(e.to_string()))?;
+                    .map_err(|e| KeelError::TreeSitter(e.to_string()))?;
                 let pos = node.start_position();
                 out.push(Reference {
                     name: text.to_string(),
@@ -804,7 +804,7 @@ fn capture_kind(capture_name: &str) -> SymbolKind {
 }
 ```
 
-Add `pub mod languages;` to `second_brain/src/lib.rs`:
+Add `pub mod languages;` to `keel/src/lib.rs`:
 
 ```rust
 pub mod db;
@@ -828,7 +828,7 @@ Expected: no warnings.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add second_brain
+git add keel
 git commit -m "feat: add LanguagePlugin trait and Rust tree-sitter extraction"
 ```
 
@@ -837,10 +837,10 @@ git commit -m "feat: add LanguagePlugin trait and Rust tree-sitter extraction"
 ## Task 4: Indexing Engine
 
 **Files:**
-- Create: `second_brain/src/index/mod.rs`
-- Create: `second_brain/src/index/worker.rs`
-- Create: `second_brain/tests/integration.rs`
-- Modify: `second_brain/src/lib.rs` (add `pub mod index;`)
+- Create: `keel/src/index/mod.rs`
+- Create: `keel/src/index/worker.rs`
+- Create: `keel/tests/integration.rs`
+- Modify: `keel/src/lib.rs` (add `pub mod index;`)
 
 **Interfaces:**
 - Consumes: `Registry` from `languages`; `insert_file`/`insert_symbols`/`insert_references` from `db::queries`; `schema::initialize`; `FileNode`/`Symbol`/`Reference` from `graph::types`.
@@ -853,13 +853,13 @@ git commit -m "feat: add LanguagePlugin trait and Rust tree-sitter extraction"
 
 - [ ] **Step 1: Write the failing integration test**
 
-Create `second_brain/tests/integration.rs`:
+Create `keel/tests/integration.rs`:
 
 ```rust
 use rusqlite::Connection;
-use second_brain::db::queries;
-use second_brain::graph::types::SymbolKind;
-use second_brain::index;
+use keel::db::queries;
+use keel::graph::types::SymbolKind;
+use keel::index;
 use std::fs;
 
 #[test]
@@ -896,17 +896,17 @@ fn indexes_and_queries_a_fixture_repo() {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `cargo test --test integration`
-Expected: FAIL to compile — `second_brain::index` not found.
+Expected: FAIL to compile — `keel::index` not found.
 
 - [ ] **Step 3: Implement the worker**
 
-Create `second_brain/src/index/worker.rs`:
+Create `keel/src/index/worker.rs`:
 
 ```rust
 //! Parallel file parsing pipeline. CPU-bound parse/extract runs in parallel;
 //! database writes are serialized by the orchestrator in `index::index_repository`.
 
-use crate::error::{Result, SecondBrainError};
+use crate::error::{Result, KeelError};
 use crate::graph::types::{FileNode, Reference, Symbol};
 use crate::languages::Registry;
 use ignore::WalkBuilder;
@@ -937,11 +937,11 @@ pub fn collect_rust_files(root: &Path) -> Vec<PathBuf> {
 /// Read, parse, and extract a single file.
 pub fn parse_file(path: &Path, registry: &Registry) -> Result<ParsedFile> {
     let source = fs::read_to_string(path)
-        .map_err(|source| SecondBrainError::Io { path: path.to_path_buf(), source })?;
+        .map_err(|source| KeelError::Io { path: path.to_path_buf(), source })?;
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
     let plugin = registry
         .for_extension(ext)
-        .ok_or_else(|| SecondBrainError::UnsupportedExtension(ext.to_string()))?;
+        .ok_or_else(|| KeelError::UnsupportedExtension(ext.to_string()))?;
 
     let symbols = plugin.extract_symbols(&source)?;
     let references = plugin.extract_references(&source)?;
@@ -962,7 +962,7 @@ pub fn parse_all(files: &[PathBuf], registry: &Registry) -> Result<Vec<ParsedFil
 
 - [ ] **Step 4: Implement the orchestrator**
 
-Create `second_brain/src/index/mod.rs`:
+Create `keel/src/index/mod.rs`:
 
 ```rust
 //! Indexing orchestration: crawl, parse in parallel, then persist in one
@@ -997,7 +997,7 @@ pub fn index_repository(root: &Path, conn: &mut Connection) -> Result<usize> {
 }
 ```
 
-Add `pub mod index;` to `second_brain/src/lib.rs`:
+Add `pub mod index;` to `keel/src/lib.rs`:
 
 ```rust
 pub mod db;
@@ -1020,7 +1020,7 @@ Expected: all tests pass, no warnings.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add second_brain
+git add keel
 git commit -m "feat: add parallel indexing engine with .gitignore-aware crawl"
 ```
 
@@ -1029,11 +1029,11 @@ git commit -m "feat: add parallel indexing engine with .gitignore-aware crawl"
 ## Task 5: CLI
 
 **Files:**
-- Create: `second_brain/src/cli/mod.rs`
-- Create: `second_brain/src/cli/commands.rs`
-- Create: `second_brain/src/main.rs`
-- Modify: `second_brain/src/lib.rs` (add `pub mod cli;`)
-- Modify: `second_brain/tests/integration.rs` (add a CLI end-to-end test)
+- Create: `keel/src/cli/mod.rs`
+- Create: `keel/src/cli/commands.rs`
+- Create: `keel/src/main.rs`
+- Modify: `keel/src/lib.rs` (add `pub mod cli;`)
+- Modify: `keel/tests/integration.rs` (add a CLI end-to-end test)
 
 **Interfaces:**
 - Consumes: `index::index_repository`; `db::queries::{find_definition, find_references}`; `db::schema::initialize`; `Symbol`/`Reference` from `graph::types`.
@@ -1042,11 +1042,11 @@ git commit -m "feat: add parallel indexing engine with .gitignore-aware crawl"
   - `cli::commands::run_index(path: &Path) -> Result<usize>`
   - `cli::commands::run_definition(name: &str) -> Result<Vec<Symbol>>`
   - `cli::commands::run_references(name: &str) -> Result<Vec<Reference>>`
-  - The `sb` binary (`main.rs`) that parses args and prints results.
+  - The `keel` binary (`main.rs`) that parses args and prints results.
 
 - [ ] **Step 1: Write the failing CLI end-to-end test**
 
-Append to `second_brain/tests/integration.rs`:
+Append to `keel/tests/integration.rs`:
 
 ```rust
 #[test]
@@ -1055,16 +1055,16 @@ fn cli_binary_indexes_and_queries() {
     let root = dir.path();
     std::fs::write(root.join("main.rs"), "fn create_order() {}\nfn run() { create_order(); }\n").unwrap();
 
-    let sb = env!("CARGO_BIN_EXE_sb");
+    let keel = env!("CARGO_BIN_EXE_keel");
 
-    let index_out = std::process::Command::new(sb)
+    let index_out = std::process::Command::new(keel)
         .current_dir(root)
         .args(["index", "."])
         .output()
         .unwrap();
     assert!(index_out.status.success(), "index failed: {:?}", index_out);
 
-    let def_out = std::process::Command::new(sb)
+    let def_out = std::process::Command::new(keel)
         .current_dir(root)
         .args(["definition", "create_order"])
         .output()
@@ -1079,11 +1079,11 @@ fn cli_binary_indexes_and_queries() {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `cargo test --test integration cli_binary_indexes_and_queries`
-Expected: FAIL — the `sb` binary does not compile yet (no `main.rs`/`cli`).
+Expected: FAIL — the `keel` binary does not compile yet (no `main.rs`/`cli`).
 
 - [ ] **Step 3: Define the CLI structs**
 
-Create `second_brain/src/cli/mod.rs`:
+Create `keel/src/cli/mod.rs`:
 
 ```rust
 //! Command-line interface definitions.
@@ -1093,9 +1093,9 @@ pub mod commands;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-/// Top-level CLI parser for the `sb` binary.
+/// Top-level CLI parser for the `keel` binary.
 #[derive(Parser)]
-#[command(name = "sb", about = "SecondBrain: deterministic code intelligence")]
+#[command(name = "keel", about = "Keel: deterministic code intelligence")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -1104,7 +1104,7 @@ pub struct Cli {
 /// Available subcommands.
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Index a repository at PATH into `.secondbrain/index.db`.
+    /// Index a repository at PATH into `.keel/index.db`.
     Index { path: PathBuf },
     /// Print definition location(s) for a symbol name.
     Definition { name: String },
@@ -1117,19 +1117,19 @@ pub enum Commands {
 
 - [ ] **Step 4: Implement the command layer**
 
-Create `second_brain/src/cli/commands.rs`:
+Create `keel/src/cli/commands.rs`:
 
 ```rust
 //! Execution logic behind each CLI subcommand.
 
 use crate::db::{queries, schema};
-use crate::error::{Result, SecondBrainError};
+use crate::error::{Result, KeelError};
 use crate::graph::types::{Reference, Symbol};
 use crate::index;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
-const DB_DIR: &str = ".secondbrain";
+const DB_DIR: &str = ".keel";
 const DB_FILE: &str = "index.db";
 
 fn db_path() -> PathBuf {
@@ -1139,7 +1139,7 @@ fn db_path() -> PathBuf {
 /// Open (creating the directory if needed) the on-disk index database.
 fn open_db() -> Result<Connection> {
     std::fs::create_dir_all(DB_DIR)
-        .map_err(|source| SecondBrainError::Io { path: PathBuf::from(DB_DIR), source })?;
+        .map_err(|source| KeelError::Io { path: PathBuf::from(DB_DIR), source })?;
     let conn = Connection::open(db_path())?;
     Ok(conn)
 }
@@ -1165,14 +1165,14 @@ pub fn run_references(name: &str) -> Result<Vec<Reference>> {
 }
 ```
 
-Create `second_brain/src/main.rs`:
+Create `keel/src/main.rs`:
 
 ```rust
-//! `sb` binary entry point. Uses `anyhow` for context-rich top-level errors.
+//! `keel` binary entry point. Uses `anyhow` for context-rich top-level errors.
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use second_brain::cli::{commands, Cli, Commands};
+use keel::cli::{commands, Cli, Commands};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -1221,7 +1221,7 @@ fn main() -> Result<()> {
 }
 ```
 
-Add `pub mod cli;` to `second_brain/src/lib.rs`:
+Add `pub mod cli;` to `keel/src/lib.rs`:
 
 ```rust
 pub mod cli;
@@ -1231,7 +1231,7 @@ pub mod graph;
 pub mod index;
 pub mod languages;
 
-pub use error::{Result, SecondBrainError};
+pub use error::{Result, KeelError};
 ```
 
 - [ ] **Step 5: Run the CLI test to verify it passes**
@@ -1247,7 +1247,7 @@ cargo run --quiet -- definition RustPlugin
 cargo run --quiet -- callers find_definition
 ```
 
-Expected: `index` prints an indexed-file count; `definition RustPlugin` prints a `src/languages/rust.rs:LINE:COL	struct	RustPlugin` line; `callers` prints call sites. Then clean up: `rm -rf .secondbrain`.
+Expected: `index` prints an indexed-file count; `definition RustPlugin` prints a `src/languages/rust.rs:LINE:COL	struct	RustPlugin` line; `callers` prints call sites. Then clean up: `rm -rf .keel`.
 
 - [ ] **Step 7: Full suite + lint**
 
@@ -1257,8 +1257,8 @@ Expected: all pass, no warnings.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add second_brain
-git commit -m "feat: add sb CLI with index/definition/references/callers"
+git add keel
+git commit -m "feat: add keel CLI with index/definition/references/callers"
 ```
 
 ---
@@ -1266,7 +1266,7 @@ git commit -m "feat: add sb CLI with index/definition/references/callers"
 ## Task 6: Documentation & Release Polish
 
 **Files:**
-- Create: `second_brain/README.md`
+- Create: `keel/README.md`
 - Modify: any source file missing Rustdoc on a public item.
 
 **Interfaces:** none (docs only).
@@ -1278,12 +1278,12 @@ Expected: docs build; address any `missing_docs` warnings by adding `///` to the
 
 - [ ] **Step 2: Write the README**
 
-Create `second_brain/README.md`:
+Create `keel/README.md`:
 
 ```markdown
-# SecondBrain
+# Keel
 
-Deterministic, local-first code intelligence for AI coding agents. SecondBrain
+Deterministic, local-first code intelligence for AI coding agents. Keel
 indexes a Rust repository with Tree-sitter and answers structural queries from a
 local SQLite database — no LLMs, embeddings, or semantic search.
 
@@ -1293,15 +1293,15 @@ local SQLite database — no LLMs, embeddings, or semantic search.
 cargo build --release
 ```
 
-The binary is `sb` (target/release/sb).
+The binary is `keel` (target/release/keel).
 
 ## Usage
 
 ```bash
-sb index <path>            # index a repository into ./.secondbrain/index.db
-sb definition <name>       # where a symbol is defined
-sb references <name>       # where a name is referenced (call/macro sites in v0.1)
-sb callers <name>          # call/use sites of a function (name-based in v0.1)
+keel index <path>            # index a repository into ./.keel/index.db
+keel definition <name>       # where a symbol is defined
+keel references <name>       # where a name is referenced (call/macro sites in v0.1)
+keel callers <name>          # call/use sites of a function (name-based in v0.1)
 ```
 
 Output is `path:line:col` (1-based), tab-separated, stable and script-friendly.
@@ -1324,7 +1324,7 @@ Expected: all tests pass, no warnings, release binary builds.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add second_brain
+git add keel
 git commit -m "docs: add README and complete rustdoc coverage"
 ```
 

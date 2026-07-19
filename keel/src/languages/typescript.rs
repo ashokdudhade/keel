@@ -7,7 +7,7 @@
 //! grammar. Extraction walks are shared.
 
 use super::{file_path_key, path_module_identity, LanguagePlugin};
-use crate::error::{Result, SecondBrainError};
+use crate::error::{Result, KeelError};
 use crate::graph::types::{Import, Reference, ReferenceKind, Symbol, SymbolKind};
 use std::path::{Path, PathBuf};
 use tree_sitter::{Language, Node, Parser, Tree};
@@ -28,8 +28,8 @@ impl TypeScriptPlugin {
         let mut parser = Parser::new();
         parser
             .set_language(&language)
-            .map_err(|e| SecondBrainError::TreeSitter(e.to_string()))?;
-        parser.parse(source, None).ok_or(SecondBrainError::Parse)
+            .map_err(|e| KeelError::TreeSitter(e.to_string()))?;
+        parser.parse(source, None).ok_or(KeelError::Parse)
     }
 }
 
@@ -126,7 +126,7 @@ pub(crate) fn register(plugins: &mut Vec<Box<dyn LanguagePlugin>>) {
 
 fn node_text<'a>(node: Node, src: &'a [u8]) -> Result<&'a str> {
     node.utf8_text(src)
-        .map_err(|e| SecondBrainError::TreeSitter(e.to_string()))
+        .map_err(|e| KeelError::TreeSitter(e.to_string()))
 }
 
 fn qualify_scope(file_key: &str, module_path: &str, scope: &[String]) -> String {

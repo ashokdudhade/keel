@@ -7,7 +7,7 @@
 //! interface satisfaction is future work.
 
 use super::{file_path_key, path_module_identity, LanguagePlugin};
-use crate::error::{Result, SecondBrainError};
+use crate::error::{Result, KeelError};
 use crate::graph::types::{Import, Reference, ReferenceKind, Symbol, SymbolKind};
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser, Tree};
@@ -20,8 +20,8 @@ impl GoPlugin {
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_go::LANGUAGE.into())
-            .map_err(|e| SecondBrainError::TreeSitter(e.to_string()))?;
-        parser.parse(source, None).ok_or(SecondBrainError::Parse)
+            .map_err(|e| KeelError::TreeSitter(e.to_string()))?;
+        parser.parse(source, None).ok_or(KeelError::Parse)
     }
 }
 
@@ -77,7 +77,7 @@ fn resolve_module_path(path: &Path, root: Node, src: &[u8]) -> Result<String> {
 
 fn node_text<'a>(node: Node, src: &'a [u8]) -> Result<&'a str> {
     node.utf8_text(src)
-        .map_err(|e| SecondBrainError::TreeSitter(e.to_string()))
+        .map_err(|e| KeelError::TreeSitter(e.to_string()))
 }
 
 fn package_name(root: Node, src: &[u8]) -> Result<Option<String>> {

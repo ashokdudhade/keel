@@ -5,9 +5,9 @@ pub mod commands;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-/// Top-level CLI parser for the `sb` binary.
+/// Top-level CLI parser for the `keel` binary.
 #[derive(Parser)]
-#[command(name = "sb", about = "SecondBrain: deterministic code intelligence")]
+#[command(name = "keel", about = "Keel: deterministic code intelligence")]
 pub struct Cli {
     /// The subcommand to run.
     #[command(subcommand)]
@@ -17,7 +17,7 @@ pub struct Cli {
 /// Available subcommands.
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Index a repository at PATH into `.secondbrain/index.db`.
+    /// Index a repository at PATH into `.keel/index.db`.
     Index {
         /// Path to the repository to index.
         path: PathBuf,

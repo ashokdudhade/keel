@@ -10,7 +10,7 @@
 //! therefore disambiguated by probing for the `files` table: if it exists the
 //! database is a legacy v0.1 that must be upgraded, otherwise it is truly fresh.
 
-use crate::error::{Result, SecondBrainError};
+use crate::error::{Result, KeelError};
 use rusqlite::Connection;
 
 /// The latest schema version this build understands.
@@ -25,7 +25,7 @@ const SCHEMA_VERSION: i64 = 2;
 ///   runs the v0.1 → v2 upgrade in place, preserving existing data;
 /// - version 1 (stamped v0.1 database): runs the same v0.1 → v2 upgrade;
 /// - version 2: no-op;
-/// - version > [`SCHEMA_VERSION`]: returns [`SecondBrainError::UnsupportedSchema`]
+/// - version > [`SCHEMA_VERSION`]: returns [`KeelError::UnsupportedSchema`]
 ///   without stamping.
 ///
 /// The whole migration runs inside a single transaction so a partial failure
@@ -50,7 +50,7 @@ pub fn initialize(conn: &Connection) -> Result<()> {
 /// schema version. Must be called inside a transaction.
 fn migrate(conn: &Connection, version: i64) -> Result<()> {
     if version > SCHEMA_VERSION {
-        return Err(SecondBrainError::UnsupportedSchema {
+        return Err(KeelError::UnsupportedSchema {
             found: version,
             supported: SCHEMA_VERSION,
         });
@@ -344,7 +344,7 @@ mod tests {
 
         let err = initialize(&conn).expect_err("must reject newer schema");
         match err {
-            crate::error::SecondBrainError::UnsupportedSchema { found, supported } => {
+            crate::error::KeelError::UnsupportedSchema { found, supported } => {
                 assert_eq!(found, 99);
                 assert_eq!(supported, SCHEMA_VERSION);
             }

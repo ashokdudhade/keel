@@ -1,12 +1,12 @@
-//! End-to-end integration tests for the SecondBrain engine and `sb` CLI.
+//! End-to-end integration tests for the Keel engine and `keel` CLI.
 
 use rusqlite::Connection;
-use second_brain::api;
-use second_brain::db::{queries, schema};
-use second_brain::graph::deps;
-use second_brain::graph::impact;
-use second_brain::graph::types::SymbolKind;
-use second_brain::index;
+use keel::api;
+use keel::db::{queries, schema};
+use keel::graph::deps;
+use keel::graph::impact;
+use keel::graph::types::SymbolKind;
+use keel::index;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -158,7 +158,7 @@ fn cli_binary_indexes_and_queries() {
     let root = dir.path();
     std::fs::write(root.join("main.rs"), "fn create_order() {}\nfn run() { create_order(); }\n").unwrap();
 
-    let sb = env!("CARGO_BIN_EXE_sb");
+    let sb = env!("CARGO_BIN_EXE_keel");
 
     let index_out = std::process::Command::new(sb)
         .current_dir(root)
@@ -226,7 +226,7 @@ fn cli_implementations_prints_trait_impls() {
     )
     .unwrap();
 
-    let sb = env!("CARGO_BIN_EXE_sb");
+    let sb = env!("CARGO_BIN_EXE_keel");
 
     let index_out = std::process::Command::new(sb)
         .current_dir(root)
@@ -301,7 +301,7 @@ fn cli_dependencies_prints_imported_modules() {
     )
     .unwrap();
 
-    let sb = env!("CARGO_BIN_EXE_sb");
+    let sb = env!("CARGO_BIN_EXE_keel");
     let index_out = std::process::Command::new(sb)
         .current_dir(root)
         .args(["index", "."])
@@ -355,7 +355,7 @@ fn cli_impact_prints_transitive_callers() {
     )
     .unwrap();
 
-    let sb = env!("CARGO_BIN_EXE_sb");
+    let sb = env!("CARGO_BIN_EXE_keel");
     let index_out = std::process::Command::new(sb)
         .current_dir(root)
         .args(["index", "."])

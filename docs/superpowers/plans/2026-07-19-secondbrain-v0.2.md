@@ -1,16 +1,16 @@
-# SecondBrain v0.2 Implementation Plan
+# Keel v0.2 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Extend SecondBrain from a name index into a resolved cross-file symbol graph with incremental indexing, dependency/impact analysis, and a JSON API — all deterministic, no LLMs/embeddings.
+**Goal:** Extend Keel from a name index into a resolved cross-file symbol graph with incremental indexing, dependency/impact analysis, and a JSON API — all deterministic, no LLMs/embeddings.
 
-**Architecture:** Build on the v0.1 crate. Add a schema migration runner, richer Rust extraction (module paths, `use` imports, `impl` trait relationships, method calls), an in-house **deterministic AST resolver** (module-path + import aware) as the precision layer (chosen over the unpublished `tree-sitter-stack-graphs-rust`), incremental indexing (hash-diff + stale cleanup + `sb watch`), graph queries (`implementations`/`dependencies`/`impact`), and a `sb serve` JSON API.
+**Architecture:** Build on the v0.1 crate. Add a schema migration runner, richer Rust extraction (module paths, `use` imports, `impl` trait relationships, method calls), an in-house **deterministic AST resolver** (module-path + import aware) as the precision layer (chosen over the unpublished `tree-sitter-stack-graphs-rust`), incremental indexing (hash-diff + stale cleanup + `keel watch`), graph queries (`implementations`/`dependencies`/`impact`), and a `keel serve` JSON API.
 
 **Tech Stack:** As v0.1, plus `notify` (file watching), `tiny_http` (JSON API server), `serde` + `serde_json` (JSON).
 
 ## Global Constraints
 
-- Rust edition 2021. Crate `second_brain`, binary `sb`.
+- Rust edition 2021. Crate `keel`, binary `keel`.
 - No `.unwrap()`/`.expect()` outside `#[cfg(test)]`. No `unsafe`. `PathBuf` for paths.
 - `thiserror` in the library; `anyhow` only at the `main.rs` boundary.
 - Rustdoc on every public module/trait/function. 1-based positions.
@@ -83,21 +83,21 @@ Each task updates ALL construction sites (extraction, queries, tests) so the bui
 
 ---
 
-## Task 3: Incremental Indexing + `sb watch`
+## Task 3: Incremental Indexing + `keel watch`
 
 **Files:** Modify `src/index/mod.rs`, `src/index/worker.rs`, `src/cli/*`, `src/main.rs`; add `src/index/watch.rs`; integration tests.
 
 **Interfaces produced:**
 - `index::index_repository` returns `IndexStats { indexed, skipped, removed }` (breaking change — update callers/tests). It: loads existing `path -> content_hash`; hashes candidate files first (cheap read) or hashes during parse; skips files whose hash is unchanged; parses+persists changed/new files; deletes DB rows for files no longer on disk (file row + symbols/refs/imports/impls). Determinism preserved.
 - `index::watch::watch_repository(root, conn)` using `notify` — re-indexes on file events (debounced), runs until interrupted.
-- CLI: `sb watch <path>`.
+- CLI: `keel watch <path>`.
 
 - [ ] Step 1 (TDD): integration tests — (a) index a fixture twice without changes → second run `skipped == indexed_count`, `indexed == 0`; (b) modify a file → only that file re-indexed (`indexed == 1`), query reflects the change; (c) delete a file from disk and re-index → its symbols are gone and `removed == 1`.
 - [ ] Step 2: run → fails.
 - [ ] Step 3: implement incremental logic. Add `queries::existing_hashes(&Connection) -> Result<HashMap<String,String>>` and `queries::delete_file_and_rows(&Connection, path) -> Result<()>`. Hash files up front (parallel) to decide skip vs parse.
-- [ ] Step 4: implement `watch.rs` (notify recommended-watcher, debounce ~200ms, re-run `index_repository` on changes) and wire `sb watch`.
+- [ ] Step 4: implement `watch.rs` (notify recommended-watcher, debounce ~200ms, re-run `index_repository` on changes) and wire `keel watch`.
 - [ ] Step 5: full suite + clippy → green. (Watch is validated by a short unit/integration test that triggers one debounce cycle, or documented as manually verified if a timing test is flaky — prefer a deterministic test that calls the debounced handler directly.)
-- [ ] Step 6: commit `feat(index): incremental indexing with stale cleanup and sb watch`.
+- [ ] Step 6: commit `feat(index): incremental indexing with stale cleanup and keel watch`.
 
 ---
 
@@ -125,13 +125,13 @@ Each task updates ALL construction sites (extraction, queries, tests) so the bui
 
 **Interfaces produced:**
 - `queries::find_implementations(conn, trait_name) -> Result<Vec<ImplRecord>>` (ordered by `(path,line,col)`).
-- CLI `sb implementations <trait>` printing `path:line:col\ttype_name` lines.
+- CLI `keel implementations <trait>` printing `path:line:col\ttype_name` lines.
 
 - [ ] Step 1 (TDD): index a fixture with `trait Storage` and two `impl Storage for A`/`impl Storage for B`; assert `find_implementations("Storage")` returns both, ordered; assert inherent `impl A {}` (no trait) is excluded.
 - [ ] Step 2: run → fails.
 - [ ] Step 3: implement query + CLI command + output.
 - [ ] Step 4: full suite + clippy → green.
-- [ ] Step 5: commit `feat: add find_implementations query and sb implementations`.
+- [ ] Step 5: commit `feat: add find_implementations query and keel implementations`.
 
 ---
 
@@ -141,14 +141,14 @@ Each task updates ALL construction sites (extraction, queries, tests) so the bui
 
 **Interfaces produced:**
 - `graph::deps::find_dependencies(conn, target) -> Result<Vec<Dependency>>` where `target` is a module path or symbol name. A dependency is a module/file the target depends on, derived from `imports` (and references resolving to other files). `Dependency { module_path: String, file: Option<PathBuf> }`.
-- CLI `sb dependencies <name>`.
+- CLI `keel dependencies <name>`.
 
 - [ ] Step 1 (TDD): fixture where `mod a` imports `crate::b` and calls `b::f()`; assert `find_dependencies("crate::a")` includes `crate::b`; assert a leaf module with no imports returns empty; results deterministically ordered and de-duplicated.
 - [ ] Step 2: run → fails.
 - [ ] Step 3: implement (join `imports` for the target's files; optionally add references-resolved-to-other-files). Deterministic + de-duplicated.
 - [ ] Step 4: CLI command + output.
 - [ ] Step 5: full suite + clippy → green.
-- [ ] Step 6: commit `feat(graph): dependency graph and sb dependencies`.
+- [ ] Step 6: commit `feat(graph): dependency graph and keel dependencies`.
 
 ---
 
@@ -158,37 +158,37 @@ Each task updates ALL construction sites (extraction, queries, tests) so the bui
 
 **Interfaces produced:**
 - `graph::impact::find_impact(conn, name) -> Result<Vec<Symbol>>`: the transitive set of symbols/functions that (directly or indirectly) reference `name`. Computed by repeatedly expanding: references to `name` → their `container` symbols → references to those, until fixpoint. Deterministic (sorted worklist, visited set), terminates on cycles.
-- CLI `sb impact <name>`.
+- CLI `keel impact <name>`.
 
 - [ ] Step 1 (TDD): fixture `a()` called by `b()` called by `c()`; assert `find_impact("a")` returns `{b, c}` (transitive), ordered and de-duplicated; a symbol with no callers returns empty; a cycle `x<->y` terminates.
 - [ ] Step 2: run → fails.
 - [ ] Step 3: implement BFS/worklist over `references.container`. Deterministic ordering; visited set prevents infinite loops.
 - [ ] Step 4: CLI command + output.
 - [ ] Step 5: full suite + clippy → green.
-- [ ] Step 6: commit `feat(graph): transitive impact analysis and sb impact`.
+- [ ] Step 6: commit `feat(graph): transitive impact analysis and keel impact`.
 
 ---
 
-## Task 8: JSON API (`sb serve`)
+## Task 8: JSON API (`keel serve`)
 
 **Files:** Add `src/api/mod.rs`; modify `src/lib.rs`, `src/cli/*`, `src/main.rs`, `Cargo.toml`; integration test.
 
 **Interfaces produced:**
 - `api::serve(addr, db_path) -> Result<()>` using `tiny_http`: `GET /symbol/{name}` → JSON `{ "definition": [...], "references": [...], "implementations": [...], "dependencies": [...], "callers": [...] }`; `GET /health` → `{"status":"ok"}`. Uses `serde`/`serde_json`; domain types get `#[derive(Serialize)]` (via a serializable DTO layer to avoid leaking `PathBuf` oddities — serialize paths as strings).
-- CLI `sb serve [--port 7645]`.
+- CLI `keel serve [--port 7645]`.
 
 - [ ] Step 1 (TDD): integration test that indexes a fixture into a temp db, starts `api::serve` on an ephemeral port in a thread, issues `GET /symbol/AuthService` (using `std::net::TcpStream` or a tiny client), and asserts the JSON contains the definition with a string path; `GET /health` returns ok. Determinism: arrays ordered.
 - [ ] Step 2: run → fails.
 - [ ] Step 3: add deps (`tiny_http`, `serde` with derive, `serde_json`); implement DTOs + handlers + router. No async runtime.
-- [ ] Step 4: CLI `sb serve`; keep diagnostics on stderr.
+- [ ] Step 4: CLI `keel serve`; keep diagnostics on stderr.
 - [ ] Step 5: full suite + clippy → green; `cargo build --release`.
-- [ ] Step 6: commit `feat(api): JSON API server (sb serve) exposing symbol intelligence`.
+- [ ] Step 6: commit `feat(api): JSON API server (keel serve) exposing symbol intelligence`.
 
 ---
 
 ## Task 9: Docs Update
 
-**Files:** Modify `second_brain/README.md`; ensure rustdoc coverage (`-W missing_docs`).
+**Files:** Modify `keel/README.md`; ensure rustdoc coverage (`-W missing_docs`).
 
 - [ ] Step 1: update README with the new commands (`watch`, `implementations`, `dependencies`, `impact`, `serve`), the JSON API shape, and the v0.2 resolution model (module/import-aware deterministic resolver). Note that Stack Graphs remains an alternative resolution backend.
 - [ ] Step 2: `cargo clippy --all-targets -- -D warnings -W missing_docs` clean; `cargo test`; `cargo build --release`.

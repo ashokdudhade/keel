@@ -1,11 +1,11 @@
-//! Core error type for the SecondBrain library.
+//! Core error type for the Keel library.
 
 use std::path::PathBuf;
 use thiserror::Error;
 
-/// All errors produced by the SecondBrain library.
+/// All errors produced by the Keel library.
 #[derive(Debug, Error)]
-pub enum SecondBrainError {
+pub enum KeelError {
     /// An I/O error occurred while accessing a file.
     #[error("I/O error for {path}")]
     Io {
@@ -57,4 +57,4 @@ pub enum SecondBrainError {
 }
 
 /// Convenience `Result` alias used throughout the library.
-pub type Result<T> = std::result::Result<T, SecondBrainError>;
+pub type Result<T> = std::result::Result<T, KeelError>;

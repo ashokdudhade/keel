@@ -1,6 +1,6 @@
 //! Filesystem watching: re-index a repository when registered source files change.
 
-use crate::error::{Result, SecondBrainError};
+use crate::error::{Result, KeelError};
 use crate::index::{self, IndexStats};
 use crate::languages::Registry;
 use notify::{Event, RecursiveMode, Watcher};
@@ -22,11 +22,11 @@ pub fn watch_repository(root: &Path, conn: &mut Connection) -> Result<()> {
     let mut watcher = notify::recommended_watcher(move |res| {
         let _ = tx.send(res);
     })
-    .map_err(|e| SecondBrainError::Watch(format!("setup failed: {e}")))?;
+    .map_err(|e| KeelError::Watch(format!("setup failed: {e}")))?;
 
     watcher
         .watch(root, RecursiveMode::Recursive)
-        .map_err(|e| SecondBrainError::Watch(format!("failed: {e}")))?;
+        .map_err(|e| KeelError::Watch(format!("failed: {e}")))?;
 
     // Initial index so the DB is warm before the first change.
     let stats = index::index_repository(root, conn)?;
@@ -53,7 +53,7 @@ pub fn watch_repository(root: &Path, conn: &mut Connection) -> Result<()> {
                 }
             }
             Ok(Err(e)) => {
-                return Err(SecondBrainError::Watch(format!("event error: {e}")));
+                return Err(KeelError::Watch(format!("event error: {e}")));
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if pending {

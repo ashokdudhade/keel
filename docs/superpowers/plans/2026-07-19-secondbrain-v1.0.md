@@ -1,8 +1,8 @@
-# SecondBrain v1.0 Implementation Plan
+# Keel v1.0 Implementation Plan
 
 > **For agentic workers:** Continuous execution / SDD. Checkbox steps for tracking.
 
-**Goal:** Ship SecondBrain 1.0 — stable library + CLI APIs, multi-language monorepo support as a first-class feature, a documented community plugin registration surface, polished impact analysis, and complete docs.
+**Goal:** Ship Keel 1.0 — stable library + CLI APIs, multi-language monorepo support as a first-class feature, a documented community plugin registration surface, polished impact analysis, and complete docs.
 
 **Architecture:** No rewrite. Harden what exists: public `lib` API surface with semver 1.0.0; monorepo indexing verified across Rust+TS+Go in one tree; `Registry::register` for external plugins; impact already exists — add README/API stability guarantees and a few polish items from the v0.2 defer list that are cheap (file sort already done; add `PRAGMA user_version` already at 2 — bump schema only if needed; OnceLock for Rust queries optional).
 
@@ -23,7 +23,7 @@ Same as prior versions. Additionally:
 
 **Interfaces (re-export from `lib.rs`):**
 - `Index` facade OR documented free functions: `index_repository`, `open_db` helper, query helpers (`find_definition`, `find_references`, `find_callers`, `find_implementations`, `find_dependencies`, `find_impact`, `resolve_definition`).
-- Prefer a small `SecondBrain` / `Index` struct:
+- Prefer a small `Keel` / `Index` struct:
   ```rust
   pub struct Index { conn: Connection }
   impl Index {
@@ -92,7 +92,7 @@ Same as prior versions. Additionally:
 - CHANGELOG summarizing v0.1 → v1.0.
 - clippy missing_docs + test + release build.
 
-- [ ] Commit `release: SecondBrain 1.0.0`.
+- [ ] Commit `release: Keel 1.0.0`.
 
 ---
 

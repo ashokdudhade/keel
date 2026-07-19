@@ -1,4 +1,4 @@
-# SecondBrain
+# Keel
 
 ## Deterministic Code Intelligence for AI Coding Agents
 
@@ -18,11 +18,11 @@ structural questions such as:
 -   Is this symbol actually referenced?
 -   What is the complete dependency chain?
 
-SecondBrain is an **open source, local-first code intelligence engine**
+Keel is an **open source, local-first code intelligence engine**
 that answers these questions deterministically using AST parsing and
 symbol graphs instead of embedding similarity.
 
-Rather than replacing AI coding assistants, SecondBrain becomes the
+Rather than replacing AI coding assistants, Keel becomes the
 infrastructure powering them.
 
 ## Vision
@@ -40,7 +40,7 @@ agents.
       MCP / JSON API
              │
     --------------------
-      SecondBrain Core
+      Keel Core
     --------------------
              │
       Symbol Graph
@@ -53,12 +53,12 @@ agents.
       SQLite
 ```
 
-SecondBrain provides **deterministic repository knowledge** that any
+Keel provides **deterministic repository knowledge** that any
 coding agent can consume.
 
 ## Core Goals
 
-SecondBrain focuses on one responsibility:
+Keel focuses on one responsibility:
 
 > Build the most accurate, language-aware representation of a software
 > repository.
@@ -83,7 +83,7 @@ Goals:
 
 ### 2. Deterministic Symbol Graph
 
-Unlike vector search, SecondBrain understands actual program structure.
+Unlike vector search, Keel understands actual program structure.
 
 Example queries:
 
@@ -132,9 +132,9 @@ graph.find_impact("PaymentAPI");
 #### CLI
 
 ``` bash
-sb definition AuthService
-sb callers PaymentService
-sb impact UserRepository
+keel definition AuthService
+keel callers PaymentService
+keel impact UserRepository
 ```
 
 #### MCP Server
@@ -170,7 +170,7 @@ GET /symbol/AuthService
   Protocol              MCP + JSON
   File Watching         notify
 
-## What SecondBrain Is Not
+## What Keel Is Not
 
 It does **not**:
 
@@ -229,6 +229,6 @@ Adoption:
 ## Why Open Source?
 
 Code intelligence is foundational infrastructure, not a product moat.
-The goal is for SecondBrain to become the standard open-source
+The goal is for Keel to become the standard open-source
 foundation for deterministic code intelligence, similar to how
 Tree-sitter became the standard for incremental parsing.

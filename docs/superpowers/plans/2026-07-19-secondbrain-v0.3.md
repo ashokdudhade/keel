@@ -1,10 +1,10 @@
-# SecondBrain v0.3 Implementation Plan
+# Keel v0.3 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (or continuous YOLO execution). Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Expose SecondBrain to AI agents via MCP, and add TypeScript + Go language plugins so multi-language repos index through the same core.
+**Goal:** Expose Keel to AI agents via MCP, and add TypeScript + Go language plugins so multi-language repos index through the same core.
 
-**Architecture:** Keep the language-agnostic core. Add `sb mcp` (stdio JSON-RPC MCP server wrapping existing queries). Add `languages/typescript.rs` and `languages/go.rs` implementing `LanguagePlugin`, register them in `Registry::with_defaults`. Indexer already dispatches by extension.
+**Architecture:** Keep the language-agnostic core. Add `keel mcp` (stdio JSON-RPC MCP server wrapping existing queries). Add `languages/typescript.rs` and `languages/go.rs` implementing `LanguagePlugin`, register them in `Registry::with_defaults`. Indexer already dispatches by extension.
 
 **Tech Stack:** As v0.2, plus `tree-sitter-typescript`, `tree-sitter-go`. MCP is a hand-rolled stdio JSON-RPC 2.0 server (no heavy SDK) implementing `initialize`, `tools/list`, `tools/call`, `ping`.
 
@@ -17,7 +17,7 @@ Same as v0.2 (edition 2021, no unwrap/expect outside tests, no unsafe, PathBuf, 
 
 ---
 
-## Task 1: MCP Server (`sb mcp`)
+## Task 1: MCP Server (`keel mcp`)
 
 **Files:** Create `src/mcp/mod.rs`; modify `cli/`, `main.rs`, `lib.rs`, `Cargo.toml` if needed; integration test.
 
@@ -32,11 +32,11 @@ Same as v0.2 (edition 2021, no unwrap/expect outside tests, no unsafe, PathBuf, 
   - `impact` { name }
   - `index` { path } — runs `index_repository`, returns IndexStats JSON
 - Each tools/call returns JSON text content with the same DTO shapes as the HTTP API where applicable.
-- CLI: `sb mcp` (opens `.secondbrain/index.db` in CWD; create/init schema if missing for read tools; index tool writes).
+- CLI: `keel mcp` (opens `.keel/index.db` in CWD; create/init schema if missing for read tools; index tool writes).
 
 - [ ] Step 1 (TDD): unit tests for framing encode/decode; a test that drives `handle_message` for `initialize` and `tools/list` without a live stdin loop.
 - [ ] Step 2: implement framing + dispatcher + tool handlers reusing `db::queries`, `graph::{resolve,deps,impact}`, `index::index_repository`, and API DTOs (or shared serialization).
-- [ ] Step 3: wire CLI; integration test optional (spawn `sb mcp`, send initialize, assert tools/list). Prefer non-flaky unit tests of the handler.
+- [ ] Step 3: wire CLI; integration test optional (spawn `keel mcp`, send initialize, assert tools/list). Prefer non-flaky unit tests of the handler.
 - [ ] Step 4: full suite + clippy green. Commit `feat(mcp): stdio MCP server with code-intelligence tools`.
 
 ---
@@ -82,7 +82,7 @@ Same as v0.2 (edition 2021, no unwrap/expect outside tests, no unsafe, PathBuf, 
 
 **Files:** `README.md`, rustdoc; bump crate version to `0.3.0`.
 
-- [ ] Document `sb mcp`, TS/Go support, MCP tool list.
+- [ ] Document `keel mcp`, TS/Go support, MCP tool list.
 - [ ] `cargo clippy --all-targets -- -D warnings -W missing_docs`; `cargo test`; `cargo build --release`.
 - [ ] Commit `docs: document v0.3 MCP server and TypeScript/Go plugins`.
 

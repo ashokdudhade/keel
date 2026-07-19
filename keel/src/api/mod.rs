@@ -1,7 +1,7 @@
-//! JSON HTTP API exposing symbol intelligence from a SecondBrain index.
+//! JSON HTTP API exposing symbol intelligence from a Keel index.
 
 use crate::db::{self, queries, schema};
-use crate::error::{Result, SecondBrainError};
+use crate::error::{Result, KeelError};
 use crate::graph::deps::{self, Dependency};
 use crate::graph::resolve;
 use crate::graph::types::{ImplRecord, Reference, Symbol};
@@ -145,7 +145,7 @@ fn path_string(path: &std::path::Path) -> String {
 /// Serve the JSON API bound to `addr` (e.g. `127.0.0.1:7645`), reading the
 /// index at `db_path`. Blocks until the server stops accepting connections.
 pub fn serve(addr: &str, db_path: &Path) -> Result<()> {
-    let server = Server::http(addr).map_err(|e| SecondBrainError::Api(e.to_string()))?;
+    let server = Server::http(addr).map_err(|e| KeelError::Api(e.to_string()))?;
     for request in server.incoming_requests() {
         handle_request(request, db_path);
     }
@@ -187,7 +187,7 @@ fn build_response(method: Method, url: &str, db_path: &Path) -> Result<(StatusCo
         let body = serde_json::to_string(&HealthResponse {
             status: "ok".to_string(),
         })
-        .map_err(|e| SecondBrainError::Api(e.to_string()))?;
+        .map_err(|e| KeelError::Api(e.to_string()))?;
         return Ok((StatusCode(200), body));
     }
 
@@ -201,7 +201,7 @@ fn build_response(method: Method, url: &str, db_path: &Path) -> Result<(StatusCo
         }
         let payload = symbol_intelligence(db_path, &name)?;
         let body =
-            serde_json::to_string(&payload).map_err(|e| SecondBrainError::Api(e.to_string()))?;
+            serde_json::to_string(&payload).map_err(|e| KeelError::Api(e.to_string()))?;
         return Ok((StatusCode(200), body));
     }
 
@@ -240,7 +240,7 @@ fn unique_module(defs: &[Symbol]) -> Option<String> {
 
 fn respond(request: Request, status: StatusCode, body: &str, content_type: &str) -> Result<()> {
     let header = Header::from_bytes("Content-Type", content_type)
-        .map_err(|_| SecondBrainError::Api("invalid Content-Type header".into()))?;
+        .map_err(|_| KeelError::Api("invalid Content-Type header".into()))?;
     let response = Response::new(
         status,
         vec![header],
@@ -250,7 +250,7 @@ fn respond(request: Request, status: StatusCode, body: &str, content_type: &str)
     );
     request
         .respond(response)
-        .map_err(|e| SecondBrainError::Api(e.to_string()))
+        .map_err(|e| KeelError::Api(e.to_string()))
 }
 
 /// Strip `?query` and `#fragment` from a URL path.

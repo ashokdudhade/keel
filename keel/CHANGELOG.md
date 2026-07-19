@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to SecondBrain are documented in this file.
+All notable changes to Keel are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repos.
 - Community plugin surface: `Registry::empty`, `Registry::register`,
   `index_repository_with`, and `Index::index_path_with`.
-- `sb watch` reacts to registered language extensions (not Rust-only).
+- `keel watch` reacts to registered language extensions (not Rust-only).
 - Rust `impl` extraction uses a `OnceLock`-cached Tree-sitter `Query`.
 
 ### Changed
@@ -36,7 +36,7 @@ No intentional breaking changes to existing CLI commands or SQLite schema
 
 - TypeScript/TSX language plugin (`.ts`, `.tsx`, `.mts`, `.cts`).
 - Go language plugin (`.go`).
-- MCP stdio server (`sb mcp`) with code-intelligence tools.
+- MCP stdio server (`keel mcp`) with code-intelligence tools.
 - Language plugin `Registry` dispatch by file extension.
 
 ## [0.2.0] — 2026-07-18
@@ -46,8 +46,8 @@ No intentional breaking changes to existing CLI commands or SQLite schema
 - Schema v2 migration runner (`PRAGMA user_version`).
 - Module/import-aware definition resolution and callers.
 - Trait `implementations`, module `dependencies`, transitive `impact`.
-- Incremental indexing (content hashes) and `sb watch`.
-- JSON HTTP API (`sb serve`).
+- Incremental indexing (content hashes) and `keel watch`.
+- JSON HTTP API (`keel serve`).
 
 ## [0.1.0] — 2026-07-18
 

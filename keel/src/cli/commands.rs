@@ -2,7 +2,7 @@
 
 use crate::api;
 use crate::db::{queries, schema};
-use crate::error::{Result, SecondBrainError};
+use crate::error::{Result, KeelError};
 use crate::graph::deps::{self, Dependency};
 use crate::graph::impact;
 use crate::graph::resolve;
@@ -12,7 +12,7 @@ use crate::mcp;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
-const DB_DIR: &str = ".secondbrain";
+const DB_DIR: &str = ".keel";
 const DB_FILE: &str = "index.db";
 
 fn db_path() -> PathBuf {
@@ -22,7 +22,7 @@ fn db_path() -> PathBuf {
 /// Open (creating the directory if needed) the on-disk index database.
 fn open_db() -> Result<Connection> {
     std::fs::create_dir_all(DB_DIR)
-        .map_err(|source| SecondBrainError::Io { path: PathBuf::from(DB_DIR), source })?;
+        .map_err(|source| KeelError::Io { path: PathBuf::from(DB_DIR), source })?;
     let conn = Connection::open(db_path())?;
     crate::db::configure_connection(&conn)?;
     Ok(conn)
@@ -103,15 +103,15 @@ pub fn run_serve(port: u16) -> Result<()> {
     schema::initialize(&conn)?;
     drop(conn);
     let addr = format!("127.0.0.1:{port}");
-    eprintln!("Serving SecondBrain JSON API on http://{addr}");
+    eprintln!("Serving Keel JSON API on http://{addr}");
     api::serve(&addr, &db_path())
 }
 
-/// Serve the MCP stdio server using `.secondbrain/index.db` under CWD.
+/// Serve the MCP stdio server using `.keel/index.db` under CWD.
 pub fn run_mcp() -> Result<()> {
     // Ensure the DB directory exists before opening; schema init is in mcp::serve.
     std::fs::create_dir_all(DB_DIR)
-        .map_err(|source| SecondBrainError::Io { path: PathBuf::from(DB_DIR), source })?;
-    eprintln!("Serving SecondBrain MCP on stdio (db={})", db_path().display());
+        .map_err(|source| KeelError::Io { path: PathBuf::from(DB_DIR), source })?;
+    eprintln!("Serving Keel MCP on stdio (db={})", db_path().display());
     mcp::serve(&db_path())
 }

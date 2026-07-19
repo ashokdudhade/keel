@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SecondBrain Validation Report — 2026-07-19</title>
+  <title>Keel Validation Report — 2026-07-19</title>
   <style>
     :root {
       --bg: #0f1419;
@@ -75,12 +75,12 @@
 </head>
 <body>
 <main>
-  <h1>SecondBrain Validation Report</h1>
+  <h1>Keel Validation Report</h1>
   <p class="sub">Thorough implementation review, must-fix correctness patches, and real-world validation against this repo plus GitHub OSS (<code>BurntSushi/walkdir</code>).</p>
 
   <div class="meta">
     <span>Date: <strong>2026-07-19</strong></span>
-    <span>Crate: <strong>second_brain 1.0.0</strong></span>
+    <span>Crate: <strong>keel 1.0.0</strong></span>
     <span>Branch: <strong>main @ 8d879a3</strong></span>
     <span>Unit/integration tests: <strong>80 passing</strong></span>
   </div>
@@ -118,7 +118,7 @@
   <h2>2. Test plan</h2>
   <p>Plan document: <code>docs/superpowers/plans/2026-07-19-realworld-validation.md</code></p>
   <ul>
-    <li><strong>Target A:</strong> current project <code>/Users/ashokdudhade/os/second-brain</code> (Cursor-oriented: CLI + MCP + HTTP).</li>
+    <li><strong>Target A:</strong> current project <code>/Users/ashokdudhade/os/keel</code> (Cursor-oriented: CLI + MCP + HTTP).</li>
     <li><strong>Target B:</strong> shallow clone of <a href="https://github.com/BurntSushi/walkdir">BurntSushi/walkdir</a>.</li>
     <li>Cases T1–T12 covering index, incremental skip, definition/references/callers/implementations/dependencies/impact, serve, MCP, determinism.</li>
   </ul>
@@ -127,9 +127,9 @@
   <table>
     <thead><tr><th>ID</th><th>Case</th><th>Result</th><th>Evidence</th></tr></thead>
     <tbody>
-      <tr><td>T1</td><td>Fresh index</td><td><span class="badge pass">PASS</span></td><td>Indexed 24 files, errors 0; <code>.secondbrain/index.db</code> created</td></tr>
+      <tr><td>T1</td><td>Fresh index</td><td><span class="badge pass">PASS</span></td><td>Indexed 24 files, errors 0; <code>.keel/index.db</code> created</td></tr>
       <tr><td>T2</td><td>Incremental skip</td><td><span class="badge pass">PASS</span></td><td>Indexed 0, skipped 24</td></tr>
-      <tr><td>T3</td><td>Definition</td><td><span class="badge pass">PASS</span></td><td><code>IndexStats</code> → <code>second_brain/src/index/mod.rs:16:12</code>; <code>LanguagePlugin</code> trait located</td></tr>
+      <tr><td>T3</td><td>Definition</td><td><span class="badge pass">PASS</span></td><td><code>IndexStats</code> → <code>keel/src/index/mod.rs:16:12</code>; <code>LanguagePlugin</code> trait located</td></tr>
       <tr><td>T4</td><td>References / callers</td><td><span class="badge pass">PASS</span></td><td>Many call/ref sites for <code>index_repository</code></td></tr>
       <tr><td>T5</td><td>Implementations</td><td><span class="badge pass">PASS</span></td><td><code>LanguagePlugin</code> → Rust/TS/Go/Toy plugins; <code>Sync</code> empty (expected)</td></tr>
       <tr><td>T6</td><td>Dependencies</td><td><span class="badge warn">WARN</span></td><td><code>crate::index</code> returned no deps (module path / import mapping gap for that query)</td></tr>
@@ -160,22 +160,22 @@
   </table>
 
   <h2>5. Cursor integration how-to</h2>
-  <p>To use SecondBrain as a Cursor MCP server for a project:</p>
+  <p>To use Keel as a Cursor MCP server for a project:</p>
   <pre>{
   "mcpServers": {
-    "secondbrain": {
-      "command": "/Users/ashokdudhade/os/second-brain/reports/sb",
+    "keel": {
+      "command": "/Users/ashokdudhade/os/keel/reports/keel",
       "args": ["mcp"],
       "cwd": "/ABS/PATH/TO/PROJECT"
     }
   }
 }</pre>
   <ol>
-    <li>Build release: <code>cd second_brain && cargo build --release</code></li>
-    <li>In the target project: <code>sb index .</code> (creates <code>.secondbrain/index.db</code>)</li>
+    <li>Build release: <code>cd keel && cargo build --release</code></li>
+    <li>In the target project: <code>keel index .</code> (creates <code>.keel/index.db</code>)</li>
     <li>Point Cursor MCP <code>cwd</code> at that project; restart MCP</li>
     <li>Ask the agent to call tools: <code>definition</code>, <code>references</code>, <code>callers</code>, <code>implementations</code>, <code>dependencies</code>, <code>impact</code>, <code>index</code></li>
-    <li>Optional: <code>sb serve --port 7645</code> for HTTP <code>GET /symbol/{name}</code></li>
+    <li>Optional: <code>keel serve --port 7645</code> for HTTP <code>GET /symbol/{name}</code></li>
   </ol>
   <p>Automated MCP framing check in this run: <strong>PASS</strong> (tools/list + definition).</p>
 
@@ -190,12 +190,12 @@
   <ol>
     <li>TypeScript: extract <code>export const</code> / arrow functions; respect <code>tsconfig</code> path aliases.</li>
     <li>Go: map import paths to packages via <code>go.mod</code> (not just <code>package</code> name).</li>
-    <li>Pass custom <code>Registry</code> into <code>sb watch</code> so community extensions trigger reindex.</li>
+    <li>Pass custom <code>Registry</code> into <code>keel watch</code> so community extensions trigger reindex.</li>
   </ol>
   <h3>P2 — productization</h3>
   <ol>
     <li>Publish a Cursor MCP install snippet in README with absolute-path placeholder.</li>
-    <li>Add a <code>sb doctor</code> command (DB version, WAL, file counts, sample query).</li>
+    <li>Add a <code>keel doctor</code> command (DB version, WAL, file counts, sample query).</li>
     <li>CI job: index a pinned OSS tag (walkdir) and assert golden definition lines.</li>
     <li>Consider Stack Graphs / richer binding as an optional backend (still deferred).</li>
     <li>Re-index any DBs created before root-relative path fix.</li>
@@ -207,7 +207,7 @@
     <p class="sub" style="margin:0">Treat <code>dependencies</code> / <code>impact</code> as advisory until P0 noise filters land. Multi-language intelligence is structurally fixed post-review but needs deeper corpus tests (TS/Go OSS) before claiming parity with Rust.</p>
   </div>
 
-  <p class="sub" style="margin-top:2rem">Artifacts: <code>reports/run-A/</code>, <code>reports/run-B/</code>, binary <code>reports/sb</code>, plan <code>docs/superpowers/plans/2026-07-19-realworld-validation.md</code>.</p>
+  <p class="sub" style="margin-top:2rem">Artifacts: <code>reports/run-A/</code>, <code>reports/run-B/</code>, binary <code>reports/keel</code>, plan <code>docs/superpowers/plans/2026-07-19-realworld-validation.md</code>.</p>
 </main>
 </body>
 </html>

@@ -1,14 +1,14 @@
-# SecondBrain — Design Specification
+# Keel — Design Specification
 
 **Date:** 2026-07-18
 **Status:** Approved for v0.1 implementation
-**Source docs:** `SecondBrain_Proposal.md`, `second_brain_cursorrules.md`
+**Source docs:** `Keel_Proposal.md`, `keel_cursorrules.md`
 
 ---
 
 ## 1. Overview
 
-SecondBrain is an open-source, local-first **code intelligence engine** written in
+Keel is an open-source, local-first **code intelligence engine** written in
 Rust. It builds the most accurate, language-aware representation of a software
 repository and answers structural questions about it **deterministically**.
 
@@ -24,7 +24,7 @@ Everything is derived from Abstract Syntax Trees (Tree-sitter) and explicit grap
 relationships (Stack Graphs). Given the same repository state, every query returns
 the same answer.
 
-### Questions SecondBrain answers
+### Questions Keel answers
 
 - Where is this symbol defined? (`definition`)
 - Where is this symbol referenced? (`references`)
@@ -49,7 +49,7 @@ the same answer.
 
 ### Non-Goals
 
-SecondBrain will **not**: generate code, rewrite PRs, fix CI failures, create ADRs,
+Keel will **not**: generate code, rewrite PRs, fix CI failures, create ADRs,
 or replace coding assistants. It will not use machine learning for resolution.
 
 ---
@@ -62,7 +62,7 @@ or replace coding assistants. It will not use machine learning for resolution.
                     Library API │ CLI │ JSON API │ MCP
                                    │
                         ┌──────────────────────┐
-                        │   SecondBrain Core    │
+                        │   Keel Core    │
                         │  (language-agnostic)  │
                         └──────────────────────┘
               index/         graph/          db/           languages/
@@ -103,7 +103,7 @@ Modular crate layout (the core stays language-agnostic; Rust logic is isolated
 behind `LanguagePlugin`).
 
 ```text
-second_brain/
+keel/
 ├── Cargo.toml
 ├── README.md
 ├── src/
@@ -165,10 +165,10 @@ v0.2. Schema changes go through a simple, versioned migration path.
 pub trait LanguagePlugin {
     /// File extensions this plugin handles (e.g., ["rs"]).
     fn extensions(&self) -> &[&str];
-    fn extract_symbols(&self, source_code: &str) -> Result<Vec<Symbol>, SecondBrainError>;
-    fn extract_references(&self, source_code: &str) -> Result<Vec<Reference>, SecondBrainError>;
+    fn extract_symbols(&self, source_code: &str) -> Result<Vec<Symbol>, KeelError>;
+    fn extract_references(&self, source_code: &str) -> Result<Vec<Reference>, KeelError>;
     // v0.2: fn build_stack_graph(&self, ctx: &mut StackGraphCtx, source_code: &str)
-    //       -> Result<(), SecondBrainError>;  // scope-aware resolution
+    //       -> Result<(), KeelError>;  // scope-aware resolution
 }
 ```
 
@@ -189,19 +189,19 @@ lands.
 
 ### 4.5 `cli/` — command-line interface
 
-`clap` (derive). Binary name `sb`, crate `second_brain`.
+`clap` (derive). Binary name `keel`, crate `keel`.
 
-- `sb index <path>` — index a repository.
-- `sb definition <name>` — print definition location(s).
-- `sb references <name>` — print reference locations.
-- `sb callers <name>` — print call sites for a function.
+- `keel index <path>` — index a repository.
+- `keel definition <name>` — print definition location(s).
+- `keel references <name>` — print reference locations.
+- `keel callers <name>` — print call sites for a function.
 
 Output is clean, stable `path:line:col`-style text on stdout, easily parsed by
 humans and agents. Diagnostics go to stderr.
 
 ### 4.6 `error.rs` — errors
 
-`thiserror`-based `SecondBrainError` for the library (I/O, parse, DB, plugin,
+`thiserror`-based `KeelError` for the library (I/O, parse, DB, plugin,
 resolution variants). The binary boundary (`main.rs`/CLI) uses `anyhow` for
 context-rich top-level error reporting.
 
@@ -209,12 +209,12 @@ context-rich top-level error reporting.
 
 ## 5. Data Flow
 
-**Indexing (`sb index <path>`):**
+**Indexing (`keel index <path>`):**
 crawl files → for each file in parallel: parse → extract symbols+references →
 batch insert into SQLite (`files`/`symbols`/`references`). (v0.2 adds building the
 stack graph and persisting to the stack-graph store.)
 
-**Querying (`sb definition|references|callers <name>`):**
+**Querying (`keel definition|references|callers <name>`):**
 load candidates from SQLite by name → format and print `path:line:col`. Multiple
 same-named matches are all reported. (v0.2 adds precise stack-graph resolution ahead
 of the name-index fallback.) `callers` returns reference sites of a function name.
@@ -270,14 +270,14 @@ implementation plan when reached.
 
 - **In-house deterministic module/import-aware resolver** (Stack Graphs deferred;
   no published Rust `.tsg` crate — see decision in v0.2 plan).
-- Incremental indexing via `content_hash` diffing + `notify` file watching (`sb watch`).
+- Incremental indexing via `content_hash` diffing + `notify` file watching (`keel watch`).
 - Dependency graph and `impact` analysis.
 - `implementations` and `dependencies` queries.
-- JSON API (`sb serve` — `GET /symbol/<name>`, `GET /health`).
+- JSON API (`keel serve` — `GET /symbol/<name>`, `GET /health`).
 
 ### v0.3 — More languages & MCP (shipped)
 
-- MCP server (`sb mcp` — stdio JSON-RPC tools over the same core).
+- MCP server (`keel mcp` — stdio JSON-RPC tools over the same core).
 - TypeScript/TSX plugin, Go plugin.
 
 ### v1.0 — Multi-language & stability (shipped 2026-07-19)
@@ -286,7 +286,7 @@ implementation plan when reached.
 - Full impact analysis.
 - Plugin system for community language contributions (`Registry::register`).
 - Stable public APIs (`Index` facade) + documentation.
-- Crate version `1.0.0`; see `second_brain/CHANGELOG.md`.
+- Crate version `1.0.0`; see `keel/CHANGELOG.md`.
 
 ---
 
@@ -299,7 +299,7 @@ implementation plan when reached.
 | Resolution (v0.1)    | Name index in SQLite                         |
 | Resolution (v0.2+)   | Module/import-aware deterministic resolver (Stack Graphs optional future) |
 | Languages            | Rust, TypeScript/TSX, Go                                 |
-| Agent interfaces     | CLI (`sb`), JSON HTTP (`sb serve`), MCP (`sb mcp`)       |
+| Agent interfaces     | CLI (`keel`), JSON HTTP (`keel serve`), MCP (`keel mcp`)       |
 | Storage              | `rusqlite` (bundled SQLite)                  |
 | Parallelism          | `rayon`                                      |
 | CLI                  | `clap` (derive)                              |
