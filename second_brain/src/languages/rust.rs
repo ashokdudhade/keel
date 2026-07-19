@@ -1,16 +1,37 @@
 //! Rust language plugin: Tree-sitter based symbol and reference extraction.
 //!
-//! Extraction is performed with manual, pre-order tree walks rather than pure
-//! Tree-sitter queries. Walking directly lets us track the enclosing `mod`/`fn`
-//! scope so we can populate qualified module paths and reference containers,
-//! which query captures alone cannot express. Pre-order traversal also gives us
-//! deterministic, source-order output.
+//! Symbols and references use manual, pre-order tree walks so we can track the
+//! enclosing `mod`/`fn` scope for qualified `module_path` and reference
+//! containers. `impl` extraction uses a compiled Tree-sitter [`Query`] cached
+//! in a [`OnceLock`] so query compilation runs once per process.
+//!
+//! ## Known limitations
+//!
+//! - Impact analysis is name-based (see `graph::impact`); overloaded names can
+//!   over-approximate transitive callers.
+//! - TypeScript `module_path` is fixed `"module"` (plugin API has no file path).
+//! - Go has no trait-impl form; `implementations` stays empty for Go sources.
 
 use super::LanguagePlugin;
 use crate::error::{Result, SecondBrainError};
 use crate::graph::types::{ImplRecord, Import, Reference, ReferenceKind, Symbol, SymbolKind};
 use std::path::PathBuf;
-use tree_sitter::{Node, Parser, Tree};
+use std::sync::OnceLock;
+use streaming_iterator::StreamingIterator;
+use tree_sitter::{Node, Parser, Query, QueryCursor, Tree};
+
+/// Compiled once: match `impl` blocks whose type target is a plain identifier.
+const IMPL_QUERY_SRC: &str = r#"
+(impl_item type: (type_identifier) @type)
+"#;
+
+fn impl_query() -> &'static Query {
+    static QUERY: OnceLock<Query> = OnceLock::new();
+    QUERY.get_or_init(|| {
+        let language = tree_sitter_rust::LANGUAGE.into();
+        Query::new(&language, IMPL_QUERY_SRC).expect("IMPL_QUERY_SRC is valid")
+    })
+}
 
 /// Extractor for Rust source using Tree-sitter.
 pub struct RustPlugin;
@@ -59,8 +80,34 @@ impl LanguagePlugin for RustPlugin {
     fn extract_impls(&self, source_code: &str) -> Result<Vec<ImplRecord>> {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
+        let query = impl_query();
+        let mut cursor = QueryCursor::new();
         let mut out = Vec::new();
-        walk_impls(tree.root_node(), src, &mut out)?;
+        let mut matches = cursor.matches(query, tree.root_node(), src);
+        while let Some(m) = matches.next() {
+            for cap in m.captures {
+                let ty = cap.node;
+                let Some(impl_item) = ty.parent() else {
+                    continue;
+                };
+                if impl_item.kind() != "impl_item" {
+                    continue;
+                }
+                let type_name = node_text(ty, src)?.to_string();
+                let trait_name = match impl_item.child_by_field_name("trait") {
+                    Some(t) => Some(node_text(t, src)?.to_string()),
+                    None => None,
+                };
+                let pos = impl_item.start_position();
+                out.push(ImplRecord {
+                    type_name,
+                    trait_name,
+                    file: PathBuf::new(),
+                    start_line: pos.row as u32 + 1,
+                    start_col: pos.column as u32 + 1,
+                });
+            }
+        }
         Ok(out)
     }
 }
@@ -282,35 +329,6 @@ fn push_reference(
         kind,
         container: qualify_scope(scope),
     });
-}
-
-/// Pre-order walk emitting an [`ImplRecord`] per `impl` block whose target is a
-/// plain type identifier, capturing the trait when it is a trait impl.
-fn walk_impls(node: Node, src: &[u8], out: &mut Vec<ImplRecord>) -> Result<()> {
-    if node.kind() == "impl_item" {
-        if let Some(ty) = node.child_by_field_name("type") {
-            if ty.kind() == "type_identifier" {
-                let type_name = node_text(ty, src)?.to_string();
-                let trait_name = match node.child_by_field_name("trait") {
-                    Some(t) => Some(node_text(t, src)?.to_string()),
-                    None => None,
-                };
-                let pos = node.start_position();
-                out.push(ImplRecord {
-                    type_name,
-                    trait_name,
-                    file: PathBuf::new(),
-                    start_line: pos.row as u32 + 1,
-                    start_col: pos.column as u32 + 1,
-                });
-            }
-        }
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        walk_impls(child, src, out)?;
-    }
-    Ok(())
 }
 
 /// Pre-order walk emitting an [`Import`] per imported path, expanding grouped

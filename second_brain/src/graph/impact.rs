@@ -155,7 +155,7 @@ mod tests {
         .unwrap();
     }
 
-    /// Cycle: `x` ↔ `y`.
+    /// Cycle: `x` → `y` → `z` → `x` (and a mutual edge `x` ↔ `y`).
     fn fixture_cycle(conn: &Connection) {
         let f = queries::insert_file(
             conn,
@@ -185,6 +185,14 @@ mod tests {
                     start_col: 1,
                     module_path: "crate".into(),
                 },
+                Symbol {
+                    name: "z".into(),
+                    kind: SymbolKind::Function,
+                    file: PathBuf::new(),
+                    start_line: 3,
+                    start_col: 1,
+                    module_path: "crate".into(),
+                },
             ],
         )
         .unwrap();
@@ -203,8 +211,24 @@ mod tests {
                 Reference {
                     name: "y".into(),
                     file: PathBuf::new(),
+                    start_line: 3,
+                    start_col: 10,
+                    kind: ReferenceKind::Call,
+                    container: "z".into(),
+                },
+                Reference {
+                    name: "z".into(),
+                    file: PathBuf::new(),
                     start_line: 1,
                     start_col: 10,
+                    kind: ReferenceKind::Call,
+                    container: "x".into(),
+                },
+                Reference {
+                    name: "y".into(),
+                    file: PathBuf::new(),
+                    start_line: 1,
+                    start_col: 20,
                     kind: ReferenceKind::Call,
                     container: "x".into(),
                 },
@@ -239,6 +263,11 @@ mod tests {
 
         let impact = find_impact(&conn, "x").unwrap();
         let names: Vec<&str> = impact.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, vec!["y"]);
+        // Transitive callers of x are y and z; the z→x and y→x edges must not
+        // re-expand forever.
+        assert_eq!(names, vec!["y", "z"]);
+        // Idempotent under re-query (no growth from residual cycle state).
+        let again = find_impact(&conn, "x").unwrap();
+        assert_eq!(again.len(), impact.len());
     }
 }
