@@ -8,9 +8,16 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Index { path } => {
-            let n = commands::run_index(&path)
+            let stats = commands::run_index(&path)
                 .with_context(|| format!("indexing {}", path.display()))?;
-            println!("Indexed {n} file(s).");
+            println!(
+                "Indexed {} file(s) (skipped {}, removed {}).",
+                stats.indexed, stats.skipped, stats.removed
+            );
+        }
+        Commands::Watch { path } => {
+            commands::run_watch(&path)
+                .with_context(|| format!("watching {}", path.display()))?;
         }
         Commands::Definition { name } => {
             let defs = commands::run_definition(&name).context("querying definition")?;

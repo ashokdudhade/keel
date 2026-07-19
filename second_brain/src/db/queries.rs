@@ -4,7 +4,8 @@ use crate::error::Result;
 use crate::graph::types::{
     FileNode, ImplRecord, Import, Reference, ReferenceKind, Symbol, SymbolKind,
 };
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Insert a file (or update its hash on conflict) and return its row id.
@@ -33,6 +34,40 @@ pub fn clear_file_rows(conn: &Connection, file_id: i64) -> Result<()> {
     )?;
     conn.execute("DELETE FROM imports WHERE file_id = ?1", params![file_id])?;
     conn.execute("DELETE FROM impls WHERE file_id = ?1", params![file_id])?;
+    Ok(())
+}
+
+/// Load every indexed file's `path -> content_hash` map.
+pub fn existing_hashes(conn: &Connection) -> Result<HashMap<String, String>> {
+    let mut stmt = conn.prepare("SELECT path, content_hash FROM files")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut out = HashMap::new();
+    for r in rows {
+        let (path, hash) = r?;
+        out.insert(path, hash);
+    }
+    Ok(out)
+}
+
+/// Delete a file row and all of its dependent symbol/reference/import/impl rows.
+///
+/// Foreign keys are declared without `ON DELETE CASCADE`, so child rows are
+/// cleared explicitly before the `files` row is removed.
+pub fn delete_file_and_rows(conn: &Connection, path: &str) -> Result<()> {
+    let file_id: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM files WHERE path = ?1",
+            params![path],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(file_id) = file_id else {
+        return Ok(());
+    };
+    clear_file_rows(conn, file_id)?;
+    conn.execute("DELETE FROM files WHERE id = ?1", params![file_id])?;
     Ok(())
 }
 
@@ -406,5 +441,82 @@ mod tests {
         let a = insert_file(&conn, &FileNode { path: PathBuf::from("src/a.rs"), content_hash: "h1".into() }).unwrap();
         let b = insert_file(&conn, &FileNode { path: PathBuf::from("src/a.rs"), content_hash: "h2".into() }).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn existing_hashes_returns_path_to_hash_map() {
+        let conn = setup();
+        insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/a.rs"),
+                content_hash: "ha".into(),
+            },
+        )
+        .unwrap();
+        insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/b.rs"),
+                content_hash: "hb".into(),
+            },
+        )
+        .unwrap();
+
+        let hashes = existing_hashes(&conn).unwrap();
+        assert_eq!(hashes.len(), 2);
+        assert_eq!(hashes.get("src/a.rs").map(String::as_str), Some("ha"));
+        assert_eq!(hashes.get("src/b.rs").map(String::as_str), Some("hb"));
+    }
+
+    #[test]
+    fn delete_file_and_rows_removes_file_and_dependents() {
+        let conn = setup();
+        let file_id = insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/gone.rs"),
+                content_hash: "h".into(),
+            },
+        )
+        .unwrap();
+        insert_symbols(
+            &conn,
+            file_id,
+            &[Symbol {
+                name: "gone".to_string(),
+                kind: SymbolKind::Function,
+                file: PathBuf::new(),
+                start_line: 1,
+                start_col: 1,
+                module_path: "crate".to_string(),
+            }],
+        )
+        .unwrap();
+        insert_imports(
+            &conn,
+            file_id,
+            &[Import {
+                module_path: "std::io".to_string(),
+                alias: None,
+                file: PathBuf::new(),
+            }],
+        )
+        .unwrap();
+
+        delete_file_and_rows(&conn, "src/gone.rs").unwrap();
+
+        let files: i64 = conn
+            .query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))
+            .unwrap();
+        let symbols: i64 = conn
+            .query_row("SELECT COUNT(*) FROM symbols", [], |r| r.get(0))
+            .unwrap();
+        let imports: i64 = conn
+            .query_row("SELECT COUNT(*) FROM imports", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(files, 0);
+        assert_eq!(symbols, 0);
+        assert_eq!(imports, 0);
     }
 }

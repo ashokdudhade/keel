@@ -31,6 +31,10 @@ pub enum SecondBrainError {
     /// No language plugin is registered for the given file extension.
     #[error("no language plugin registered for extension {0:?}")]
     UnsupportedExtension(String),
+
+    /// A filesystem watch operation failed.
+    #[error("watch error: {0}")]
+    Watch(String),
 }
 
 /// Convenience `Result` alias used throughout the library.

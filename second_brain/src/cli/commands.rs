@@ -22,10 +22,16 @@ fn open_db() -> Result<Connection> {
     Ok(conn)
 }
 
-/// Index the repository at `path`. Returns the number of files indexed.
-pub fn run_index(path: &Path) -> Result<usize> {
+/// Index the repository at `path`. Returns incremental indexing stats.
+pub fn run_index(path: &Path) -> Result<index::IndexStats> {
     let mut conn = open_db()?;
     index::index_repository(path, &mut conn)
+}
+
+/// Watch the repository at `path` and re-index on changes until interrupted.
+pub fn run_watch(path: &Path) -> Result<()> {
+    let mut conn = open_db()?;
+    index::watch::watch_repository(path, &mut conn)
 }
 
 /// Look up definitions by name.

@@ -21,8 +21,10 @@ fn indexes_and_queries_a_fixture_repo() {
     fs::write(root.join("ignored.rs"), "fn should_not_index() {}\n").unwrap();
 
     let mut conn = Connection::open_in_memory().unwrap();
-    let count = index::index_repository(root, &mut conn).unwrap();
-    assert_eq!(count, 1, "only src/lib.rs should be indexed");
+    let stats = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(stats.indexed, 1, "only src/lib.rs should be indexed");
+    assert_eq!(stats.skipped, 0);
+    assert_eq!(stats.removed, 0);
 
     let defs = queries::find_definition(&conn, "AuthService").unwrap();
     assert_eq!(defs.len(), 1);
@@ -50,7 +52,7 @@ fn reindexing_same_repo_does_not_duplicate_rows() {
     let mut conn = Connection::open_in_memory().unwrap();
 
     let first = index::index_repository(root, &mut conn).unwrap();
-    assert_eq!(first, 1);
+    assert_eq!(first.indexed, 1);
     let defs_first = queries::find_definition(&conn, "AuthService").unwrap();
     let refs_first = queries::find_references(&conn, "create_order").unwrap();
     assert_eq!(defs_first.len(), 1);
@@ -58,7 +60,9 @@ fn reindexing_same_repo_does_not_duplicate_rows() {
 
     // Re-index the identical repo into the SAME connection.
     let second = index::index_repository(root, &mut conn).unwrap();
-    assert_eq!(second, 1);
+    assert_eq!(second.indexed, 0);
+    assert_eq!(second.skipped, 1);
+    assert_eq!(second.removed, 0);
 
     let defs_second = queries::find_definition(&conn, "AuthService").unwrap();
     let refs_second = queries::find_references(&conn, "create_order").unwrap();
@@ -68,6 +72,76 @@ fn reindexing_same_repo_does_not_duplicate_rows() {
         refs_first.len(),
         "re-index must not duplicate references"
     );
+}
+
+#[test]
+fn incremental_second_pass_skips_unchanged_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/a.rs"), "fn alpha() {}\n").unwrap();
+    fs::write(root.join("src/b.rs"), "fn beta() {}\n").unwrap();
+
+    let mut conn = Connection::open_in_memory().unwrap();
+    let first = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(first.indexed, 2);
+    assert_eq!(first.skipped, 0);
+
+    let second = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(second.indexed, 0);
+    assert_eq!(second.skipped, 2);
+    assert_eq!(second.removed, 0);
+}
+
+#[test]
+fn incremental_reindexes_only_modified_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/a.rs"), "fn alpha() {}\n").unwrap();
+    fs::write(root.join("src/b.rs"), "fn beta() {}\n").unwrap();
+
+    let mut conn = Connection::open_in_memory().unwrap();
+    let first = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(first.indexed, 2);
+
+    fs::write(root.join("src/a.rs"), "fn alpha() {}\nfn gamma() {}\n").unwrap();
+
+    let second = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(second.indexed, 1);
+    assert_eq!(second.skipped, 1);
+    assert_eq!(second.removed, 0);
+
+    let gamma = queries::find_definition(&conn, "gamma").unwrap();
+    assert_eq!(gamma.len(), 1);
+    assert!(gamma[0].file.ends_with("src/a.rs"));
+
+    let beta = queries::find_definition(&conn, "beta").unwrap();
+    assert_eq!(beta.len(), 1);
+}
+
+#[test]
+fn incremental_removes_deleted_file_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/keep.rs"), "fn keep() {}\n").unwrap();
+    fs::write(root.join("src/gone.rs"), "fn gone() {}\n").unwrap();
+
+    let mut conn = Connection::open_in_memory().unwrap();
+    let first = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(first.indexed, 2);
+    assert_eq!(queries::find_definition(&conn, "gone").unwrap().len(), 1);
+
+    fs::remove_file(root.join("src/gone.rs")).unwrap();
+
+    let second = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(second.indexed, 0);
+    assert_eq!(second.skipped, 1);
+    assert_eq!(second.removed, 1);
+
+    assert!(queries::find_definition(&conn, "gone").unwrap().is_empty());
+    assert_eq!(queries::find_definition(&conn, "keep").unwrap().len(), 1);
 }
 
 #[test]
