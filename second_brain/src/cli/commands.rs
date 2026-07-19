@@ -1,5 +1,6 @@
 //! Execution logic behind each CLI subcommand.
 
+use crate::api;
 use crate::db::{queries, schema};
 use crate::error::{Result, SecondBrainError};
 use crate::graph::deps::{self, Dependency};
@@ -91,4 +92,15 @@ pub fn run_impact(name: &str) -> Result<Vec<Symbol>> {
     let conn = open_db()?;
     schema::initialize(&conn)?;
     impact::find_impact(&conn, name)
+}
+
+/// Serve the JSON API on `127.0.0.1:{port}` using the on-disk index.
+pub fn run_serve(port: u16) -> Result<()> {
+    // Ensure the DB directory exists and schema is ready before binding.
+    let conn = open_db()?;
+    schema::initialize(&conn)?;
+    drop(conn);
+    let addr = format!("127.0.0.1:{port}");
+    eprintln!("Serving SecondBrain JSON API on http://{addr}");
+    api::serve(&addr, &db_path())
 }

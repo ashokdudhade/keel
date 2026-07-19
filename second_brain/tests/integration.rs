@@ -1,12 +1,18 @@
 //! End-to-end integration tests for the SecondBrain engine and `sb` CLI.
 
 use rusqlite::Connection;
-use second_brain::db::queries;
+use second_brain::api;
+use second_brain::db::{queries, schema};
 use second_brain::graph::deps;
 use second_brain::graph::impact;
 use second_brain::graph::types::SymbolKind;
 use second_brain::index;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
 
 #[test]
 fn indexes_and_queries_a_fixture_repo() {
@@ -368,4 +374,87 @@ fn cli_impact_prints_transitive_callers() {
     assert_eq!(lines.len(), 2, "got: {stdout}");
     assert!(lines[0].ends_with("\tb"), "got: {}", lines[0]);
     assert!(lines[1].ends_with("\tc"), "got: {}", lines[1]);
+}
+
+#[test]
+fn json_api_serves_symbol_and_health() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub struct AuthService;\nfn create_order() {}\nfn caller() { create_order(); }\n",
+    )
+    .unwrap();
+
+    let db_path: PathBuf = root.join("index.db");
+    {
+        let mut conn = Connection::open(&db_path).unwrap();
+        schema::initialize(&conn).unwrap();
+        index::index_repository(root, &mut conn).unwrap();
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let serve_db = db_path.clone();
+    thread::spawn(move || {
+        let _ = api::serve(&format!("127.0.0.1:{port}"), &serve_db);
+    });
+
+    wait_for_port(port);
+
+    let health_body = http_get(port, "/health");
+    let health: serde_json::Value = serde_json::from_str(&health_body).unwrap();
+    assert_eq!(health["status"], "ok");
+
+    let symbol_body = http_get(port, "/symbol/AuthService");
+    let symbol: serde_json::Value = serde_json::from_str(&symbol_body).unwrap();
+
+    assert!(symbol["definition"].is_array());
+    assert!(symbol["references"].is_array());
+    assert!(symbol["implementations"].is_array());
+    assert!(symbol["dependencies"].is_array());
+    assert!(symbol["callers"].is_array());
+
+    let defs = symbol["definition"].as_array().unwrap();
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0]["name"], "AuthService");
+    assert_eq!(defs[0]["kind"], "struct");
+    let file = defs[0]["file"].as_str().expect("file must be a string path");
+    assert!(
+        file.ends_with("src/lib.rs") || file.ends_with("src\\lib.rs"),
+        "unexpected file path: {file}"
+    );
+
+    // Determinism: arrays stay ordered across repeated GETs.
+    let again = http_get(port, "/symbol/AuthService");
+    assert_eq!(symbol_body, again);
+}
+
+fn wait_for_port(port: u16) {
+    for _ in 0..50 {
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    panic!("server did not start on port {port}");
+}
+
+fn http_get(port: u16, path: &str) -> String {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).unwrap();
+    let text = String::from_utf8_lossy(&buf);
+    let split = text
+        .find("\r\n\r\n")
+        .expect("HTTP response missing header/body separator");
+    text[split + 4..].to_string()
 }

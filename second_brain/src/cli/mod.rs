@@ -57,4 +57,10 @@ pub enum Commands {
         /// Symbol name to analyze impact for.
         name: String,
     },
+    /// Serve the JSON HTTP API (`GET /symbol/{name}`, `GET /health`).
+    Serve {
+        /// TCP port to listen on (default 7645).
+        #[arg(long, default_value_t = 7645)]
+        port: u16,
+    },
 }

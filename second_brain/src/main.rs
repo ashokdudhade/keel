@@ -96,6 +96,9 @@ fn main() -> Result<()> {
                 );
             }
         }
+        Commands::Serve { port } => {
+            commands::run_serve(port).context("serving JSON API")?;
+        }
     }
     Ok(())
 }

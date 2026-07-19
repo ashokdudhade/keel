@@ -1,5 +1,6 @@
 //! SecondBrain: deterministic, local-first code intelligence engine.
 
+pub mod api;
 pub mod cli;
 pub mod db;
 pub mod error;

@@ -35,6 +35,10 @@ pub enum SecondBrainError {
     /// A filesystem watch operation failed.
     #[error("watch error: {0}")]
     Watch(String),
+
+    /// The JSON HTTP API server failed.
+    #[error("API server error: {0}")]
+    Api(String),
 }
 
 /// Convenience `Result` alias used throughout the library.
