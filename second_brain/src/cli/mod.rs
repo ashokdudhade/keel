@@ -42,4 +42,9 @@ pub enum Commands {
         /// Path to the repository to watch.
         path: PathBuf,
     },
+    /// Print implementations of a trait.
+    Implementations {
+        /// Trait name to find implementations for.
+        name: String,
+    },
 }

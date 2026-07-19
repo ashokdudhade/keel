@@ -251,6 +251,32 @@ pub fn find_references(conn: &Connection, name: &str) -> Result<Vec<Reference>> 
     Ok(out)
 }
 
+/// Find trait implementations for `trait_name`, ordered by `(path, line, col)`.
+///
+/// Inherent impls (`trait_name IS NULL`) are excluded.
+pub fn find_implementations(conn: &Connection, trait_name: &str) -> Result<Vec<ImplRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT i.type_name, i.trait_name, f.path, i.start_line, i.start_col
+         FROM impls i JOIN files f ON i.file_id = f.id
+         WHERE i.trait_name = ?1
+         ORDER BY f.path, i.start_line, i.start_col",
+    )?;
+    let rows = stmt.query_map(params![trait_name], |row| {
+        Ok(ImplRecord {
+            type_name: row.get::<_, String>(0)?,
+            trait_name: row.get::<_, Option<String>>(1)?,
+            file: PathBuf::from(row.get::<_, String>(2)?),
+            start_line: row.get::<_, i64>(3)? as u32,
+            start_col: row.get::<_, i64>(4)? as u32,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,6 +435,56 @@ mod tests {
             )
             .unwrap();
         assert_eq!(null_aliases, 1);
+    }
+
+    #[test]
+    fn find_implementations_returns_trait_impls_ordered_excludes_inherent() {
+        let conn = setup();
+        let file_id = insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/lib.rs"),
+                content_hash: "h".to_string(),
+            },
+        )
+        .unwrap();
+        insert_impls(
+            &conn,
+            file_id,
+            &[
+                ImplRecord {
+                    type_name: "A".to_string(),
+                    trait_name: Some("Storage".to_string()),
+                    file: PathBuf::new(),
+                    start_line: 10,
+                    start_col: 1,
+                },
+                ImplRecord {
+                    type_name: "B".to_string(),
+                    trait_name: Some("Storage".to_string()),
+                    file: PathBuf::new(),
+                    start_line: 14,
+                    start_col: 1,
+                },
+                ImplRecord {
+                    type_name: "A".to_string(),
+                    trait_name: None,
+                    file: PathBuf::new(),
+                    start_line: 18,
+                    start_col: 1,
+                },
+            ],
+        )
+        .unwrap();
+
+        let impls = find_implementations(&conn, "Storage").unwrap();
+        assert_eq!(impls.len(), 2);
+        assert_eq!(impls[0].type_name, "A");
+        assert_eq!(impls[0].trait_name.as_deref(), Some("Storage"));
+        assert_eq!(impls[0].file, PathBuf::from("src/lib.rs"));
+        assert_eq!(impls[0].start_line, 10);
+        assert_eq!(impls[1].type_name, "B");
+        assert_eq!(impls[1].start_line, 14);
     }
 
     #[test]

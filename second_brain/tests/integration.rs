@@ -169,3 +169,74 @@ fn cli_binary_indexes_and_queries() {
     assert!(stdout.contains("create_order"), "got: {stdout}");
     assert!(stdout.contains(":1:"), "expected line 1 in: {stdout}");
 }
+
+#[test]
+fn find_implementations_returns_trait_impls_excludes_inherent() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        r#"
+pub trait Storage {}
+
+pub struct A;
+pub struct B;
+
+impl Storage for A {}
+
+impl Storage for B {}
+
+impl A {}
+"#,
+    )
+    .unwrap();
+
+    let mut conn = Connection::open_in_memory().unwrap();
+    index::index_repository(root, &mut conn).unwrap();
+
+    let impls = queries::find_implementations(&conn, "Storage").unwrap();
+    assert_eq!(impls.len(), 2, "expected two trait impls, got {impls:?}");
+    assert_eq!(impls[0].type_name, "A");
+    assert_eq!(impls[0].trait_name.as_deref(), Some("Storage"));
+    assert_eq!(impls[1].type_name, "B");
+    assert_eq!(impls[1].trait_name.as_deref(), Some("Storage"));
+    assert!(
+        impls[0].start_line <= impls[1].start_line,
+        "expected path/line/col order: {impls:?}"
+    );
+}
+
+#[test]
+fn cli_implementations_prints_trait_impls() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub trait Storage {}\npub struct A;\npub struct B;\nimpl Storage for A {}\nimpl Storage for B {}\nimpl A {}\n",
+    )
+    .unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_sb");
+
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let impl_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["implementations", "Storage"])
+        .output()
+        .unwrap();
+    assert!(impl_out.status.success(), "implementations failed: {:?}", impl_out);
+    let stdout = String::from_utf8(impl_out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "got: {stdout}");
+    assert!(lines[0].ends_with("\tA"), "got: {}", lines[0]);
+    assert!(lines[1].ends_with("\tB"), "got: {}", lines[1]);
+    assert!(lines[0].contains(':'), "expected path:line:col in: {}", lines[0]);
+}

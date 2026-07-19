@@ -53,6 +53,21 @@ fn main() -> Result<()> {
                 println!("{}:{}:{}\t{}", r.file.display(), r.start_line, r.start_col, r.name);
             }
         }
+        Commands::Implementations { name } => {
+            let impls = commands::run_implementations(&name).context("querying implementations")?;
+            if impls.is_empty() {
+                eprintln!("No implementations found for {name}");
+            }
+            for i in impls {
+                println!(
+                    "{}:{}:{}\t{}",
+                    i.file.display(),
+                    i.start_line,
+                    i.start_col,
+                    i.type_name
+                );
+            }
+        }
     }
     Ok(())
 }

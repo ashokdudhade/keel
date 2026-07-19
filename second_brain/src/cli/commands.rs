@@ -3,7 +3,7 @@
 use crate::db::{queries, schema};
 use crate::error::{Result, SecondBrainError};
 use crate::graph::resolve;
-use crate::graph::types::{Reference, Symbol};
+use crate::graph::types::{ImplRecord, Reference, Symbol};
 use crate::index;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
@@ -68,4 +68,11 @@ fn unique_module(defs: &[Symbol]) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Look up trait implementations by trait name.
+pub fn run_implementations(trait_name: &str) -> Result<Vec<ImplRecord>> {
+    let conn = open_db()?;
+    schema::initialize(&conn)?;
+    queries::find_implementations(&conn, trait_name)
 }
