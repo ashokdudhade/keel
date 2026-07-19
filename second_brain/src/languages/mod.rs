@@ -1,6 +1,7 @@
 //! Language plugin trait and registry. The core dispatches to plugins by file
 //! extension without knowing any language specifics.
 
+pub mod go;
 pub mod rust;
 pub mod typescript;
 
@@ -41,9 +42,12 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// A registry with all built-in plugins (Rust, TypeScript/TSX).
+    /// A registry with all built-in plugins (Rust, TypeScript/TSX, Go).
     pub fn with_defaults() -> Self {
-        let mut plugins: Vec<Box<dyn LanguagePlugin>> = vec![Box::new(rust::RustPlugin)];
+        let mut plugins: Vec<Box<dyn LanguagePlugin>> = vec![
+            Box::new(rust::RustPlugin),
+            Box::new(go::GoPlugin),
+        ];
         typescript::register(&mut plugins);
         Registry { plugins }
     }

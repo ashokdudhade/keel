@@ -482,3 +482,28 @@ fn indexes_typescript_fixture_and_finds_symbol() {
     assert_eq!(fns.len(), 1);
     assert_eq!(fns[0].kind, SymbolKind::Function);
 }
+
+#[test]
+fn indexes_go_fixture_and_finds_symbol() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("auth")).unwrap();
+    fs::write(
+        root.join("auth/service.go"),
+        "package auth\n\ntype User struct{}\n\nfunc CreateOrder() {}\n",
+    )
+    .unwrap();
+
+    let mut conn = Connection::open_in_memory().unwrap();
+    let stats = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(stats.indexed, 1);
+
+    let defs = queries::find_definition(&conn, "CreateOrder").unwrap();
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].kind, SymbolKind::Function);
+    assert_eq!(defs[0].module_path, "auth");
+
+    let types = queries::find_definition(&conn, "User").unwrap();
+    assert_eq!(types.len(), 1);
+    assert_eq!(types[0].kind, SymbolKind::Struct);
+}
