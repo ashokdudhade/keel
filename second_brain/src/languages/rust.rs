@@ -7,15 +7,14 @@
 //!
 //! ## Known limitations
 //!
-//! - Impact analysis is name-based (see `graph::impact`); overloaded names can
-//!   over-approximate transitive callers.
-//! - TypeScript `module_path` is fixed `"module"` (plugin API has no file path).
+//! - Impact analysis uses qualified identity with resolve-aware expansion; see
+//!   `graph::impact`.
 //! - Go has no trait-impl form; `implementations` stays empty for Go sources.
 
-use super::LanguagePlugin;
+use super::{file_path_key, LanguagePlugin};
 use crate::error::{Result, SecondBrainError};
 use crate::graph::types::{ImplRecord, Import, Reference, ReferenceKind, Symbol, SymbolKind};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser, Query, QueryCursor, Tree};
@@ -51,7 +50,7 @@ impl LanguagePlugin for RustPlugin {
         &["rs"]
     }
 
-    fn extract_symbols(&self, source_code: &str) -> Result<Vec<Symbol>> {
+    fn extract_symbols(&self, _path: &Path, source_code: &str) -> Result<Vec<Symbol>> {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
         let mut mods: Vec<String> = Vec::new();
@@ -60,16 +59,17 @@ impl LanguagePlugin for RustPlugin {
         Ok(out)
     }
 
-    fn extract_references(&self, source_code: &str) -> Result<Vec<Reference>> {
+    fn extract_references(&self, path: &Path, source_code: &str) -> Result<Vec<Reference>> {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
+        let file_key = file_path_key(path);
         let mut scope: Vec<String> = Vec::new();
         let mut out = Vec::new();
-        walk_references(tree.root_node(), src, &mut scope, &mut out)?;
+        walk_references(tree.root_node(), src, &file_key, &mut scope, &mut out)?;
         Ok(out)
     }
 
-    fn extract_imports(&self, source_code: &str) -> Result<Vec<Import>> {
+    fn extract_imports(&self, _path: &Path, source_code: &str) -> Result<Vec<Import>> {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
@@ -77,7 +77,7 @@ impl LanguagePlugin for RustPlugin {
         Ok(out)
     }
 
-    fn extract_impls(&self, source_code: &str) -> Result<Vec<ImplRecord>> {
+    fn extract_impls(&self, _path: &Path, source_code: &str) -> Result<Vec<ImplRecord>> {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
         let query = impl_query();
@@ -127,10 +127,11 @@ fn qualify_mod(mods: &[String]) -> String {
     }
 }
 
-/// Qualified name of the enclosing `fn`/`mod` scope, or empty when top level.
-fn qualify_scope(scope: &[String]) -> String {
+/// Qualified name of the enclosing `fn`/`mod` scope, or the file path when
+/// top-level (so empty-scope call sites still participate in impact).
+fn qualify_scope(file_key: &str, scope: &[String]) -> String {
     if scope.is_empty() {
-        String::new()
+        file_key.to_string()
     } else {
         format!("crate::{}", scope.join("::"))
     }
@@ -216,6 +217,7 @@ fn push_symbol(
 fn walk_references(
     node: Node,
     src: &[u8],
+    file_key: &str,
     scope: &mut Vec<String>,
     out: &mut Vec<Reference>,
 ) -> Result<()> {
@@ -226,7 +228,7 @@ fn walk_references(
                 scope.push(text.to_string());
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
-                    walk_references(child, src, scope, out)?;
+                    walk_references(child, src, file_key, scope, out)?;
                 }
                 scope.pop();
                 return Ok(());
@@ -234,13 +236,13 @@ fn walk_references(
         }
         "call_expression" => {
             if let Some(func) = node.child_by_field_name("function") {
-                emit_call_reference(func, src, scope, out)?;
+                emit_call_reference(func, src, file_key, scope, out)?;
             }
         }
         "macro_invocation" => {
             if let Some(mac) = node.child_by_field_name("macro") {
                 if let Some((name, target)) = final_segment(mac, src)? {
-                    push_reference(name, target, ReferenceKind::Macro, scope, out);
+                    push_reference(name, target, ReferenceKind::Macro, file_key, scope, out);
                 }
             }
         }
@@ -249,13 +251,20 @@ fn walk_references(
         // parameter), which would double-count the definition site.
         "type_identifier" if !is_definition_name(node) => {
             let text = node_text(node, src)?;
-            push_reference(text.to_string(), node, ReferenceKind::Type, scope, out);
+            push_reference(
+                text.to_string(),
+                node,
+                ReferenceKind::Type,
+                file_key,
+                scope,
+                out,
+            );
         }
         _ => {}
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_references(child, src, scope, out)?;
+        walk_references(child, src, file_key, scope, out)?;
     }
     Ok(())
 }
@@ -264,24 +273,39 @@ fn walk_references(
 fn emit_call_reference(
     func: Node,
     src: &[u8],
+    file_key: &str,
     scope: &[String],
     out: &mut Vec<Reference>,
 ) -> Result<()> {
     match func.kind() {
         "identifier" => {
             let text = node_text(func, src)?;
-            push_reference(text.to_string(), func, ReferenceKind::Call, scope, out);
+            push_reference(
+                text.to_string(),
+                func,
+                ReferenceKind::Call,
+                file_key,
+                scope,
+                out,
+            );
         }
         "scoped_identifier" => {
             if let Some((name, target)) = final_segment(func, src)? {
-                push_reference(name, target, ReferenceKind::Path, scope, out);
+                push_reference(name, target, ReferenceKind::Path, file_key, scope, out);
             }
         }
         "field_expression" => {
             if let Some(field) = func.child_by_field_name("field") {
                 if field.kind() == "field_identifier" {
                     let text = node_text(field, src)?;
-                    push_reference(text.to_string(), field, ReferenceKind::Method, scope, out);
+                    push_reference(
+                        text.to_string(),
+                        field,
+                        ReferenceKind::Method,
+                        file_key,
+                        scope,
+                        out,
+                    );
                 }
             }
         }
@@ -317,6 +341,7 @@ fn push_reference(
     name: String,
     node: Node,
     kind: ReferenceKind,
+    file_key: &str,
     scope: &[String],
     out: &mut Vec<Reference>,
 ) {
@@ -327,7 +352,7 @@ fn push_reference(
         start_line: pos.row as u32 + 1,
         start_col: pos.column as u32 + 1,
         kind,
-        container: qualify_scope(scope),
+        container: qualify_scope(file_key, scope),
     });
 }
 
@@ -450,10 +475,14 @@ mod auth {
 fn greet() {}
 ";
 
+    fn test_path() -> &'static Path {
+        Path::new("src/lib.rs")
+    }
+
     #[test]
     fn extracts_struct_trait_and_functions() {
         let plugin = RustPlugin;
-        let syms = plugin.extract_symbols(SOURCE).unwrap();
+        let syms = plugin.extract_symbols(test_path(), SOURCE).unwrap();
         let find = |n: &str| syms.iter().find(|s| s.name == n).cloned();
 
         let auth = find("AuthService").expect("AuthService symbol");
@@ -468,7 +497,7 @@ fn greet() {}
     #[test]
     fn extracts_call_and_macro_references() {
         let plugin = RustPlugin;
-        let refs = plugin.extract_references(SOURCE).unwrap();
+        let refs = plugin.extract_references(test_path(), SOURCE).unwrap();
         let names: Vec<&str> = refs.iter().map(|r| r.name.as_str()).collect();
         assert!(names.contains(&"create_order"));
         assert!(names.contains(&"println"));
@@ -480,7 +509,7 @@ fn greet() {}
     #[test]
     fn top_level_symbol_has_crate_module_path() {
         let plugin = RustPlugin;
-        let syms = plugin.extract_symbols(RICH).unwrap();
+        let syms = plugin.extract_symbols(test_path(), RICH).unwrap();
         let greet = syms.iter().find(|s| s.name == "greet").unwrap();
         assert_eq!(greet.module_path, "crate");
     }
@@ -488,7 +517,7 @@ fn greet() {}
     #[test]
     fn symbol_inside_mod_has_qualified_module_path() {
         let plugin = RustPlugin;
-        let syms = plugin.extract_symbols(RICH).unwrap();
+        let syms = plugin.extract_symbols(test_path(), RICH).unwrap();
         let login = syms.iter().find(|s| s.name == "login").unwrap();
         assert_eq!(login.module_path, "crate::auth");
     }
@@ -496,7 +525,7 @@ fn greet() {}
     #[test]
     fn extracts_simple_import() {
         let plugin = RustPlugin;
-        let imports = plugin.extract_imports(RICH).unwrap();
+        let imports = plugin.extract_imports(test_path(), RICH).unwrap();
         let imp = imports
             .iter()
             .find(|i| i.module_path == "std::collections::HashMap")
@@ -507,7 +536,7 @@ fn greet() {}
     #[test]
     fn expands_grouped_imports_with_alias() {
         let plugin = RustPlugin;
-        let imports = plugin.extract_imports(RICH).unwrap();
+        let imports = plugin.extract_imports(test_path(), RICH).unwrap();
         let b = imports.iter().find(|i| i.module_path == "a::b").expect("a::b");
         assert_eq!(b.alias, None);
         let c = imports.iter().find(|i| i.module_path == "a::c").expect("a::c");
@@ -517,7 +546,7 @@ fn greet() {}
     #[test]
     fn extracts_trait_and_inherent_impls() {
         let plugin = RustPlugin;
-        let impls = plugin.extract_impls(RICH).unwrap();
+        let impls = plugin.extract_impls(test_path(), RICH).unwrap();
 
         let trait_impl = impls
             .iter()
@@ -535,7 +564,7 @@ fn greet() {}
     #[test]
     fn extracts_method_call_reference() {
         let plugin = RustPlugin;
-        let refs = plugin.extract_references(RICH).unwrap();
+        let refs = plugin.extract_references(test_path(), RICH).unwrap();
         let m = refs
             .iter()
             .find(|r| r.name == "helper")
@@ -546,7 +575,7 @@ fn greet() {}
     #[test]
     fn reference_container_is_enclosing_fn_qualified_name() {
         let plugin = RustPlugin;
-        let refs = plugin.extract_references(RICH).unwrap();
+        let refs = plugin.extract_references(test_path(), RICH).unwrap();
         let greet_call = refs
             .iter()
             .find(|r| r.name == "greet" && r.kind == ReferenceKind::Call)
@@ -557,7 +586,7 @@ fn greet() {}
     #[test]
     fn struct_definition_name_is_not_a_type_reference() {
         let plugin = RustPlugin;
-        let refs = plugin.extract_references(RICH).unwrap();
+        let refs = plugin.extract_references(test_path(), RICH).unwrap();
         // The struct definition sits on line 4; its name must not be a Type ref.
         let def_as_type = refs
             .iter()

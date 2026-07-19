@@ -1,13 +1,15 @@
 //! Go language plugin: Tree-sitter based symbol and reference extraction.
 //!
 //! `module_path` is the package name from the file's `package` clause (e.g.
-//! `auth`). Go has no `impl Trait for Type` form — [`LanguagePlugin::extract_impls`]
-//! stays at the default empty result; interface satisfaction is future work.
+//! `auth`). For `package main`, a path-based identity is used so mains in
+//! different files do not collide. Go has no `impl Trait for Type` form —
+//! [`LanguagePlugin::extract_impls`] stays at the default empty result;
+//! interface satisfaction is future work.
 
-use super::LanguagePlugin;
+use super::{file_path_key, path_module_identity, LanguagePlugin};
 use crate::error::{Result, SecondBrainError};
 use crate::graph::types::{Import, Reference, ReferenceKind, Symbol, SymbolKind};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser, Tree};
 
 /// Extractor for Go source using Tree-sitter.
@@ -28,31 +30,48 @@ impl LanguagePlugin for GoPlugin {
         &["go"]
     }
 
-    fn extract_symbols(&self, source_code: &str) -> Result<Vec<Symbol>> {
+    fn extract_symbols(&self, path: &Path, source_code: &str) -> Result<Vec<Symbol>> {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
-        let package = package_name(tree.root_node(), src)?.unwrap_or_default();
+        let package = resolve_module_path(path, tree.root_node(), src)?;
         let mut out = Vec::new();
         walk_symbols(tree.root_node(), src, &package, &mut out)?;
         Ok(out)
     }
 
-    fn extract_references(&self, source_code: &str) -> Result<Vec<Reference>> {
+    fn extract_references(&self, path: &Path, source_code: &str) -> Result<Vec<Reference>> {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
-        let package = package_name(tree.root_node(), src)?.unwrap_or_default();
+        let package = resolve_module_path(path, tree.root_node(), src)?;
+        let file_key = file_path_key(path);
         let mut scope: Vec<String> = Vec::new();
         let mut out = Vec::new();
-        walk_references(tree.root_node(), src, &package, &mut scope, &mut out)?;
+        walk_references(
+            tree.root_node(),
+            src,
+            &file_key,
+            &package,
+            &mut scope,
+            &mut out,
+        )?;
         Ok(out)
     }
 
-    fn extract_imports(&self, source_code: &str) -> Result<Vec<Import>> {
+    fn extract_imports(&self, _path: &Path, source_code: &str) -> Result<Vec<Import>> {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
         walk_imports(tree.root_node(), src, &mut out)?;
         Ok(out)
+    }
+}
+
+fn resolve_module_path(path: &Path, root: Node, src: &[u8]) -> Result<String> {
+    let package = package_name(root, src)?.unwrap_or_default();
+    if package == "main" || package.is_empty() {
+        Ok(path_module_identity(path))
+    } else {
+        Ok(package)
     }
 }
 
@@ -76,9 +95,9 @@ fn package_name(root: Node, src: &[u8]) -> Result<Option<String>> {
     Ok(None)
 }
 
-fn qualify_scope(package: &str, scope: &[String]) -> String {
+fn qualify_scope(file_key: &str, package: &str, scope: &[String]) -> String {
     if scope.is_empty() {
-        String::new()
+        file_key.to_string()
     } else if package.is_empty() {
         scope.join("::")
     } else {
@@ -201,6 +220,7 @@ fn push_symbol(
 fn walk_references(
     node: Node,
     src: &[u8],
+    file_key: &str,
     package: &str,
     scope: &mut Vec<String>,
     out: &mut Vec<Reference>,
@@ -213,7 +233,7 @@ fn walk_references(
                     scope.push(text.to_string());
                     let mut cursor = node.walk();
                     for child in node.children(&mut cursor) {
-                        walk_references(child, src, package, scope, out)?;
+                        walk_references(child, src, file_key, package, scope, out)?;
                     }
                     scope.pop();
                     return Ok(());
@@ -222,14 +242,14 @@ fn walk_references(
         }
         "call_expression" => {
             if let Some(func) = node.child_by_field_name("function") {
-                emit_call_reference(func, src, package, scope, out)?;
+                emit_call_reference(func, src, file_key, package, scope, out)?;
             }
         }
         _ => {}
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_references(child, src, package, scope, out)?;
+        walk_references(child, src, file_key, package, scope, out)?;
     }
     Ok(())
 }
@@ -237,6 +257,7 @@ fn walk_references(
 fn emit_call_reference(
     func: Node,
     src: &[u8],
+    file_key: &str,
     package: &str,
     scope: &[String],
     out: &mut Vec<Reference>,
@@ -244,7 +265,15 @@ fn emit_call_reference(
     match func.kind() {
         "identifier" => {
             let text = node_text(func, src)?;
-            push_reference(text.to_string(), func, ReferenceKind::Call, package, scope, out);
+            push_reference(
+                text.to_string(),
+                func,
+                ReferenceKind::Call,
+                file_key,
+                package,
+                scope,
+                out,
+            );
         }
         "selector_expression" => {
             if let Some(field) = func.child_by_field_name("field") {
@@ -254,6 +283,7 @@ fn emit_call_reference(
                         text.to_string(),
                         field,
                         ReferenceKind::Method,
+                        file_key,
                         package,
                         scope,
                         out,
@@ -270,6 +300,7 @@ fn push_reference(
     name: String,
     node: Node,
     kind: ReferenceKind,
+    file_key: &str,
     package: &str,
     scope: &[String],
     out: &mut Vec<Reference>,
@@ -281,7 +312,7 @@ fn push_reference(
         start_line: pos.row as u32 + 1,
         start_col: pos.column as u32 + 1,
         kind,
-        container: qualify_scope(package, scope),
+        container: qualify_scope(file_key, package, scope),
     });
 }
 
@@ -347,10 +378,14 @@ func (u User) Login() {
 }
 "#;
 
+    fn test_path() -> &'static Path {
+        Path::new("auth/service.go")
+    }
+
     #[test]
     fn extracts_package_aware_funcs_types_and_const() {
         let plugin = GoPlugin;
-        let syms = plugin.extract_symbols(SOURCE).unwrap();
+        let syms = plugin.extract_symbols(test_path(), SOURCE).unwrap();
         let find = |n: &str| syms.iter().find(|s| s.name == n).cloned();
 
         let create = find("CreateOrder").expect("CreateOrder");
@@ -364,9 +399,24 @@ func (u User) Login() {
     }
 
     #[test]
+    fn package_main_uses_path_based_module() {
+        let plugin = GoPlugin;
+        let source = "package main\n\nfunc main() {}\n";
+        let a = plugin
+            .extract_symbols(Path::new("cmd/a/main.go"), source)
+            .unwrap();
+        let b = plugin
+            .extract_symbols(Path::new("cmd/b/main.go"), source)
+            .unwrap();
+        assert_eq!(a[0].module_path, "cmd/a/main");
+        assert_eq!(b[0].module_path, "cmd/b/main");
+        assert_ne!(a[0].module_path, b[0].module_path);
+    }
+
+    #[test]
     fn extracts_imports_with_and_without_alias() {
         let plugin = GoPlugin;
-        let imports = plugin.extract_imports(SOURCE).unwrap();
+        let imports = plugin.extract_imports(test_path(), SOURCE).unwrap();
 
         let fmt = imports
             .iter()
@@ -384,7 +434,7 @@ func (u User) Login() {
     #[test]
     fn extracts_call_and_selector_references() {
         let plugin = GoPlugin;
-        let refs = plugin.extract_references(SOURCE).unwrap();
+        let refs = plugin.extract_references(test_path(), SOURCE).unwrap();
 
         let call = refs
             .iter()

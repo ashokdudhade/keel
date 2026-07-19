@@ -518,6 +518,8 @@ fn indexes_typescript_fixture_and_finds_symbol() {
     let defs = queries::find_definition(&conn, "AuthService").unwrap();
     assert_eq!(defs.len(), 1);
     assert_eq!(defs[0].kind, SymbolKind::Struct);
+    assert_eq!(defs[0].module_path, "src/auth");
+    assert_eq!(defs[0].file.as_os_str(), "src/auth.ts");
 
     let fns = queries::find_definition(&conn, "createOrder").unwrap();
     assert_eq!(fns.len(), 1);
