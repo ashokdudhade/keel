@@ -280,12 +280,13 @@ implementation plan when reached.
 - MCP server (interface over the same core).
 - TypeScript plugin, Go plugin.
 
-### v1.0 — Multi-language & stability
+### v1.0 — Multi-language & stability (shipped 2026-07-19)
 
 - Multi-language monorepo support.
 - Full impact analysis.
-- Plugin system for community language contributions.
-- Stable public APIs + documentation.
+- Plugin system for community language contributions (`Registry::register`).
+- Stable public APIs (`Index` facade) + documentation.
+- Crate version `1.0.0`; see `second_brain/CHANGELOG.md`.
 
 ---
 

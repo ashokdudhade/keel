@@ -1,8 +1,12 @@
-# SecondBrain
+# SecondBrain 1.0
 
 Deterministic, local-first code intelligence for AI coding agents. SecondBrain
 indexes a repository with Tree-sitter and answers structural queries from a
 local SQLite database — no LLMs, embeddings, or semantic search.
+
+**1.0 is the stable library + CLI release:** semver guarantees apply to the
+public crate surface (especially [`Index`](#library-api-index)) and the
+documented CLI / MCP / HTTP contracts.
 
 ## Install / Build
 
@@ -10,13 +14,19 @@ local SQLite database — no LLMs, embeddings, or semantic search.
 cargo build --release
 ```
 
-The binary is `sb` (target/release/sb).
+The binary is `sb` (`target/release/sb`).
 
-## Usage
+As a library dependency:
+
+```toml
+second_brain = "1.0"
+```
+
+## CLI Usage
 
 ```bash
 sb index <path>                 # index a repository into ./.secondbrain/index.db
-sb watch <path>                 # re-index on .rs file changes
+sb watch <path>                 # re-index on registered source file changes
 sb definition <name>            # where a symbol is defined
 sb references <name>            # where a name is referenced
 sb callers <name>               # call/use sites (import-aware when unique)
@@ -29,9 +39,44 @@ sb mcp                          # MCP stdio server (Content-Length JSON-RPC)
 
 CLI output is `path:line:col` (1-based), tab-separated, stable and script-friendly.
 
-## Languages (v0.3)
+## Library API (`Index`)
 
-Indexed by extension via the language plugin registry:
+Stable 1.0 entry point for embedding SecondBrain in tools and agents:
+
+```rust
+use second_brain::{Index, Registry, LanguagePlugin};
+use std::path::Path;
+
+let mut index = Index::open_in_memory()?;
+index.index_path(Path::new("./my-repo"))?;
+
+let defs = index.definition("AuthService")?;
+let refs = index.references("create_order")?;
+let callers = index.callers("create_order")?;
+let impls = index.implementations("Storage")?;
+let deps = index.dependencies("crate::auth")?;
+let impact = index.impact("create_order")?;
+```
+
+- `Index::open` / `open_in_memory` — open an on-disk or in-memory index
+- `index_path` — index with built-in language plugins
+- `index_path_with` — index with a custom [`Registry`](#community-language-plugins)
+- Query methods: `definition`, `references`, `callers`, `implementations`,
+  `dependencies`, `impact`
+
+Free functions `index_repository` / `index_repository_with` remain available for
+callers that already hold a `rusqlite::Connection`.
+
+## Multi-language monorepos
+
+A single `index` / `Index::index_path` pass crawls **all** extensions registered
+in the language registry (not Rust-only). One repository tree can mix Rust,
+TypeScript/TSX, and Go; symbols from each language land in the same SQLite index.
+
+`sb watch` reacts to changes on registered extensions (`.rs`, `.ts`/`.tsx`/…,
+`.go`) and re-runs the same incremental indexer.
+
+## Languages
 
 | Language   | Extensions              | `module_path` |
 |------------|-------------------------|---------------|
@@ -46,6 +91,30 @@ import-aware resolution is weaker for TS than for Rust/Go.
 
 Go has no `impl Trait for Type` form — `implementations` queries stay empty for
 Go; interface satisfaction is future work.
+
+**Impact** is name-based transitive expansion over reference containers; cycles
+terminate, but overloaded names can over-approximate.
+
+## Community language plugins
+
+Built-ins are registered via `Registry::with_defaults()`. External crates can
+ship plugins:
+
+```rust
+use second_brain::{index_repository_with, LanguagePlugin, Registry};
+
+let mut registry = Registry::empty();
+registry.register(Box::new(MyPlugin));
+// or start from defaults and add more:
+// let mut registry = Registry::with_defaults();
+// registry.register(Box::new(MyPlugin));
+
+index_repository_with(root, &mut conn, &registry)?;
+// Index::index_path_with(root, &registry) is equivalent for facade users.
+```
+
+Implement `LanguagePlugin` (`Sync`) with `extensions`, `extract_symbols`,
+`extract_references`, and optionally `extract_imports` / `extract_impls`.
 
 ## MCP (`sb mcp`)
 
@@ -119,7 +188,7 @@ GET /symbol/{name}
 
 Arrays are ordered deterministically. File paths are JSON strings.
 
-## Resolution model (v0.2+)
+## Resolution model
 
 Cross-file resolution uses an in-house **module/import-aware deterministic
 resolver** over the SQLite index (not ML):
@@ -130,17 +199,14 @@ resolver** over the SQLite index (not ML):
 
 Within a tier, results are ordered by `(path, line, col)`.
 
-**Stack Graphs** remains a viable alternative resolution backend for a future
-precision layer; v0.2 ships the deterministic AST/module resolver instead
-because a maintained published Stack Graphs Rust rules crate was not available.
+## Scope (1.0)
 
-## Scope
-
-- Languages: Rust, TypeScript/TSX, Go (v0.3).
-- MCP stdio server for AI agents (`sb mcp`).
-- Incremental indexing via content hashes; `sb watch` for live updates (Rust
-  file events; re-index still picks up all registered extensions).
-- Graph queries: implementations, dependencies, transitive impact.
+- Stable library API: `Index`, `Registry` / `LanguagePlugin`, graph query types
+- Languages: Rust, TypeScript/TSX, Go (multi-language monorepos supported)
+- Community plugin registration (`Registry::register`)
+- MCP stdio server and JSON HTTP API
+- Incremental indexing via content hashes; `sb watch` for live updates
+- Graph queries: implementations, dependencies, transitive impact
 
 ## License
 
