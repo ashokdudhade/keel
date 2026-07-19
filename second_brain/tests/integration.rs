@@ -460,6 +460,47 @@ fn http_get(port: u16, path: &str) -> String {
 }
 
 #[test]
+fn indexes_multi_language_monorepo_in_single_pass() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("rust/src")).unwrap();
+    fs::create_dir_all(root.join("ts/src")).unwrap();
+    fs::create_dir_all(root.join("go/pkg")).unwrap();
+    fs::write(
+        root.join("rust/src/lib.rs"),
+        "pub struct RustService;\nfn rust_helper() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("ts/src/service.ts"),
+        "export class TsService {\n  run(): void {}\n}\nexport function tsHelper(): void {}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("go/pkg/service.go"),
+        "package pkg\n\ntype GoService struct{}\n\nfunc GoHelper() {}\n",
+    )
+    .unwrap();
+
+    let mut conn = Connection::open_in_memory().unwrap();
+    let stats = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(stats.indexed, 3, "expected one file per language");
+
+    let rust = queries::find_definition(&conn, "RustService").unwrap();
+    assert_eq!(rust.len(), 1);
+    assert_eq!(rust[0].kind, SymbolKind::Struct);
+
+    let ts = queries::find_definition(&conn, "TsService").unwrap();
+    assert_eq!(ts.len(), 1);
+    assert_eq!(ts[0].kind, SymbolKind::Struct);
+
+    let go = queries::find_definition(&conn, "GoService").unwrap();
+    assert_eq!(go.len(), 1);
+    assert_eq!(go[0].kind, SymbolKind::Struct);
+    assert_eq!(go[0].module_path, "pkg");
+}
+
+#[test]
 fn indexes_typescript_fixture_and_finds_symbol() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

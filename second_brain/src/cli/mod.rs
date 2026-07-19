@@ -37,7 +37,7 @@ pub enum Commands {
         /// Function name to find call/use sites for.
         name: String,
     },
-    /// Watch a repository and re-index on `.rs` file changes.
+    /// Watch a repository and re-index on registered source file changes.
     Watch {
         /// Path to the repository to watch.
         path: PathBuf,

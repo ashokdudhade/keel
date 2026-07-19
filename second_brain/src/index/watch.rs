@@ -1,11 +1,12 @@
-//! Filesystem watching: re-index a repository when `.rs` files change.
+//! Filesystem watching: re-index a repository when registered source files change.
 
 use crate::error::{Result, SecondBrainError};
 use crate::index::{self, IndexStats};
+use crate::languages::Registry;
 use notify::{Event, RecursiveMode, Watcher};
 use rusqlite::Connection;
 use std::path::Path;
-use std::sync::mpsc;
+use std::sync::{mpsc, OnceLock};
 use std::time::{Duration, Instant};
 
 /// Default debounce window before a pending re-index runs.
@@ -79,14 +80,34 @@ pub fn reindex_on_change(root: &Path, conn: &mut Connection) -> Result<IndexStat
     index::index_repository(root, conn)
 }
 
-/// Return true when an event may have affected indexed Rust sources.
+/// Extensions watched by the default language registry (cached once).
+fn default_watch_extensions() -> &'static [String] {
+    static EXTS: OnceLock<Vec<String>> = OnceLock::new();
+    EXTS.get_or_init(|| {
+        Registry::with_defaults()
+            .extensions()
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    })
+}
+
+/// Return true when an event may have affected an indexed source file.
+///
+/// Extensions come from the default language registry (Rust, TypeScript/TSX,
+/// Go). Custom plugins registered at index time are still picked up on the
+/// subsequent re-index pass.
 fn is_relevant_event(event: &Event) -> bool {
     use notify::EventKind;
     match event.kind {
-        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => event
-            .paths
-            .iter()
-            .any(|p| p.extension().and_then(|s| s.to_str()) == Some("rs")),
+        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
+            let exts = default_watch_extensions();
+            event.paths.iter().any(|p| {
+                p.extension()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|ext| exts.iter().any(|e| e == ext))
+            })
+        }
         _ => false,
     }
 }
@@ -94,9 +115,32 @@ fn is_relevant_event(event: &Event) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use notify::{Event, EventKind};
     use rusqlite::Connection;
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::tempdir;
+
+    #[test]
+    fn is_relevant_event_accepts_registered_language_extensions() {
+        for ext in ["rs", "ts", "tsx", "go"] {
+            let event = Event {
+                kind: EventKind::Modify(notify::event::ModifyKind::Any),
+                paths: vec![PathBuf::from(format!("src/file.{ext}"))],
+                attrs: Default::default(),
+            };
+            assert!(
+                is_relevant_event(&event),
+                "expected .{ext} to be watched"
+            );
+        }
+        let ignored = Event {
+            kind: EventKind::Modify(notify::event::ModifyKind::Any),
+            paths: vec![PathBuf::from("README.md")],
+            attrs: Default::default(),
+        };
+        assert!(!is_relevant_event(&ignored));
+    }
 
     #[test]
     fn reindex_on_change_handler_is_incremental() {
