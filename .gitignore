@@ -3,3 +3,8 @@
 .DS_Store
 *.db
 *.sqlite
+
+.secondbrain/
+reports/sb
+reports/run-A/
+reports/run-B/
