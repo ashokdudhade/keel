@@ -10,6 +10,7 @@ use crate::graph::impact;
 use crate::graph::resolve;
 use crate::graph::types::{ImplRecord, Reference, Symbol};
 use crate::index::{self, IndexStats};
+use crate::languages::Registry;
 use rusqlite::Connection;
 use std::path::Path;
 
@@ -38,6 +39,15 @@ impl Index {
     /// Index every registered-language source file under `root`.
     pub fn index_path(&mut self, root: &Path) -> Result<IndexStats> {
         index::index_repository(root, &mut self.conn)
+    }
+
+    /// Index `root` using a custom [`Registry`] (community language plugins).
+    pub fn index_path_with(
+        &mut self,
+        root: &Path,
+        registry: &Registry,
+    ) -> Result<IndexStats> {
+        index::index_repository_with(root, &mut self.conn, registry)
     }
 
     /// Find definitions matching `name`.

@@ -42,14 +42,28 @@ pub struct Registry {
 }
 
 impl Registry {
+    /// An empty registry with no plugins (for community/custom registration).
+    pub fn empty() -> Self {
+        Registry {
+            plugins: Vec::new(),
+        }
+    }
+
     /// A registry with all built-in plugins (Rust, TypeScript/TSX, Go).
     pub fn with_defaults() -> Self {
-        let mut plugins: Vec<Box<dyn LanguagePlugin>> = vec![
-            Box::new(rust::RustPlugin),
-            Box::new(go::GoPlugin),
-        ];
-        typescript::register(&mut plugins);
-        Registry { plugins }
+        let mut registry = Self::empty();
+        registry.register(Box::new(rust::RustPlugin));
+        registry.register(Box::new(go::GoPlugin));
+        typescript::register(&mut registry.plugins);
+        registry
+    }
+
+    /// Register a language plugin.
+    ///
+    /// When multiple plugins claim the same extension, [`Registry::for_extension`]
+    /// returns the first one registered.
+    pub fn register(&mut self, plugin: Box<dyn LanguagePlugin>) {
+        self.plugins.push(plugin);
     }
 
     /// Every extension claimed by a registered plugin (deduplicated, unsorted).
@@ -71,5 +85,75 @@ impl Registry {
             .iter()
             .map(|b| b.as_ref())
             .find(|p| p.extensions().contains(&ext))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::types::SymbolKind;
+    use crate::index;
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    /// Tiny fake plugin for the community registration surface.
+    struct ToyPlugin;
+
+    impl LanguagePlugin for ToyPlugin {
+        fn extensions(&self) -> &[&str] {
+            &["toy"]
+        }
+
+        fn extract_symbols(&self, source_code: &str) -> Result<Vec<Symbol>> {
+            // One symbol per non-empty line: `symbol <name>`.
+            let mut out = Vec::new();
+            for (i, line) in source_code.lines().enumerate() {
+                let Some(name) = line.strip_prefix("symbol ") else {
+                    continue;
+                };
+                let name = name.trim();
+                if name.is_empty() {
+                    continue;
+                }
+                out.push(Symbol {
+                    name: name.to_string(),
+                    kind: SymbolKind::Other("toy".into()),
+                    file: PathBuf::new(),
+                    start_line: (i as u32) + 1,
+                    start_col: 1,
+                    module_path: "toy".into(),
+                });
+            }
+            Ok(out)
+        }
+
+        fn extract_references(&self, _source_code: &str) -> Result<Vec<Reference>> {
+            Ok(vec![])
+        }
+    }
+
+    #[test]
+    fn register_custom_toy_plugin_indexes_extension() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("demo.toy"), "symbol Widget\n").unwrap();
+
+        let mut registry = Registry::empty();
+        registry.register(Box::new(ToyPlugin));
+
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        let stats = index::index_repository_with(root, &mut conn, &registry).unwrap();
+        assert_eq!(stats.indexed, 1);
+
+        let defs = crate::db::queries::find_definition(&conn, "Widget").unwrap();
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].kind, SymbolKind::Other("toy".into()));
+        assert_eq!(defs[0].module_path, "toy");
+    }
+
+    #[test]
+    fn empty_registry_has_no_extensions() {
+        assert!(Registry::empty().extensions().is_empty());
     }
 }

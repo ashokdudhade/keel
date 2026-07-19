@@ -18,4 +18,5 @@ pub use error::{Result, SecondBrainError};
 pub use facade::Index;
 pub use graph::deps::Dependency;
 pub use graph::types::{ImplRecord, Reference, Symbol, SymbolKind};
-pub use index::IndexStats;
+pub use index::{index_repository, index_repository_with, IndexStats};
+pub use languages::{LanguagePlugin, Registry};

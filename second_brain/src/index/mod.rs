@@ -27,12 +27,28 @@ pub struct IndexStats {
 
 /// Index every registered-language source file under `root` into `conn`.
 ///
+/// Uses [`Registry::with_defaults`]. Prefer [`index_repository_with`] when
+/// injecting community plugins.
+///
 /// Incremental: hashes candidate files first, skips unchanged paths, parses and
 /// persists new/changed files, and deletes DB rows for files gone from disk.
 pub fn index_repository(root: &Path, conn: &mut Connection) -> Result<IndexStats> {
-    schema::initialize(conn)?;
     let registry = Registry::with_defaults();
-    let files = worker::collect_source_files(root, &registry);
+    index_repository_with(root, conn, &registry)
+}
+
+/// Index every source file under `root` whose extension is claimed by
+/// `registry`.
+///
+/// Incremental: hashes candidate files first, skips unchanged paths, parses and
+/// persists new/changed files, and deletes DB rows for files gone from disk.
+pub fn index_repository_with(
+    root: &Path,
+    conn: &mut Connection,
+    registry: &Registry,
+) -> Result<IndexStats> {
+    schema::initialize(conn)?;
+    let files = worker::collect_source_files(root, registry);
     let existing = queries::existing_hashes(conn)?;
 
     // Hash every candidate in parallel so skip/parse decisions are cheap.
@@ -54,7 +70,7 @@ pub fn index_repository(root: &Path, conn: &mut Connection) -> Result<IndexStats
         }
     }
 
-    let parsed = worker::parse_all(&to_parse, &registry)?;
+    let parsed = worker::parse_all(&to_parse, registry)?;
 
     let mut removed = 0usize;
     let tx = conn.transaction()?;
