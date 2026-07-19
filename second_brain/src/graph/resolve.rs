@@ -118,7 +118,8 @@ fn import_reaches(sym: &Symbol, name: &str, imports: &[(String, Option<String>)]
             if alias == name
                 && (module_path == &qualified
                     || module_path == &sym.module_path
-                    || path_ends_with_name(module_path, &sym.name))
+                    || (path_ends_with_name(module_path, &sym.name)
+                        && module_path_prefix(module_path) == sym.module_path))
             {
                 return true;
             }
@@ -308,6 +309,39 @@ mod tests {
         assert_eq!(ranked[0].module_path, "crate::a");
         assert_eq!(ranked[0].file, PathBuf::from("src/a.rs"));
         assert_eq!(ranked[1].module_path, "crate::b");
+    }
+
+    /// Regression: `use crate::b::helper as helper` must not give tier 1 to
+    /// every same-named symbol (path order would then prefer crate::a).
+    #[test]
+    fn aliased_import_requires_module_prefix_match() {
+        let conn = setup();
+        fixture_two_helpers(&conn);
+
+        let e = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/e.rs"),
+                content_hash: "he".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_imports(
+            &conn,
+            e,
+            &[Import {
+                module_path: "crate::b::helper".into(),
+                alias: Some("helper".into()),
+                file: PathBuf::new(),
+            }],
+        )
+        .unwrap();
+
+        let ranked = resolve_definition(&conn, "helper", "src/e.rs").unwrap();
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0].module_path, "crate::b");
+        assert_eq!(ranked[0].file, PathBuf::from("src/b.rs"));
+        assert_eq!(ranked[1].module_path, "crate::a");
     }
 
     #[test]
