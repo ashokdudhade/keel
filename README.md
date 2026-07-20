@@ -10,6 +10,12 @@ Supported languages:
 - TypeScript / TSX (`.ts`, `.tsx`, `.mts`, `.cts`)
 - Go (`.go`)
 
+Planned for Keel 1.1:
+
+- JavaScript / JSX (`.js`, `.jsx`, `.mjs`, `.cjs`)
+- Python / Python stubs (`.py`, `.pyi`)
+- Prebuilt macOS/Linux binaries with curl and Homebrew installation
+
 Interfaces:
 
 - `keel` command-line tool
@@ -35,6 +41,10 @@ cargo --version
 
 ## Install locally
 
+> **Current release:** install from source with Cargo using the instructions
+> below. Verified curl and Homebrew installation are part of Keel 1.1 and will
+> be enabled after tagged release artifacts are published.
+
 From an existing checkout:
 
 ```bash
@@ -45,7 +55,7 @@ cargo install --path ./keel
 Or clone first:
 
 ```bash
-git clone <SECOND_BRAIN_REPOSITORY_URL> keel
+git clone https://github.com/ashokdudhade/keel.git
 cd keel
 cargo install --path ./keel
 ```
@@ -65,6 +75,29 @@ To update:
 git pull
 cargo install --path ./keel --force
 ```
+
+### Keel 1.1 binary installation (after release)
+
+Keel 1.1 will publish SHA-256-verified binaries for macOS and Linux.
+
+Curl installer:
+
+```bash
+curl -fsSL \
+  https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
+```
+
+The installer will place `keel` in `${KEEL_INSTALL_DIR:-$HOME/.local/bin}`.
+
+Homebrew:
+
+```bash
+brew install --formula \
+  https://raw.githubusercontent.com/ashokdudhade/keel/main/Formula/keel.rb
+```
+
+These commands become active after the corresponding `v1.1.0` GitHub release
+and real formula checksums exist. Until then, use Cargo installation.
 
 ### Build without installing
 
@@ -218,6 +251,22 @@ curl http://127.0.0.1:7645/symbol/AuthService
 ```
 
 It binds to `127.0.0.1`, so it is local-only by default.
+
+## Keel 1.1 roadmap
+
+The approved v1.1 design adds:
+
+- JavaScript/JSX functions, classes, methods, calls, ESM imports, and literal
+  CommonJS `require()` imports.
+- Python functions, async functions, classes, methods, calls, and imports.
+- Mixed-repository integration tests covering every built-in language.
+- Tagged GitHub releases for macOS ARM64/Intel and Linux ARM64/x86_64.
+- A checksum-verified curl installer.
+- An in-repository Homebrew formula consuming the same release archives.
+
+See
+[`docs/superpowers/specs/2026-07-19-keel-v1.1-design.md`](docs/superpowers/specs/2026-07-19-keel-v1.1-design.md)
+for the complete design and acceptance criteria.
 
 ## Troubleshooting
 
