@@ -1,0 +1,39 @@
+{
+  "repos": [
+    {
+      "id": "BurntSushi-walkdir",
+      "language": "Rust",
+      "url": "https://github.com/BurntSushi/walkdir.git",
+      "ref": "2.5.0",
+      "description": "Popular Rust recursive directory walker"
+    },
+    {
+      "id": "colinhacks-zod",
+      "language": "TypeScript",
+      "url": "https://github.com/colinhacks/zod.git",
+      "ref": "v3.23.8",
+      "description": "Popular TypeScript schema validation library"
+    },
+    {
+      "id": "expressjs-express",
+      "language": "JavaScript",
+      "url": "https://github.com/expressjs/express.git",
+      "ref": "4.21.2",
+      "description": "Popular Node.js web framework"
+    },
+    {
+      "id": "pallets-flask",
+      "language": "Python",
+      "url": "https://github.com/pallets/flask.git",
+      "ref": "3.1.0",
+      "description": "Popular Python web microframework"
+    },
+    {
+      "id": "spf13-cobra",
+      "language": "Go",
+      "url": "https://github.com/spf13/cobra.git",
+      "ref": "v1.8.1",
+      "description": "Popular Go CLI library"
+    }
+  ]
+}

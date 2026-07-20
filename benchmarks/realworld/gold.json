@@ -1,0 +1,126 @@
+{
+  "description": "Hand-verified structural definition locations in popular GitHub repos (1-based lines). Includes duplicate trees (e.g. zod src+deno) and same-named impl/test definitions when they are real definitions.",
+  "queries": [
+    {
+      "repo": "BurntSushi-walkdir",
+      "language": "Rust",
+      "symbol": "WalkDir",
+      "note": "Struct + inherent/trait impl blocks",
+      "definitions": [
+        { "file": "src/lib.rs", "line": 234 },
+        { "file": "src/lib.rs", "line": 281 },
+        { "file": "src/lib.rs", "line": 536 }
+      ]
+    },
+    {
+      "repo": "BurntSushi-walkdir",
+      "language": "Rust",
+      "symbol": "follow_links",
+      "note": "Builder method",
+      "definitions": [{ "file": "src/lib.rs", "line": 346 }]
+    },
+    {
+      "repo": "BurntSushi-walkdir",
+      "language": "Rust",
+      "symbol": "into_iter",
+      "note": "IntoIterator method",
+      "definitions": [{ "file": "src/lib.rs", "line": 540 }]
+    },
+    {
+      "repo": "colinhacks-zod",
+      "language": "TypeScript",
+      "symbol": "ZodObject",
+      "note": "src + deno copies",
+      "definitions": [
+        { "file": "src/types.ts", "line": 2412 },
+        { "file": "deno/lib/types.ts", "line": 2412 }
+      ]
+    },
+    {
+      "repo": "colinhacks-zod",
+      "language": "TypeScript",
+      "symbol": "ZodString",
+      "note": "src + deno copies",
+      "definitions": [
+        { "file": "src/types.ts", "line": 672 },
+        { "file": "deno/lib/types.ts", "line": 672 }
+      ]
+    },
+    {
+      "repo": "colinhacks-zod",
+      "language": "TypeScript",
+      "symbol": "safeParse",
+      "note": "src + deno copies",
+      "definitions": [
+        { "file": "src/types.ts", "line": 244 },
+        { "file": "deno/lib/types.ts", "line": 244 }
+      ]
+    },
+    {
+      "repo": "expressjs-express",
+      "language": "JavaScript",
+      "symbol": "createApplication",
+      "note": "Express factory",
+      "definitions": [{ "file": "lib/express.js", "line": 37 }]
+    },
+    {
+      "repo": "expressjs-express",
+      "language": "JavaScript",
+      "symbol": "Route",
+      "note": "Router Route constructor",
+      "definitions": [{ "file": "lib/router/route.js", "line": 43 }]
+    },
+    {
+      "repo": "expressjs-express",
+      "language": "JavaScript",
+      "symbol": "Layer",
+      "note": "Router Layer constructor",
+      "definitions": [{ "file": "lib/router/layer.js", "line": 33 }]
+    },
+    {
+      "repo": "pallets-flask",
+      "language": "Python",
+      "symbol": "Flask",
+      "note": "App class + test subclass",
+      "definitions": [
+        { "file": "src/flask/app.py", "line": 81 },
+        { "file": "tests/test_config.py", "line": 202 }
+      ]
+    },
+    {
+      "repo": "pallets-flask",
+      "language": "Python",
+      "symbol": "render_template",
+      "note": "Template helper",
+      "definitions": [{ "file": "src/flask/templating.py", "line": 138 }]
+    },
+    {
+      "repo": "pallets-flask",
+      "language": "Python",
+      "symbol": "jsonify",
+      "note": "JSON response helper",
+      "definitions": [{ "file": "src/flask/json/__init__.py", "line": 138 }]
+    },
+    {
+      "repo": "spf13-cobra",
+      "language": "Go",
+      "symbol": "Command",
+      "note": "CLI command struct",
+      "definitions": [{ "file": "command.go", "line": 51 }]
+    },
+    {
+      "repo": "spf13-cobra",
+      "language": "Go",
+      "symbol": "AddCommand",
+      "note": "Subcommand registration",
+      "definitions": [{ "file": "command.go", "line": 1306 }]
+    },
+    {
+      "repo": "spf13-cobra",
+      "language": "Go",
+      "symbol": "Execute",
+      "note": "Entry-point Execute",
+      "definitions": [{ "file": "command.go", "line": 1040 }]
+    }
+  ]
+}

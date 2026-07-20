@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Keel real-world accuracy benchmark</title>
+<style>
+  :root { --bg:#101820; --panel:#1b2530; --text:#e8eef4; --muted:#9aa7b5; --good:#3dd68c; --bad:#f07178; --accent:#5ccfe6; --line:#2a3542; }
+  body { margin:0; font:16px/1.5 "Source Sans 3", "IBM Plex Sans", system-ui, sans-serif;
+    background:
+      radial-gradient(900px 480px at 0% 0%, #1e3348 0%, transparent 55%),
+      radial-gradient(700px 420px at 100% 10%, #243028 0%, transparent 50%),
+      var(--bg);
+    color:var(--text); }
+  main { max-width:1040px; margin:0 auto; padding:48px 24px 88px; }
+  h1 { font:700 2.4rem/1.1 "Fraunces", "IBM Plex Serif", Georgia, serif; margin:0 0 10px; letter-spacing:-0.02em; }
+  h2 { font:650 1.25rem/1.2 "Fraunces", Georgia, serif; margin:36px 0 12px; }
+  .lede { color:var(--muted); max-width:46rem; }
+  .cards { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:28px 0; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:22px; }
+  .card h3 { margin:0 0 10px; font-size:.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+  .metric { font-size:2.2rem; font-weight:700; }
+  .good { color:var(--good); } .bad { color:var(--bad); }
+  table { width:100%; border-collapse:collapse; background:var(--panel); border-radius:12px; overflow:hidden; margin:12px 0 8px; }
+  th, td { padding:10px 12px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-size:.82rem; font-weight:600; }
+  code { color:var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.92em; }
+  a { color:var(--accent); }
+  ul.repos { color:var(--muted); padding-left:1.2rem; }
+  footer { margin-top:32px; color:var(--muted); font-size:.9rem; }
+  @media (max-width:720px) { .cards { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Real-world definition accuracy</h1>
+  <p class="lede">
+    Curated gold symbols from popular GitHub repositories — one per Keel language.
+    Baseline is keyword/identifier grep; Keel uses the structural index
+    (<code>keel definition</code>). 15 queries · 5 repos.
+  </p>
+
+  <div class="cards">
+    <section class="card">
+      <h3>Without Keel (grep)</h3>
+      <div class="metric bad">75.0% F1</div>
+      <div>Precision 78.9% · Recall 71.4%</div>
+      <div>TP 15 · FP 4 · FN 6</div>
+    </section>
+    <section class="card">
+      <h3>With Keel</h3>
+      <div class="metric good">100.0% F1</div>
+      <div>Precision 100.0% · Recall 100.0%</div>
+      <div>TP 21 · FP 0 · FN 0</div>
+    </section>
+  </div>
+
+  <h2>Repositories</h2>
+  <ul class="repos">
+    <li><strong>Rust</strong> — <a href="https://github.com/BurntSushi/walkdir.git">BurntSushi-walkdir</a> (2.5.0) · indexed in 0.021s · Indexed 0 file(s) (skipped 9, removed 0, errors 0).</li><li><strong>TypeScript</strong> — <a href="https://github.com/colinhacks/zod.git">colinhacks-zod</a> (v3.23.8) · indexed in 0.024s · Indexed 0 file(s) (skipped 167, removed 0, errors 0).</li><li><strong>JavaScript</strong> — <a href="https://github.com/expressjs/express.git">expressjs-express</a> (4.21.2) · indexed in 0.026s · Indexed 0 file(s) (skipped 152, removed 0, errors 0).</li><li><strong>Python</strong> — <a href="https://github.com/pallets/flask.git">pallets-flask</a> (3.1.0) · indexed in 0.026s · Indexed 0 file(s) (skipped 83, removed 0, errors 0).</li><li><strong>Go</strong> — <a href="https://github.com/spf13/cobra.git">spf13-cobra</a> (v1.8.1) · indexed in 0.021s · Indexed 0 file(s) (skipped 36, removed 0, errors 0).</li>
+  </ul>
+
+  <h2>By language</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Language</th><th>Queries</th>
+        <th>Grep P</th><th>Grep R</th><th>Grep F1</th>
+        <th>Keel P</th><th>Keel R</th><th>Keel F1</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Go</td><td>3</td><td>100.0%</td><td>33.3%</td><td>50.0%</td><td>100.0%</td><td>100.0%</td><td>100.0%</td></tr><tr><td>JavaScript</td><td>3</td><td>42.9%</td><td>100.0%</td><td>60.0%</td><td>100.0%</td><td>100.0%</td><td>100.0%</td></tr><tr><td>Python</td><td>3</td><td>100.0%</td><td>100.0%</td><td>100.0%</td><td>100.0%</td><td>100.0%</td><td>100.0%</td></tr><tr><td>Rust</td><td>3</td><td>100.0%</td><td>60.0%</td><td>75.0%</td><td>100.0%</td><td>100.0%</td><td>100.0%</td></tr><tr><td>TypeScript</td><td>3</td><td>100.0%</td><td>66.7%</td><td>80.0%</td><td>100.0%</td><td>100.0%</td><td>100.0%</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Per-symbol results</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Language</th><th>Repo</th><th>Symbol</th>
+        <th>Grep F1</th><th>Keel F1</th><th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Rust</td><td><code>BurntSushi-walkdir</code></td><td><code>WalkDir</code></td><td>50.0%</td><td>100.0%</td><td>Struct + inherent/trait impl blocks</td></tr><tr><td>Rust</td><td><code>BurntSushi-walkdir</code></td><td><code>follow_links</code></td><td>100.0%</td><td>100.0%</td><td>Builder method</td></tr><tr><td>Rust</td><td><code>BurntSushi-walkdir</code></td><td><code>into_iter</code></td><td>100.0%</td><td>100.0%</td><td>IntoIterator method</td></tr><tr><td>TypeScript</td><td><code>colinhacks-zod</code></td><td><code>ZodObject</code></td><td>100.0%</td><td>100.0%</td><td>src + deno copies</td></tr><tr><td>TypeScript</td><td><code>colinhacks-zod</code></td><td><code>ZodString</code></td><td>100.0%</td><td>100.0%</td><td>src + deno copies</td></tr><tr><td>TypeScript</td><td><code>colinhacks-zod</code></td><td><code>safeParse</code></td><td>0.0%</td><td>100.0%</td><td>src + deno copies</td></tr><tr><td>JavaScript</td><td><code>expressjs-express</code></td><td><code>createApplication</code></td><td>100.0%</td><td>100.0%</td><td>Express factory</td></tr><tr><td>JavaScript</td><td><code>expressjs-express</code></td><td><code>Route</code></td><td>50.0%</td><td>100.0%</td><td>Router Route constructor</td></tr><tr><td>JavaScript</td><td><code>expressjs-express</code></td><td><code>Layer</code></td><td>50.0%</td><td>100.0%</td><td>Router Layer constructor</td></tr><tr><td>Python</td><td><code>pallets-flask</code></td><td><code>Flask</code></td><td>100.0%</td><td>100.0%</td><td>App class + test subclass</td></tr><tr><td>Python</td><td><code>pallets-flask</code></td><td><code>render_template</code></td><td>100.0%</td><td>100.0%</td><td>Template helper</td></tr><tr><td>Python</td><td><code>pallets-flask</code></td><td><code>jsonify</code></td><td>100.0%</td><td>100.0%</td><td>JSON response helper</td></tr><tr><td>Go</td><td><code>spf13-cobra</code></td><td><code>Command</code></td><td>100.0%</td><td>100.0%</td><td>CLI command struct</td></tr><tr><td>Go</td><td><code>spf13-cobra</code></td><td><code>AddCommand</code></td><td>0.0%</td><td>100.0%</td><td>Subcommand registration</td></tr><tr><td>Go</td><td><code>spf13-cobra</code></td><td><code>Execute</code></td><td>0.0%</td><td>100.0%</td><td>Entry-point Execute</td></tr>
+    </tbody>
+  </table>
+
+  <footer>
+    Generated by <code>scripts/realworld-accuracy-benchmark.sh</code>.
+    Higher F1 is better. Gold locations are hand-verified public API symbols.
+  </footer>
+</main>
+</body>
+</html>

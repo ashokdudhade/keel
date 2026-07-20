@@ -1,0 +1,730 @@
+{
+  "title": "Keel real-world accuracy benchmark",
+  "summary": {
+    "without_keel": {
+      "tp": 15,
+      "fp": 4,
+      "fn": 6,
+      "precision": 0.7894736842105263,
+      "recall": 0.7142857142857143,
+      "f1": 0.7500000000000001
+    },
+    "with_keel": {
+      "tp": 21,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "queries": 15,
+    "repos": 5
+  },
+  "by_language": {
+    "Go": {
+      "queries": 3,
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 2,
+        "precision": 1.0,
+        "recall": 0.3333333333333333,
+        "f1": 0.5
+      },
+      "with_keel": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      }
+    },
+    "JavaScript": {
+      "queries": 3,
+      "without_keel": {
+        "tp": 3,
+        "fp": 4,
+        "fn": 0,
+        "precision": 0.42857142857142855,
+        "recall": 1.0,
+        "f1": 0.6
+      },
+      "with_keel": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      }
+    },
+    "Python": {
+      "queries": 3,
+      "without_keel": {
+        "tp": 4,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "with_keel": {
+        "tp": 4,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      }
+    },
+    "Rust": {
+      "queries": 3,
+      "without_keel": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 2,
+        "precision": 1.0,
+        "recall": 0.6,
+        "f1": 0.7499999999999999
+      },
+      "with_keel": {
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      }
+    },
+    "TypeScript": {
+      "queries": 3,
+      "without_keel": {
+        "tp": 4,
+        "fp": 0,
+        "fn": 2,
+        "precision": 1.0,
+        "recall": 0.6666666666666666,
+        "f1": 0.8
+      },
+      "with_keel": {
+        "tp": 6,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      }
+    }
+  },
+  "index_stats": {
+    "BurntSushi-walkdir": {
+      "seconds": 0.021,
+      "stdout": "Indexed 0 file(s) (skipped 9, removed 0, errors 0).",
+      "language": "Rust",
+      "url": "https://github.com/BurntSushi/walkdir.git",
+      "ref": "2.5.0",
+      "description": "Popular Rust recursive directory walker"
+    },
+    "colinhacks-zod": {
+      "seconds": 0.024,
+      "stdout": "Indexed 0 file(s) (skipped 167, removed 0, errors 0).",
+      "language": "TypeScript",
+      "url": "https://github.com/colinhacks/zod.git",
+      "ref": "v3.23.8",
+      "description": "Popular TypeScript schema validation library"
+    },
+    "expressjs-express": {
+      "seconds": 0.026,
+      "stdout": "Indexed 0 file(s) (skipped 152, removed 0, errors 0).",
+      "language": "JavaScript",
+      "url": "https://github.com/expressjs/express.git",
+      "ref": "4.21.2",
+      "description": "Popular Node.js web framework"
+    },
+    "pallets-flask": {
+      "seconds": 0.026,
+      "stdout": "Indexed 0 file(s) (skipped 83, removed 0, errors 0).",
+      "language": "Python",
+      "url": "https://github.com/pallets/flask.git",
+      "ref": "3.1.0",
+      "description": "Popular Python web microframework"
+    },
+    "spf13-cobra": {
+      "seconds": 0.021,
+      "stdout": "Indexed 0 file(s) (skipped 36, removed 0, errors 0).",
+      "language": "Go",
+      "url": "https://github.com/spf13/cobra.git",
+      "ref": "v1.8.1",
+      "description": "Popular Go CLI library"
+    }
+  },
+  "repos": {
+    "BurntSushi-walkdir": {
+      "id": "BurntSushi-walkdir",
+      "language": "Rust",
+      "url": "https://github.com/BurntSushi/walkdir.git",
+      "ref": "2.5.0",
+      "description": "Popular Rust recursive directory walker"
+    },
+    "colinhacks-zod": {
+      "id": "colinhacks-zod",
+      "language": "TypeScript",
+      "url": "https://github.com/colinhacks/zod.git",
+      "ref": "v3.23.8",
+      "description": "Popular TypeScript schema validation library"
+    },
+    "expressjs-express": {
+      "id": "expressjs-express",
+      "language": "JavaScript",
+      "url": "https://github.com/expressjs/express.git",
+      "ref": "4.21.2",
+      "description": "Popular Node.js web framework"
+    },
+    "pallets-flask": {
+      "id": "pallets-flask",
+      "language": "Python",
+      "url": "https://github.com/pallets/flask.git",
+      "ref": "3.1.0",
+      "description": "Popular Python web microframework"
+    },
+    "spf13-cobra": {
+      "id": "spf13-cobra",
+      "language": "Go",
+      "url": "https://github.com/spf13/cobra.git",
+      "ref": "v1.8.1",
+      "description": "Popular Go CLI library"
+    }
+  },
+  "rows": [
+    {
+      "repo": "BurntSushi-walkdir",
+      "language": "Rust",
+      "symbol": "WalkDir",
+      "note": "Struct + inherent/trait impl blocks",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 2,
+        "precision": 1.0,
+        "recall": 0.3333333333333333,
+        "f1": 0.5,
+        "predicted": [
+          "src/lib.rs:234"
+        ],
+        "expected": [
+          "src/lib.rs:234",
+          "src/lib.rs:281",
+          "src/lib.rs:536"
+        ]
+      },
+      "with_keel": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "src/lib.rs:234",
+          "src/lib.rs:281",
+          "src/lib.rs:536"
+        ],
+        "expected": [
+          "src/lib.rs:234",
+          "src/lib.rs:281",
+          "src/lib.rs:536"
+        ]
+      }
+    },
+    {
+      "repo": "BurntSushi-walkdir",
+      "language": "Rust",
+      "symbol": "follow_links",
+      "note": "Builder method",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "src/lib.rs:346"
+        ],
+        "expected": [
+          "src/lib.rs:346"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "src/lib.rs:346"
+        ],
+        "expected": [
+          "src/lib.rs:346"
+        ]
+      }
+    },
+    {
+      "repo": "BurntSushi-walkdir",
+      "language": "Rust",
+      "symbol": "into_iter",
+      "note": "IntoIterator method",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "src/lib.rs:540"
+        ],
+        "expected": [
+          "src/lib.rs:540"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "src/lib.rs:540"
+        ],
+        "expected": [
+          "src/lib.rs:540"
+        ]
+      }
+    },
+    {
+      "repo": "colinhacks-zod",
+      "language": "TypeScript",
+      "symbol": "ZodObject",
+      "note": "src + deno copies",
+      "without_keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "deno/lib/types.ts:2412",
+          "src/types.ts:2412"
+        ],
+        "expected": [
+          "deno/lib/types.ts:2412",
+          "src/types.ts:2412"
+        ]
+      },
+      "with_keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "deno/lib/types.ts:2412",
+          "src/types.ts:2412"
+        ],
+        "expected": [
+          "deno/lib/types.ts:2412",
+          "src/types.ts:2412"
+        ]
+      }
+    },
+    {
+      "repo": "colinhacks-zod",
+      "language": "TypeScript",
+      "symbol": "ZodString",
+      "note": "src + deno copies",
+      "without_keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "deno/lib/types.ts:672",
+          "src/types.ts:672"
+        ],
+        "expected": [
+          "deno/lib/types.ts:672",
+          "src/types.ts:672"
+        ]
+      },
+      "with_keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "deno/lib/types.ts:672",
+          "src/types.ts:672"
+        ],
+        "expected": [
+          "deno/lib/types.ts:672",
+          "src/types.ts:672"
+        ]
+      }
+    },
+    {
+      "repo": "colinhacks-zod",
+      "language": "TypeScript",
+      "symbol": "safeParse",
+      "note": "src + deno copies",
+      "without_keel": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 2,
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "predicted": [],
+        "expected": [
+          "deno/lib/types.ts:244",
+          "src/types.ts:244"
+        ]
+      },
+      "with_keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "deno/lib/types.ts:244",
+          "src/types.ts:244"
+        ],
+        "expected": [
+          "deno/lib/types.ts:244",
+          "src/types.ts:244"
+        ]
+      }
+    },
+    {
+      "repo": "expressjs-express",
+      "language": "JavaScript",
+      "symbol": "createApplication",
+      "note": "Express factory",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "lib/express.js:37"
+        ],
+        "expected": [
+          "lib/express.js:37"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "lib/express.js:37"
+        ],
+        "expected": [
+          "lib/express.js:37"
+        ]
+      }
+    },
+    {
+      "repo": "expressjs-express",
+      "language": "JavaScript",
+      "symbol": "Route",
+      "note": "Router Route constructor",
+      "without_keel": {
+        "tp": 1,
+        "fp": 2,
+        "fn": 0,
+        "precision": 0.3333333333333333,
+        "recall": 1.0,
+        "f1": 0.5,
+        "predicted": [
+          "lib/express.js:19",
+          "lib/router/index.js:16",
+          "lib/router/route.js:43"
+        ],
+        "expected": [
+          "lib/router/route.js:43"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "lib/router/route.js:43"
+        ],
+        "expected": [
+          "lib/router/route.js:43"
+        ]
+      }
+    },
+    {
+      "repo": "expressjs-express",
+      "language": "JavaScript",
+      "symbol": "Layer",
+      "note": "Router Layer constructor",
+      "without_keel": {
+        "tp": 1,
+        "fp": 2,
+        "fn": 0,
+        "precision": 0.3333333333333333,
+        "recall": 1.0,
+        "f1": 0.5,
+        "predicted": [
+          "lib/router/index.js:17",
+          "lib/router/layer.js:33",
+          "lib/router/route.js:18"
+        ],
+        "expected": [
+          "lib/router/layer.js:33"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "lib/router/layer.js:33"
+        ],
+        "expected": [
+          "lib/router/layer.js:33"
+        ]
+      }
+    },
+    {
+      "repo": "pallets-flask",
+      "language": "Python",
+      "symbol": "Flask",
+      "note": "App class + test subclass",
+      "without_keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "src/flask/app.py:81",
+          "tests/test_config.py:202"
+        ],
+        "expected": [
+          "src/flask/app.py:81",
+          "tests/test_config.py:202"
+        ]
+      },
+      "with_keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "src/flask/app.py:81",
+          "tests/test_config.py:202"
+        ],
+        "expected": [
+          "src/flask/app.py:81",
+          "tests/test_config.py:202"
+        ]
+      }
+    },
+    {
+      "repo": "pallets-flask",
+      "language": "Python",
+      "symbol": "render_template",
+      "note": "Template helper",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "src/flask/templating.py:138"
+        ],
+        "expected": [
+          "src/flask/templating.py:138"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "src/flask/templating.py:138"
+        ],
+        "expected": [
+          "src/flask/templating.py:138"
+        ]
+      }
+    },
+    {
+      "repo": "pallets-flask",
+      "language": "Python",
+      "symbol": "jsonify",
+      "note": "JSON response helper",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "src/flask/json/__init__.py:138"
+        ],
+        "expected": [
+          "src/flask/json/__init__.py:138"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "src/flask/json/__init__.py:138"
+        ],
+        "expected": [
+          "src/flask/json/__init__.py:138"
+        ]
+      }
+    },
+    {
+      "repo": "spf13-cobra",
+      "language": "Go",
+      "symbol": "Command",
+      "note": "CLI command struct",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "command.go:51"
+        ],
+        "expected": [
+          "command.go:51"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "command.go:51"
+        ],
+        "expected": [
+          "command.go:51"
+        ]
+      }
+    },
+    {
+      "repo": "spf13-cobra",
+      "language": "Go",
+      "symbol": "AddCommand",
+      "note": "Subcommand registration",
+      "without_keel": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "predicted": [],
+        "expected": [
+          "command.go:1306"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "command.go:1306"
+        ],
+        "expected": [
+          "command.go:1306"
+        ]
+      }
+    },
+    {
+      "repo": "spf13-cobra",
+      "language": "Go",
+      "symbol": "Execute",
+      "note": "Entry-point Execute",
+      "without_keel": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "predicted": [],
+        "expected": [
+          "command.go:1040"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "command.go:1040"
+        ],
+        "expected": [
+          "command.go:1040"
+        ]
+      }
+    }
+  ]
+}

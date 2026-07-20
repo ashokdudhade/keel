@@ -123,15 +123,16 @@ Binds to `127.0.0.1` only by default.
 
 ## Accuracy
 
-On a multi-language gold fixture, definition lookup scored:
+On popular GitHub repositories (walkdir, zod, express, flask, cobra) with
+hand-verified gold symbols:
 
 | Method | Precision | Recall | F1 |
 |--------|-----------|--------|----|
-| Without Keel (keyword grep) | 78.6% | 100% | 88.0% |
+| Without Keel (keyword grep) | 78.9% | 71.4% | 75.0% |
 | With Keel | 100% | 100% | 100% |
 
-See [`reports/accuracy-benchmark.html`](reports/accuracy-benchmark.html)
-(regenerate with `scripts/accuracy-benchmark.sh`).
+Full report: [`reports/realworld-accuracy-benchmark.html`](reports/realworld-accuracy-benchmark.html)
+(regenerate with `scripts/realworld-accuracy-benchmark.sh`).
 
 ## Troubleshooting
 

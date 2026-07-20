@@ -10,3 +10,6 @@ reports/run-A/
 reports/run-B/
 .secondbrain/
 reports/sb
+
+# Real-world benchmark clones
+benchmarks/realworld/cache/
