@@ -2,6 +2,8 @@
 //! extension without knowing any language specifics.
 
 pub mod go;
+pub mod javascript;
+pub mod python;
 pub mod rust;
 pub mod typescript;
 
@@ -65,12 +67,15 @@ impl Registry {
         }
     }
 
-    /// A registry with all built-in plugins (Rust, TypeScript/TSX, Go).
+    /// A registry with all built-in plugins (Rust, TypeScript/TSX, Go,
+    /// JavaScript/JSX, Python).
     pub fn with_defaults() -> Self {
         let mut registry = Self::empty();
         registry.register(Box::new(rust::RustPlugin));
         registry.register(Box::new(go::GoPlugin));
         typescript::register(&mut registry.plugins);
+        javascript::register(&mut registry.plugins);
+        registry.register(Box::new(python::PythonPlugin));
         registry
     }
 

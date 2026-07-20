@@ -5,6 +5,28 @@ All notable changes to Keel are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-07-20
+
+### Added
+
+- JavaScript/JSX language plugin (`.js`, `.jsx`, `.mjs`, `.cjs`) with ESM and
+  literal CommonJS `require` import extraction.
+- Python language plugin (`.py`, `.pyi`) with package-style dotted module paths.
+- Mixed-repository indexing across Rust, TypeScript/TSX, JavaScript/JSX,
+  Python, and Go in one pass.
+- Per-language integration tests under `tests/languages.rs`.
+- SHA-256-verified curl installer (`install.sh`) and in-repo Homebrew formula
+  (`Formula/keel.rb`).
+- GitHub Actions release workflow for macOS/Linux arm64 and x86_64 archives.
+- Accuracy benchmark comparing keyword grep vs Keel
+  (`scripts/accuracy-benchmark.sh`, `reports/accuracy-benchmark.html`).
+
+### Changed
+
+- Public install path is GitHub binaries / Homebrew (crates.io name `keel` is
+  occupied).
+- Version bumped to 1.1.0.
+
 ## [1.0.0] — 2026-07-19
 
 ### Added

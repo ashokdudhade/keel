@@ -1,0 +1,350 @@
+{
+  "summary": {
+    "without_keel": {
+      "tp": 11,
+      "fp": 3,
+      "fn": 0,
+      "precision": 0.7857142857142857,
+      "recall": 1.0,
+      "f1": 0.88
+    },
+    "with_keel": {
+      "tp": 11,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "queries": 10
+  },
+  "rows": [
+    {
+      "symbol": "AuthService",
+      "language": "Rust",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rust/src/lib.rs:2"
+        ],
+        "expected": [
+          "rust/src/lib.rs:2"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rust/src/lib.rs:2"
+        ],
+        "expected": [
+          "rust/src/lib.rs:2"
+        ]
+      }
+    },
+    {
+      "symbol": "create_order",
+      "language": "Rust",
+      "without_keel": {
+        "tp": 2,
+        "fp": 1,
+        "fn": 0,
+        "precision": 0.6666666666666666,
+        "recall": 1.0,
+        "f1": 0.8,
+        "predicted": [
+          "py/pkg/service.py:5",
+          "py/pkg/service.py:9",
+          "rust/src/lib.rs:4"
+        ],
+        "expected": [
+          "py/pkg/service.py:5",
+          "rust/src/lib.rs:4"
+        ]
+      },
+      "with_keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/pkg/service.py:5",
+          "rust/src/lib.rs:4"
+        ],
+        "expected": [
+          "py/pkg/service.py:5",
+          "rust/src/lib.rs:4"
+        ]
+      }
+    },
+    {
+      "symbol": "TsService",
+      "language": "TypeScript",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/service.ts:1"
+        ],
+        "expected": [
+          "ts/src/service.ts:1"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/service.ts:1"
+        ],
+        "expected": [
+          "ts/src/service.ts:1"
+        ]
+      }
+    },
+    {
+      "symbol": "helper",
+      "language": "TypeScript",
+      "without_keel": {
+        "tp": 1,
+        "fp": 1,
+        "fn": 0,
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6666666666666666,
+        "predicted": [
+          "ts/src/service.ts:10",
+          "ts/src/service.ts:7"
+        ],
+        "expected": [
+          "ts/src/service.ts:7"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/service.ts:7"
+        ],
+        "expected": [
+          "ts/src/service.ts:7"
+        ]
+      }
+    },
+    {
+      "symbol": "GoUser",
+      "language": "Go",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/auth/service.go:3"
+        ],
+        "expected": [
+          "go/auth/service.go:3"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/auth/service.go:3"
+        ],
+        "expected": [
+          "go/auth/service.go:3"
+        ]
+      }
+    },
+    {
+      "symbol": "CreateOrder",
+      "language": "Go",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/auth/service.go:5"
+        ],
+        "expected": [
+          "go/auth/service.go:5"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/auth/service.go:5"
+        ],
+        "expected": [
+          "go/auth/service.go:5"
+        ]
+      }
+    },
+    {
+      "symbol": "JsService",
+      "language": "JavaScript",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/service.js:1"
+        ],
+        "expected": [
+          "js/src/service.js:1"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/service.js:1"
+        ],
+        "expected": [
+          "js/src/service.js:1"
+        ]
+      }
+    },
+    {
+      "symbol": "createOrder",
+      "language": "JavaScript",
+      "without_keel": {
+        "tp": 1,
+        "fp": 1,
+        "fn": 0,
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6666666666666666,
+        "predicted": [
+          "js/src/service.js:7",
+          "js/src/service.js:9"
+        ],
+        "expected": [
+          "js/src/service.js:7"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/service.js:7"
+        ],
+        "expected": [
+          "js/src/service.js:7"
+        ]
+      }
+    },
+    {
+      "symbol": "Widget",
+      "language": "JSX",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/Widget.jsx:1"
+        ],
+        "expected": [
+          "js/src/Widget.jsx:1"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/Widget.jsx:1"
+        ],
+        "expected": [
+          "js/src/Widget.jsx:1"
+        ]
+      }
+    },
+    {
+      "symbol": "PyService",
+      "language": "Python",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/pkg/service.py:1"
+        ],
+        "expected": [
+          "py/pkg/service.py:1"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/pkg/service.py:1"
+        ],
+        "expected": [
+          "py/pkg/service.py:1"
+        ]
+      }
+    }
+  ]
+}

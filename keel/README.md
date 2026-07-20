@@ -1,85 +1,47 @@
-# Keel 1.0
+# Keel 1.1
 
 Deterministic, local-first code intelligence for AI coding agents. Keel
 indexes a repository with Tree-sitter and answers structural queries from a
 local SQLite database — no LLMs, embeddings, or semantic search.
 
-**1.0 is the stable library + CLI release:** semver guarantees apply to the
-public crate surface (especially [`Index`](#library-api-index)) and the
-documented CLI / MCP / HTTP contracts.
+**1.1** adds JavaScript/JSX and Python indexing plus binary distribution via
+curl and Homebrew. Semver guarantees apply to the public crate surface
+(especially [`Index`](#library-api-index)) and the documented CLI / MCP / HTTP
+contracts.
 
-## Keel 1.1 roadmap
-
-The approved v1.1 design adds JavaScript/JSX and Python/Python-stub indexing,
-plus prebuilt macOS/Linux binaries distributed through a verified curl
-installer and Homebrew formula.
-
-Until the `v1.1.0` release assets are published, install Keel from source with
-Cargo. See the repository-root README for the active installation commands.
-
-## Prerequisites
-
-- Git
-- Rust stable and Cargo ([install with rustup](https://rustup.rs/))
-- A C toolchain for bundled SQLite:
-  - macOS: `xcode-select --install`
-  - Debian/Ubuntu: `sudo apt install build-essential`
-  - Fedora: `sudo dnf groupinstall "Development Tools"`
-
-Verify the toolchain:
+## Install
 
 ```bash
-rustc --version
-cargo --version
+# Homebrew (macOS)
+brew install --formula \
+  https://raw.githubusercontent.com/ashokdudhade/keel/main/Formula/keel.rb
+
+# curl (macOS / Linux)
+curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
+keel --help
 ```
 
-## Install locally
+See the [repository-root README](../README.md#install) for PATH and version-pin
+notes.
 
-### Option 1: Install the `keel` command (recommended)
+### Build from source (contributors)
 
-Clone the repository and install from its Rust package:
+Requires Git, Rust stable + Cargo ([rustup](https://rustup.rs/)), and a C
+toolchain for bundled SQLite:
+
+- macOS: `xcode-select --install`
+- Debian/Ubuntu: `sudo apt install build-essential`
+- Fedora: `sudo dnf groupinstall "Development Tools"`
 
 ```bash
 git clone https://github.com/ashokdudhade/keel.git
 cd keel
 cargo install --path ./keel
-```
-
-Cargo installs `keel` into `~/.cargo/bin`. Ensure that directory is on `PATH`:
-
-```bash
-export PATH="$HOME/.cargo/bin:$PATH"
-keel --help
-```
-
-To make the PATH change permanent, add the `export` line to `~/.zshrc`,
-`~/.bashrc`, or the configuration file used by your shell.
-
-Reinstall after pulling a newer version:
-
-```bash
-git pull
-cargo install --path ./keel --force
-```
-
-### Option 2: Build without installing
-
-From the cloned repository root:
-
-```bash
-cd keel
-cargo build --release
-```
-
-The executable is `target/release/keel`. Run it directly or copy it somewhere on
-your PATH:
-
-```bash
-./target/release/keel --help
+# or: cargo build --release && ./target/release/keel --help
 ```
 
 On macOS, if a build reports an unaccepted Xcode license while Command Line
-Tools are already installed, either accept the license or build with:
+Tools are already installed:
 
 ```bash
 DEVELOPER_DIR=/Library/Developer/CommandLineTools cargo build --release
@@ -262,18 +224,23 @@ by default.
 |----------|------------|-------|
 | Rust | `.rs` | Module paths derive from the crate / `mod` hierarchy |
 | TypeScript / TSX | `.ts`, `.tsx`, `.mts`, `.cts` | Module paths derive from source file paths |
+| JavaScript / JSX | `.js`, `.jsx`, `.mjs`, `.cjs` | ESM + literal CommonJS `require`; path modules |
+| Python | `.py`, `.pyi` | Package-style dotted module paths |
 | Go | `.go` | Module paths use package names; `package main` is path-qualified |
-| JavaScript / JSX | `.js`, `.jsx`, `.mjs`, `.cjs` | Planned for v1.1; ESM and CommonJS |
-| Python | `.py`, `.pyi` | Planned for v1.1; package-style module paths |
 
 One indexing pass can process all supported languages in a mixed monorepo.
-JavaScript and Python become built-in languages with Keel 1.1.
 
 ## Troubleshooting
 
 ### `keel: command not found`
 
-Ensure Cargo's bin directory is on PATH:
+Curl install:
+
+```bash
+export PATH="${KEEL_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
+```
+
+From-source Cargo install:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -307,9 +274,14 @@ unreadable, invalid UTF-8, or otherwise failed extraction.
 
 ## Uninstall
 
-If installed with Cargo:
-
 ```bash
+# Homebrew
+brew uninstall keel
+
+# Curl installer
+rm -f "${KEEL_INSTALL_DIR:-$HOME/.local/bin}/keel"
+
+# From-source Cargo install
 cargo uninstall keel
 ```
 
