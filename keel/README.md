@@ -8,6 +8,15 @@ local SQLite database — no LLMs, embeddings, or semantic search.
 public crate surface (especially [`Index`](#library-api-index)) and the
 documented CLI / MCP / HTTP contracts.
 
+## Keel 1.1 roadmap
+
+The approved v1.1 design adds JavaScript/JSX and Python/Python-stub indexing,
+plus prebuilt macOS/Linux binaries distributed through a verified curl
+installer and Homebrew formula.
+
+Until the `v1.1.0` release assets are published, install Keel from source with
+Cargo. See the repository-root README for the active installation commands.
+
 ## Prerequisites
 
 - Git
@@ -31,8 +40,8 @@ cargo --version
 Clone the repository and install from its Rust package:
 
 ```bash
-git clone <SECOND_BRAIN_REPOSITORY_URL> second-brain
-cd second-brain
+git clone https://github.com/ashokdudhade/keel.git
+cd keel
 cargo install --path ./keel
 ```
 
@@ -40,7 +49,7 @@ Cargo installs `keel` into `~/.cargo/bin`. Ensure that directory is on `PATH`:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
-sb --help
+keel --help
 ```
 
 To make the PATH change permanent, add the `export` line to `~/.zshrc`,
@@ -85,12 +94,12 @@ in `.keel/index.db` under the **current working directory**.
 cd /path/to/your/project
 
 # Build or refresh the index.
-sb index .
+keel index .
 
 # Query it.
-sb definition AuthService
-sb references create_order
-sb callers create_order
+keel definition AuthService
+keel references create_order
+keel callers create_order
 ```
 
 Example output:
@@ -114,7 +123,7 @@ Add the generated index directory to the target project's `.gitignore`:
 
 ```bash
 cd /path/to/project
-sb index .
+keel index .
 ```
 
 The first run parses all supported source files. Later runs compare content
@@ -133,22 +142,22 @@ for skipped-file diagnostics.
 ### 2. Query code structure
 
 ```bash
-sb definition <symbol>
-sb references <symbol>
-sb callers <function>
-sb implementations <trait>
-sb dependencies <symbol-or-module>
-sb impact <symbol>
+keel definition <symbol>
+keel references <symbol>
+keel callers <function>
+keel implementations <trait>
+keel dependencies <symbol-or-module>
+keel impact <symbol>
 ```
 
 Examples:
 
 ```bash
-sb definition IndexStats
-sb references index_repository
-sb implementations LanguagePlugin
-sb dependencies crate::index
-sb impact index_repository
+keel definition IndexStats
+keel references index_repository
+keel implementations LanguagePlugin
+keel dependencies crate::index
+keel impact index_repository
 ```
 
 ### 3. Keep the index current
@@ -156,7 +165,7 @@ sb impact index_repository
 Run the watcher from the target project:
 
 ```bash
-sb watch .
+keel watch .
 ```
 
 Leave it running while editing. Stop it with `Ctrl-C`. You can also omit the
@@ -168,7 +177,7 @@ The index contains derived data only and is safe to delete:
 
 ```bash
 rm -rf .keel
-sb index .
+keel index .
 ```
 
 Rebuild indexes created before a Keel upgrade if migration or path-format
@@ -180,11 +189,11 @@ First index the project:
 
 ```bash
 cd /path/to/your/project
-sb index .
-which sb
+keel index .
+which keel
 ```
 
-Use the absolute path printed by `which sb` in Cursor's MCP configuration. The
+Use the absolute path printed by `which keel` in Cursor's MCP configuration. The
 `cwd` must be the indexed project because `keel mcp` opens
 `./.keel/index.db`.
 
@@ -234,7 +243,7 @@ The process waits for MCP messages on stdin; no normal prompt is expected.
 From an indexed project:
 
 ```bash
-sb serve --port 7645
+keel serve --port 7645
 ```
 
 Test it from another terminal:
@@ -254,12 +263,15 @@ by default.
 | Rust | `.rs` | Module paths derive from the crate / `mod` hierarchy |
 | TypeScript / TSX | `.ts`, `.tsx`, `.mts`, `.cts` | Module paths derive from source file paths |
 | Go | `.go` | Module paths use package names; `package main` is path-qualified |
+| JavaScript / JSX | `.js`, `.jsx`, `.mjs`, `.cjs` | Planned for v1.1; ESM and CommonJS |
+| Python | `.py`, `.pyi` | Planned for v1.1; package-style module paths |
 
 One indexing pass can process all supported languages in a mixed monorepo.
+JavaScript and Python become built-in languages with Keel 1.1.
 
 ## Troubleshooting
 
-### `sb: command not found`
+### `keel: command not found`
 
 Ensure Cargo's bin directory is on PATH:
 
@@ -281,7 +293,7 @@ xcode-select -p
 2. Rerun `keel index .`.
 3. Check that the file extension is supported and not excluded by `.gitignore`.
 4. Try the exact, case-sensitive symbol name.
-5. Rebuild the index with `rm -rf .keel && sb index .`.
+5. Rebuild the index with `rm -rf .keel && keel index .`.
 
 ### MCP starts but tools return empty results
 
@@ -313,7 +325,7 @@ For local development against this checkout:
 
 ```toml
 [dependencies]
-keel = { path = "/absolute/path/to/second-brain/keel" }
+keel = { path = "/absolute/path/to/keel/keel" }
 ```
 
 If the crate is published to your configured Cargo registry, use its published
@@ -327,16 +339,16 @@ keel = "1.0"
 ## CLI reference
 
 ```bash
-sb index <path>                 # index a repository into ./.keel/index.db
-sb watch <path>                 # re-index on registered source file changes
-sb definition <name>            # where a symbol is defined
-sb references <name>            # where a name is referenced
-sb callers <name>               # call/use sites (import-aware when unique)
-sb implementations <trait>      # types that implement a trait
-sb dependencies <name|module>   # modules/files a symbol or module depends on
-sb impact <name>                # symbols transitively impacted by a change
-sb serve [--port 7645]          # JSON HTTP API on 127.0.0.1
-sb mcp                          # MCP stdio server (Content-Length JSON-RPC)
+keel index <path>                 # index a repository into ./.keel/index.db
+keel watch <path>                 # re-index on registered source file changes
+keel definition <name>            # where a symbol is defined
+keel references <name>            # where a name is referenced
+keel callers <name>               # call/use sites (import-aware when unique)
+keel implementations <trait>      # types that implement a trait
+keel dependencies <name|module>   # modules/files a symbol or module depends on
+keel impact <name>                # symbols transitively impacted by a change
+keel serve [--port 7645]          # JSON HTTP API on 127.0.0.1
+keel mcp                          # MCP stdio server (Content-Length JSON-RPC)
 ```
 
 CLI output is `path:line:col` (1-based), tab-separated, stable and script-friendly.
