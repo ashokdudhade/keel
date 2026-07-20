@@ -466,6 +466,8 @@ fn indexes_multi_language_monorepo_in_single_pass() {
     fs::create_dir_all(root.join("rust/src")).unwrap();
     fs::create_dir_all(root.join("ts/src")).unwrap();
     fs::create_dir_all(root.join("go/pkg")).unwrap();
+    fs::create_dir_all(root.join("js/src")).unwrap();
+    fs::create_dir_all(root.join("py/pkg")).unwrap();
     fs::write(
         root.join("rust/src/lib.rs"),
         "pub struct RustService;\nfn rust_helper() {}\n",
@@ -481,23 +483,103 @@ fn indexes_multi_language_monorepo_in_single_pass() {
         "package pkg\n\ntype GoService struct{}\n\nfunc GoHelper() {}\n",
     )
     .unwrap();
+    fs::write(
+        root.join("js/src/service.js"),
+        "export class JsService {\n  run() {}\n}\nexport function jsHelper() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("js/src/Widget.jsx"),
+        "export function JsxWidget() { return <div/>; }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("py/pkg/service.py"),
+        "class PyService:\n    def run(self):\n        pass\n\ndef py_helper():\n    pass\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("py/pkg/types.pyi"),
+        "class PyStub: ...\n",
+    )
+    .unwrap();
 
     let mut conn = Connection::open_in_memory().unwrap();
     let stats = index::index_repository(root, &mut conn).unwrap();
-    assert_eq!(stats.indexed, 3, "expected one file per language");
+    assert_eq!(stats.indexed, 7, "expected one file per language extension");
 
-    let rust = queries::find_definition(&conn, "RustService").unwrap();
-    assert_eq!(rust.len(), 1);
-    assert_eq!(rust[0].kind, SymbolKind::Struct);
+    for (name, kind) in [
+        ("RustService", SymbolKind::Struct),
+        ("TsService", SymbolKind::Struct),
+        ("GoService", SymbolKind::Struct),
+        ("JsService", SymbolKind::Struct),
+        ("JsxWidget", SymbolKind::Function),
+        ("PyService", SymbolKind::Struct),
+        ("PyStub", SymbolKind::Struct),
+    ] {
+        let defs = queries::find_definition(&conn, name).unwrap();
+        assert_eq!(defs.len(), 1, "{name}");
+        assert_eq!(defs[0].kind, kind, "{name}");
+    }
+    assert_eq!(
+        queries::find_definition(&conn, "GoService").unwrap()[0].module_path,
+        "pkg"
+    );
+    assert_eq!(
+        queries::find_definition(&conn, "PyService").unwrap()[0].module_path,
+        "py.pkg.service"
+    );
+}
 
-    let ts = queries::find_definition(&conn, "TsService").unwrap();
-    assert_eq!(ts.len(), 1);
-    assert_eq!(ts[0].kind, SymbolKind::Struct);
+#[test]
+fn indexes_javascript_fixture_and_finds_symbol() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/auth.js"),
+        "export class AuthService {\n  login() {}\n}\nexport function createOrder() {}\n",
+    )
+    .unwrap();
 
-    let go = queries::find_definition(&conn, "GoService").unwrap();
-    assert_eq!(go.len(), 1);
-    assert_eq!(go[0].kind, SymbolKind::Struct);
-    assert_eq!(go[0].module_path, "pkg");
+    let mut conn = Connection::open_in_memory().unwrap();
+    let stats = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(stats.indexed, 1);
+
+    let defs = queries::find_definition(&conn, "AuthService").unwrap();
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].kind, SymbolKind::Struct);
+    assert_eq!(defs[0].module_path, "src/auth");
+    assert_eq!(defs[0].file.as_os_str(), "src/auth.js");
+
+    let fns = queries::find_definition(&conn, "createOrder").unwrap();
+    assert_eq!(fns.len(), 1);
+    assert_eq!(fns[0].kind, SymbolKind::Function);
+}
+
+#[test]
+fn indexes_python_fixture_and_finds_symbol() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("auth")).unwrap();
+    fs::write(
+        root.join("auth/service.py"),
+        "class User:\n    pass\n\ndef create_order():\n    pass\n",
+    )
+    .unwrap();
+
+    let mut conn = Connection::open_in_memory().unwrap();
+    let stats = index::index_repository(root, &mut conn).unwrap();
+    assert_eq!(stats.indexed, 1);
+
+    let defs = queries::find_definition(&conn, "create_order").unwrap();
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].kind, SymbolKind::Function);
+    assert_eq!(defs[0].module_path, "auth.service");
+
+    let types = queries::find_definition(&conn, "User").unwrap();
+    assert_eq!(types.len(), 1);
+    assert_eq!(types[0].kind, SymbolKind::Struct);
 }
 
 #[test]

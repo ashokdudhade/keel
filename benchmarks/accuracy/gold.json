@@ -1,0 +1,58 @@
+{
+  "description": "Gold definition locations for accuracy benchmark (path relative to fixture root, 1-based lines).",
+  "queries": [
+    {
+      "language": "Rust",
+      "symbol": "AuthService",
+      "definitions": [{ "file": "rust/src/lib.rs", "line": 2 }]
+    },
+    {
+      "language": "Rust",
+      "symbol": "create_order",
+      "definitions": [
+        { "file": "rust/src/lib.rs", "line": 4 },
+        { "file": "py/pkg/service.py", "line": 5 }
+      ]
+    },
+    {
+      "language": "TypeScript",
+      "symbol": "TsService",
+      "definitions": [{ "file": "ts/src/service.ts", "line": 1 }]
+    },
+    {
+      "language": "TypeScript",
+      "symbol": "helper",
+      "definitions": [{ "file": "ts/src/service.ts", "line": 7 }]
+    },
+    {
+      "language": "Go",
+      "symbol": "GoUser",
+      "definitions": [{ "file": "go/auth/service.go", "line": 3 }]
+    },
+    {
+      "language": "Go",
+      "symbol": "CreateOrder",
+      "definitions": [{ "file": "go/auth/service.go", "line": 5 }]
+    },
+    {
+      "language": "JavaScript",
+      "symbol": "JsService",
+      "definitions": [{ "file": "js/src/service.js", "line": 1 }]
+    },
+    {
+      "language": "JavaScript",
+      "symbol": "createOrder",
+      "definitions": [{ "file": "js/src/service.js", "line": 7 }]
+    },
+    {
+      "language": "JSX",
+      "symbol": "Widget",
+      "definitions": [{ "file": "js/src/Widget.jsx", "line": 1 }]
+    },
+    {
+      "language": "Python",
+      "symbol": "PyService",
+      "definitions": [{ "file": "py/pkg/service.py", "line": 1 }]
+    }
+  ]
+}
