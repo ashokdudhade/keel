@@ -41,7 +41,9 @@ jobs:
         include:
           - os: macos-14
             target: aarch64-apple-darwin
-          - os: macos-13
+          # Cross-compile Intel macOS on Apple Silicon runners (macos-13 is often
+          # queued for a long time on GitHub-hosted runners).
+          - os: macos-14
             target: x86_64-apple-darwin
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
