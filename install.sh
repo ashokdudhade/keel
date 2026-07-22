@@ -103,3 +103,10 @@ esac
 
 "$INSTALL_DIR/keel" --help >/dev/null 2>&1 || true
 printf 'Done.\n'
+printf '\nNext steps:\n'
+printf '  brew services start keel   # global daemon (Homebrew)\n'
+printf '  # or: keel daemon\n'
+printf '  cd /path/to/your/project\n'
+printf '  keel start                 # index + watch this project\n'
+printf '  keel definition SomeSymbol # auto-indexes if needed\n'
+printf '  keel stop                  # stop watching this project\n'

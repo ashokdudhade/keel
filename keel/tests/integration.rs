@@ -400,7 +400,7 @@ fn json_api_serves_symbol_and_health() {
 
     let serve_db = db_path.clone();
     thread::spawn(move || {
-        let _ = api::serve(&format!("127.0.0.1:{port}"), &serve_db);
+        let _ = api::serve(&format!("127.0.0.1:{port}"), &serve_db, false);
     });
 
     wait_for_port(port);

@@ -6,6 +6,7 @@ use keel::cli::{commands, Cli, Commands};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let auto_index = !cli.no_auto_index;
     match cli.command {
         Commands::Index { path } => {
             let stats = commands::run_index(&path)
@@ -19,8 +20,22 @@ fn main() -> Result<()> {
             commands::run_watch(&path)
                 .with_context(|| format!("watching {}", path.display()))?;
         }
+        Commands::Daemon { port } => {
+            commands::run_daemon(port).context("running keel daemon")?;
+        }
+        Commands::Start { path } => {
+            commands::run_start(&path)
+                .with_context(|| format!("registering project {}", path.display()))?;
+        }
+        Commands::Stop => {
+            commands::run_stop().context("unregistering project")?;
+        }
+        Commands::Status => {
+            commands::run_status().context("daemon status")?;
+        }
         Commands::Definition { name } => {
-            let defs = commands::run_definition(&name).context("querying definition")?;
+            let defs =
+                commands::run_definition(&name, auto_index).context("querying definition")?;
             if defs.is_empty() {
                 eprintln!("No definition found for {name}");
             }
@@ -36,7 +51,8 @@ fn main() -> Result<()> {
             }
         }
         Commands::References { name } => {
-            let refs = commands::run_references(&name).context("querying references")?;
+            let refs =
+                commands::run_references(&name, auto_index).context("querying references")?;
             if refs.is_empty() {
                 eprintln!("No references found for {name}");
             }
@@ -45,7 +61,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::Callers { name } => {
-            let refs = commands::run_callers(&name).context("querying callers")?;
+            let refs = commands::run_callers(&name, auto_index).context("querying callers")?;
             if refs.is_empty() {
                 eprintln!("No callers found for {name}");
             }
@@ -54,7 +70,8 @@ fn main() -> Result<()> {
             }
         }
         Commands::Implementations { name } => {
-            let impls = commands::run_implementations(&name).context("querying implementations")?;
+            let impls = commands::run_implementations(&name, auto_index)
+                .context("querying implementations")?;
             if impls.is_empty() {
                 eprintln!("No implementations found for {name}");
             }
@@ -69,7 +86,8 @@ fn main() -> Result<()> {
             }
         }
         Commands::Dependencies { name } => {
-            let deps = commands::run_dependencies(&name).context("querying dependencies")?;
+            let deps =
+                commands::run_dependencies(&name, auto_index).context("querying dependencies")?;
             if deps.is_empty() {
                 eprintln!("No dependencies found for {name}");
             }
@@ -81,7 +99,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::Impact { name } => {
-            let impacted = commands::run_impact(&name).context("querying impact")?;
+            let impacted = commands::run_impact(&name, auto_index).context("querying impact")?;
             if impacted.is_empty() {
                 eprintln!("No impact found for {name}");
             }
@@ -97,10 +115,10 @@ fn main() -> Result<()> {
             }
         }
         Commands::Serve { port } => {
-            commands::run_serve(port).context("serving JSON API")?;
+            commands::run_serve(port, auto_index).context("serving JSON API")?;
         }
         Commands::Mcp => {
-            commands::run_mcp().context("serving MCP")?;
+            commands::run_mcp(auto_index).context("serving MCP")?;
         }
     }
     Ok(())

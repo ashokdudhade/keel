@@ -75,6 +75,15 @@ pub fn read_message(reader: &mut impl BufRead) -> Result<Vec<u8>> {
 ///
 /// Returns `Ok(None)` for notifications that need no response.
 pub fn handle_message(conn: &mut Connection, msg: &Value) -> Result<Option<Value>> {
+    handle_message_with(conn, msg, false, Path::new("."))
+}
+
+fn handle_message_with(
+    conn: &mut Connection,
+    msg: &Value,
+    auto_index: bool,
+    root: &Path,
+) -> Result<Option<Value>> {
     let method = msg
         .get("method")
         .and_then(|m| m.as_str())
@@ -98,7 +107,7 @@ pub fn handle_message(conn: &mut Connection, msg: &Value) -> Result<Option<Value
         "tools/list" => Ok(tools_list_result()),
         "tools/call" => {
             let params = msg.get("params").cloned().unwrap_or(json!({}));
-            call_tool(conn, &params)
+            call_tool(conn, &params, auto_index, root)
         }
         other => {
             return Ok(Some(json_rpc_error(
@@ -126,7 +135,8 @@ pub fn handle_message(conn: &mut Connection, msg: &Value) -> Result<Option<Value
 /// Serve MCP over stdin/stdout using the index at `db_path`.
 ///
 /// Ensures the database directory/schema exist, then blocks on the stdio loop.
-pub fn serve(db_path: &Path) -> Result<()> {
+/// When `auto_index` is true, query tools run a fast incremental index first.
+pub fn serve(db_path: &Path, auto_index: bool) -> Result<()> {
     if let Some(parent) = db_path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(|source| KeelError::Io {
@@ -138,6 +148,7 @@ pub fn serve(db_path: &Path) -> Result<()> {
     let mut conn = Connection::open(db_path)?;
     crate::db::configure_connection(&conn)?;
     schema::initialize(&conn)?;
+    let root = crate::cli::commands::index_root_from_db(db_path);
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -171,7 +182,7 @@ pub fn serve(db_path: &Path) -> Result<()> {
             }
         };
 
-        match handle_message(&mut conn, &msg) {
+        match handle_message_with(&mut conn, &msg, auto_index, &root) {
             Ok(Some(response)) => write_response(&mut stdout, &response)?,
             Ok(None) => {}
             Err(e) => {
@@ -298,12 +309,31 @@ fn name_schema() -> Value {
     })
 }
 
-fn call_tool(conn: &mut Connection, params: &Value) -> Result<Value> {
+fn call_tool(
+    conn: &mut Connection,
+    params: &Value,
+    auto_index: bool,
+    root: &Path,
+) -> Result<Value> {
     let name = params
         .get("name")
         .and_then(|n| n.as_str())
         .ok_or_else(|| KeelError::Mcp("tools/call missing name".into()))?;
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
+
+    let is_query = matches!(
+        name,
+        "definition" | "references" | "callers" | "implementations" | "dependencies" | "impact"
+    );
+    if auto_index && is_query {
+        let stats = index::index_repository(root, conn)?;
+        if stats.indexed + stats.removed + stats.errors > 0 {
+            eprintln!(
+                "keel: auto-indexed {} file(s) (skipped {}, removed {}, errors {}).",
+                stats.indexed, stats.skipped, stats.removed, stats.errors
+            );
+        }
+    }
 
     let payload = match name {
         "definition" => {

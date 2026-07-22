@@ -36,7 +36,34 @@ class Keel < Formula
     bin.install "keel"
   end
 
+  # Global daemon: brew services start keel → then per-project keel start.
+  service do
+    run [opt_bin/"keel", "daemon"]
+    keep_alive true
+    log_path var/"log/keel.log"
+    error_log_path var/"log/keel.err.log"
+  end
+
   test do
     assert_match "keel", shell_output("#{bin}/keel --help")
+  end
+
+  def caveats
+    <<~EOS
+      Keel uses a global daemon plus per-project indexes (.keel/index.db).
+
+      Recommended:
+        brew services start keel
+        cd /path/to/project
+        keel start
+        keel definition SomeSymbol
+        keel stop
+
+      Queries auto-run a fast incremental index when needed.
+      Use --no-auto-index to skip that.
+
+      Foreground daemon (without brew):
+        keel daemon
+    EOS
   end
 end

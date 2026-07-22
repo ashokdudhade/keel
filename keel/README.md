@@ -21,8 +21,22 @@ curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh |
 keel --help
 ```
 
+Then start the global daemon once, and register each project:
+
+```bash
+brew services start keel   # or: keel daemon
+cd /path/to/your/project
+keel start                 # index + watch via the global daemon
+keel definition SomeSymbol # auto-indexes incrementally when needed
+keel status
+keel stop
+```
+
 See the [repository-root README](../README.md#install) for PATH and version-pin
-notes.
+notes. Homebrew runs `keel daemon` via `brew services start keel`. Use
+`keel start` in each project to index that tree into `.keel/index.db` and keep
+it watched. Without Homebrew, run `keel daemon` in the foreground or under your
+own process supervisor.
 
 ### Build from source (contributors)
 
@@ -49,19 +63,24 @@ DEVELOPER_DIR=/Library/Developer/CommandLineTools cargo build --release
 
 ## Quick start
 
-Change to the repository you want to inspect. Keel stores its local index
-in `.keel/index.db` under the **current working directory**.
+Change to the repository you want to inspect. Keel stores its local index in
+`.keel/index.db` under that project. A machine-level daemon (Homebrew or
+`keel daemon`) owns background watchers; projects opt in with `keel start`.
 
 ```bash
+# Once per machine
+brew services start keel   # or: keel daemon
+
 cd /path/to/your/project
+keel start                 # index + register watch with the daemon
 
-# Build or refresh the index.
-keel index .
-
-# Query it.
+# Query (also auto-indexes incrementally when needed).
 keel definition AuthService
 keel references create_order
 keel callers create_order
+
+keel status
+keel stop
 ```
 
 Example output:
@@ -81,10 +100,22 @@ Add the generated index directory to the target project's `.gitignore`:
 
 ## Typical local workflow
 
-### 1. Index a project
+### 1. Start the daemon and register a project
 
 ```bash
+brew services start keel   # once per machine
 cd /path/to/project
+keel start
+```
+
+`keel start` talks to the global daemon, which indexes the project into
+`.keel/index.db` and spawns a per-project `keel watch`. Use `keel status` to
+confirm the daemon is up and this project is watching; `keel stop` unregisters
+only the current project.
+
+For a one-shot index without the daemon:
+
+```bash
 keel index .
 ```
 
@@ -122,16 +153,25 @@ keel dependencies crate::index
 keel impact index_repository
 ```
 
+Queries auto-run a fast incremental index unless you pass `--no-auto-index`.
+
 ### 3. Keep the index current
 
-Run the watcher from the target project:
+Preferred — global daemon + project registration:
+
+```bash
+brew services start keel
+cd /path/to/project && keel start
+```
+
+Foreground watcher (no daemon), or occasional one-shot refresh:
 
 ```bash
 keel watch .
+keel index .
 ```
 
-Leave it running while editing. Stop it with `Ctrl-C`. You can also omit the
-watcher and rerun `keel index .` whenever needed.
+Leave `keel watch` running while editing and stop it with `Ctrl-C`.
 
 ### 4. Reset or remove an index
 
@@ -140,6 +180,7 @@ The index contains derived data only and is safe to delete:
 ```bash
 rm -rf .keel
 keel index .
+# or, with the daemon running: keel start
 ```
 
 Rebuild indexes created before a Keel upgrade if migration or path-format
@@ -147,11 +188,12 @@ notes in the changelog recommend it.
 
 ## Use with Cursor through MCP
 
-First index the project:
+Start the daemon (optional but recommended) and register the project:
 
 ```bash
+brew services start keel
 cd /path/to/your/project
-keel index .
+keel start                 # or: keel index .
 which keel
 ```
 
@@ -311,9 +353,13 @@ keel = "1.0"
 ## CLI reference
 
 ```bash
-keel index <path>                 # index a repository into ./.keel/index.db
-keel watch <path>                 # re-index on registered source file changes
-keel definition <name>            # where a symbol is defined
+keel daemon [--port 7646]         # global daemon (brew services start keel)
+keel start [path]                 # register project: index + watch
+keel stop                         # unregister this project
+keel status                       # daemon + this project
+keel index <path>                 # one-shot index into ./.keel/index.db
+keel watch <path>                 # foreground re-index on file changes
+keel definition <name>            # where a symbol is defined (auto-indexes)
 keel references <name>            # where a name is referenced
 keel callers <name>               # call/use sites (import-aware when unique)
 keel implementations <trait>      # types that implement a trait
@@ -323,7 +369,12 @@ keel serve [--port 7645]          # JSON HTTP API on 127.0.0.1
 keel mcp                          # MCP stdio server (Content-Length JSON-RPC)
 ```
 
+Global flag: `--no-auto-index` skips the incremental ensure-index before queries.
+
 CLI output is `path:line:col` (1-based), tab-separated, stable and script-friendly.
+
+Daemon control API defaults to `127.0.0.1:7646` (override with `--port` /
+`KEEL_DAEMON_PORT`). State lives under `~/.keel/daemon/` (`KEEL_HOME`).
 
 ## Library API (`Index`)
 

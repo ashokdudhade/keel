@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions release workflow for macOS/Linux arm64 and x86_64 archives.
 - Accuracy benchmark comparing keyword grep vs Keel
   (`scripts/accuracy-benchmark.sh`, `reports/accuracy-benchmark.html`).
+- Global daemon (`keel daemon` / `brew services start keel`) plus per-project
+  `keel start` / `keel stop` / `keel status` (index + watch into `.keel/`).
+- Query-time incremental auto-index for CLI, MCP, and HTTP (disable with
+  `--no-auto-index`). Homebrew formula `service` runs `keel daemon`.
 
 ### Changed
 

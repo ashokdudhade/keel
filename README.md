@@ -47,15 +47,25 @@ Building from source is only needed for Keel development — see
 ## Quick start
 
 ```bash
-cd /path/to/your/project
+# Once per machine — Homebrew keeps the daemon running
+brew services start keel
+# Without Homebrew: keel daemon
 
-keel index .
+# Per project — indexes into .keel/ and registers a file watcher
+cd /path/to/your/project
+keel start
+
+# Queries auto-run a fast incremental index when needed
 keel definition AuthService
 keel references create_order
 keel callers create_order
+
+keel status   # global daemon + this project's watch
+keel stop     # unregister this project only
 ```
 
 Index path: `./.keel/index.db` (add `.keel/` to `.gitignore`).
+Daemon state: `~/.keel/daemon/` (override with `KEEL_HOME`).
 
 Example output:
 
@@ -66,11 +76,16 @@ src/auth/service.rs:12:12	struct	AuthService
 ## Commands
 
 ```bash
-keel index <path>                 # create or incrementally update the index
-keel watch <path>                 # re-index when supported files change
-keel definition <name>            # find definitions
-keel references <name>            # find references
-keel callers <name>               # find call/use sites
+brew services start keel          # start global daemon (Homebrew)
+keel daemon [--port 7646]         # same daemon in the foreground
+keel start [path]                 # register project: index + watch
+keel stop                         # unregister this project
+keel status                       # daemon + this project
+keel index <path>                 # one-shot create/update the index
+keel watch <path>                 # foreground re-index on file changes
+keel definition <name>            # find definitions (auto-indexes)
+keel references <name>            # find references (auto-indexes)
+keel callers <name>               # find call/use sites (auto-indexes)
 keel implementations <trait>      # find trait implementations
 keel dependencies <name|module>   # find dependencies
 keel impact <name>                # estimate transitive impact
@@ -78,19 +93,39 @@ keel serve [--port 7645]          # run the local JSON API
 keel mcp                          # run the MCP stdio server
 ```
 
+Global flag: `--no-auto-index` skips the incremental ensure-index before queries.
+
 ## Keep the index current
 
+Preferred: one global daemon, then register each project you care about.
+
 ```bash
+brew services start keel          # once per machine
+cd /path/to/your/project && keel start
+keel status
+keel stop                         # when you no longer need that project watched
+```
+
+Without brew services, run the daemon yourself:
+
+```bash
+keel daemon                       # leave running in a terminal or supervisor
+```
+
+One-shot refresh / foreground watcher (no daemon):
+
+```bash
+keel index .
 keel watch .
-# or: keel index .
 # reset: rm -rf .keel && keel index .
 ```
 
 ## Use with Cursor via MCP
 
 ```bash
+brew services start keel
 cd /path/to/your/project
-keel index .
+keel start   # optional; queries also auto-index
 which keel
 ```
 
@@ -145,10 +180,20 @@ export PATH="${KEEL_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
 
 Homebrew usually configures PATH during install.
 
+### `keel daemon is not running`
+
+`keel start` needs the global daemon:
+
+```bash
+brew services start keel
+# or: keel daemon
+keel status
+```
+
 ### Queries return no results
 
 1. Confirm the shell and MCP server use the same project directory.
-2. Run `keel index .` again.
+2. Run `keel index .` (or `keel start` with the daemon up) again.
 3. Check whether `.gitignore` excludes the file.
 4. Use the exact, case-sensitive symbol name.
 5. Rebuild with `rm -rf .keel && keel index .`.
@@ -160,11 +205,13 @@ Ensure the MCP configuration's `cwd` contains the expected `.keel/index.db`.
 ## Uninstall
 
 ```bash
+brew services stop keel                                # if started via brew
 brew uninstall keel                                    # Homebrew
 rm -f "${KEEL_INSTALL_DIR:-$HOME/.local/bin}/keel"     # curl
 ```
 
 Remove per-project indexes with `rm -rf /path/to/project/.keel`.
+Optional daemon state: `rm -rf ~/.keel`.
 
 ## Further documentation
 

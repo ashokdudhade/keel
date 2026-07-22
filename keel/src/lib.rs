@@ -6,6 +6,7 @@
 
 pub mod api;
 pub mod cli;
+pub mod daemon;
 pub mod db;
 pub mod error;
 pub mod facade;

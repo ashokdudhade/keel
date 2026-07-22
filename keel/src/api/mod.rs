@@ -143,21 +143,23 @@ fn path_string(path: &std::path::Path) -> String {
 }
 
 /// Serve the JSON API bound to `addr` (e.g. `127.0.0.1:7645`), reading the
-/// index at `db_path`. Blocks until the server stops accepting connections.
-pub fn serve(addr: &str, db_path: &Path) -> Result<()> {
+/// index at `db_path`. When `auto_index` is true, each `/symbol` request runs
+/// a fast incremental index of the project root first. Blocks until the server
+/// stops accepting connections.
+pub fn serve(addr: &str, db_path: &Path, auto_index: bool) -> Result<()> {
     let server = Server::http(addr).map_err(|e| KeelError::Api(e.to_string()))?;
     for request in server.incoming_requests() {
-        handle_request(request, db_path);
+        handle_request(request, db_path, auto_index);
     }
     Ok(())
 }
 
 /// Always responds; never drops a [`Request`] without a response body.
-fn handle_request(request: Request, db_path: &Path) {
+fn handle_request(request: Request, db_path: &Path, auto_index: bool) {
     let method = request.method().clone();
     let url = request.url().to_string();
 
-    let (status, body) = match build_response(method, &url, db_path) {
+    let (status, body) = match build_response(method, &url, db_path, auto_index) {
         Ok((status, body)) => (status, body),
         Err(e) => {
             eprintln!("api request error: {e}");
@@ -173,7 +175,12 @@ fn handle_request(request: Request, db_path: &Path) {
     }
 }
 
-fn build_response(method: Method, url: &str, db_path: &Path) -> Result<(StatusCode, String)> {
+fn build_response(
+    method: Method,
+    url: &str,
+    db_path: &Path,
+    auto_index: bool,
+) -> Result<(StatusCode, String)> {
     if method != Method::Get {
         return Ok((
             StatusCode(405),
@@ -199,7 +206,7 @@ fn build_response(method: Method, url: &str, db_path: &Path) -> Result<(StatusCo
                 r#"{"error":"missing symbol name"}"#.to_string(),
             ));
         }
-        let payload = symbol_intelligence(db_path, &name)?;
+        let payload = symbol_intelligence(db_path, &name, auto_index)?;
         let body =
             serde_json::to_string(&payload).map_err(|e| KeelError::Api(e.to_string()))?;
         return Ok((StatusCode(200), body));
@@ -208,10 +215,20 @@ fn build_response(method: Method, url: &str, db_path: &Path) -> Result<(StatusCo
     Ok((StatusCode(404), r#"{"error":"not found"}"#.to_string()))
 }
 
-fn symbol_intelligence(db_path: &Path, name: &str) -> Result<SymbolResponse> {
-    let conn = Connection::open(db_path)?;
+fn symbol_intelligence(db_path: &Path, name: &str, auto_index: bool) -> Result<SymbolResponse> {
+    let mut conn = Connection::open(db_path)?;
     db::configure_connection(&conn)?;
     schema::initialize(&conn)?;
+    if auto_index {
+        let root = crate::cli::commands::index_root_from_db(db_path);
+        let stats = crate::index::index_repository(&root, &mut conn)?;
+        if stats.indexed + stats.removed + stats.errors > 0 {
+            eprintln!(
+                "keel: auto-indexed {} file(s) (skipped {}, removed {}, errors {}).",
+                stats.indexed, stats.skipped, stats.removed, stats.errors
+            );
+        }
+    }
 
     let definition = queries::find_definition(&conn, name)?;
     let references = queries::find_references(&conn, name)?;

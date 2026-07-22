@@ -9,6 +9,10 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "keel", about = "Keel: deterministic code intelligence")]
 pub struct Cli {
+    /// Skip the automatic incremental index that runs before queries.
+    #[arg(long, global = true)]
+    pub no_auto_index: bool,
+
     /// The subcommand to run.
     #[command(subcommand)]
     pub command: Commands,
@@ -42,6 +46,22 @@ pub enum Commands {
         /// Path to the repository to watch.
         path: PathBuf,
     },
+    /// Run the global daemon (used by `brew services start keel`).
+    Daemon {
+        /// Control API port (default 7646).
+        #[arg(long, default_value_t = crate::daemon::DEFAULT_DAEMON_PORT)]
+        port: u16,
+    },
+    /// Register this project with the global daemon (index + watch).
+    Start {
+        /// Path to the repository (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    /// Unregister this project from the global daemon.
+    Stop,
+    /// Show global daemon and this project's watch status.
+    Status,
     /// Print implementations of a trait.
     Implementations {
         /// Trait name to find implementations for.
