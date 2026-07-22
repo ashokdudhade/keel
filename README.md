@@ -24,13 +24,18 @@ Interfaces:
 Pick one:
 
 ```bash
-# macOS (Homebrew)
-brew install --formula \
-  https://raw.githubusercontent.com/ashokdudhade/keel/main/Formula/keel.rb
+# macOS (Homebrew) — formula lives in this repo; tap it first
+brew tap ashokdudhade/keel https://github.com/ashokdudhade/keel
+brew install ashokdudhade/keel/keel
 
 # macOS or Linux (curl)
 curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
 ```
+
+Both paths need a published GitHub Release with binaries. If install fails
+looking for release archives, use a source build instead (see
+[`keel/README.md`](keel/README.md#build-from-source-contributors)) or wait for
+the next tagged release.
 
 Then confirm:
 
@@ -40,6 +45,9 @@ keel --help
 
 The curl installer puts `keel` in `~/.local/bin` (override with `KEEL_INSTALL_DIR`).
 Pin a release with `KEEL_VERSION=v1.1.0`.
+
+Homebrew does **not** edit `.zshrc` / `.bashrc`; it installs into Homebrew’s
+`bin`, which is already on PATH when Homebrew itself is set up.
 
 Building from source is only needed for Keel development — see
 [`keel/README.md`](keel/README.md#build-from-source-contributors).

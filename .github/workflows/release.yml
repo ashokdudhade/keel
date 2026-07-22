@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to rebuild (e.g. v1.1.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -42,14 +50,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - name: Build release archive
         working-directory: keel
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           cargo build --release --target "${{ matrix.target }}"
           BIN="target/${{ matrix.target }}/release/keel"
           STAGE="$(mktemp -d)"
@@ -67,16 +79,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          # Need a branch we can push formula checksums back to.
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
       - name: Write SHA256SUMS and patch Homebrew formula
         env:
-          TAG_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          VERSION="${TAG_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           cd dist
           sha256sum keel-*.tar.gz | tee SHA256SUMS
           cd ..
@@ -89,34 +105,50 @@ jobs:
           for line in Path("dist/SHA256SUMS").read_text().splitlines():
               h, name = line.split()
               sums[name] = h
+          required = [
+              f"keel-{version}-aarch64-apple-darwin.tar.gz",
+              f"keel-{version}-x86_64-apple-darwin.tar.gz",
+              f"keel-{version}-aarch64-unknown-linux-gnu.tar.gz",
+              f"keel-{version}-x86_64-unknown-linux-gnu.tar.gz",
+          ]
+          missing = [a for a in required if a not in sums]
+          if missing:
+              raise SystemExit(f"missing archives: {missing}; have {sorted(sums)}")
           text = Path("Formula/keel.rb").read_text()
           text = re.sub(r'version "[^"]*"', f'version "{version}"', text, count=1)
-          mapping = {
-              "REPLACE_WITH_RELEASE_SHA256_AARCH64_APPLE_DARWIN": f"keel-{version}-aarch64-apple-darwin.tar.gz",
-              "REPLACE_WITH_RELEASE_SHA256_X86_64_APPLE_DARWIN": f"keel-{version}-x86_64-apple-darwin.tar.gz",
-              "REPLACE_WITH_RELEASE_SHA256_AARCH64_UNKNOWN_LINUX_GNU": f"keel-{version}-aarch64-unknown-linux-gnu.tar.gz",
-              "REPLACE_WITH_RELEASE_SHA256_X86_64_UNKNOWN_LINUX_GNU": f"keel-{version}-x86_64-unknown-linux-gnu.tar.gz",
-          }
-          for marker, archive in mapping.items():
-              text = text.replace(marker, sums[archive])
+          for archive, digest in ((a, sums[a]) for a in required):
+              arch = archive.removeprefix(f"keel-{version}-").removesuffix(".tar.gz")
+              pattern = rf'(keel-#\{{version\}}-{re.escape(arch)}\.tar\.gz"\n\s*sha256 ")[^"]+(")'
+              text, n = re.subn(pattern, rf"\g<1>{digest}\2", text, count=1)
+              if n != 1:
+                  raise SystemExit(f"failed to patch sha256 for {archive} (matches={n})")
           Path("Formula/keel.rb").write_text(text)
           PY
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS
           generate_release_notes: true
-      - name: Commit updated Homebrew formula
+          fail_on_unmatched_files: true
+      - name: Commit updated Homebrew formula to main
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Preserve patched formula + checksums across branch switch.
+          cp Formula/keel.rb /tmp/keel.rb.patched
+          git fetch origin main
+          git checkout -B main origin/main
+          cp /tmp/keel.rb.patched Formula/keel.rb
           git add Formula/keel.rb
           if git diff --staged --quiet; then
             echo "No formula changes"
           else
-            git commit -m "chore(release): update Homebrew formula checksums for ${GITHUB_REF_NAME}"
-            git push origin "HEAD:${GITHUB_REF_NAME}" || true
-            git push origin HEAD:main || true
+            git commit -m "chore(release): update Homebrew formula checksums for ${RELEASE_TAG}"
+            git push origin HEAD:main
           fi

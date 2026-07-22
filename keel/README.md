@@ -12,14 +12,18 @@ contracts.
 ## Install
 
 ```bash
-# Homebrew (macOS)
-brew install --formula \
-  https://raw.githubusercontent.com/ashokdudhade/keel/main/Formula/keel.rb
+# Homebrew (macOS) — tap this repo, then install
+brew tap ashokdudhade/keel https://github.com/ashokdudhade/keel
+brew install ashokdudhade/keel/keel
 
 # curl (macOS / Linux)
 curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
 keel --help
 ```
+
+Modern Homebrew rejects `brew install https://…/formula.rb` (raw URL). Use the
+`brew tap` + `brew install` flow above. Both Homebrew and curl need a published
+GitHub Release with binaries; otherwise build from source below.
 
 Then start the global daemon once, and register each project:
 
