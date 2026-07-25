@@ -1,0 +1,91 @@
+{
+  "repo": {
+    "id": "google-gemini-gemini-cli",
+    "url": "https://github.com/google-gemini/gemini-cli",
+    "ssh": "git@github.com:google-gemini/gemini-cli.git",
+    "language_mix": ["TypeScript", "TSX", "JavaScript", "Python"]
+  },
+  "queries": [
+    {
+      "language": "TypeScript",
+      "symbol": "GeminiClient",
+      "note": "Core Gemini API client",
+      "definitions": [
+        { "file": "packages/core/src/core/client.ts", "line": 93 }
+      ]
+    },
+    {
+      "language": "TypeScript",
+      "symbol": "Config",
+      "note": "Runtime configuration class",
+      "definitions": [
+        { "file": "packages/core/src/config/config.ts", "line": 751 }
+      ]
+    },
+    {
+      "language": "TypeScript",
+      "symbol": "AuthType",
+      "note": "Auth provider enum",
+      "definitions": [
+        { "file": "packages/core/src/core/contentGenerator.ts", "line": 63 }
+      ]
+    },
+    {
+      "language": "TypeScript",
+      "symbol": "createContentGenerator",
+      "note": "Content generator factory",
+      "definitions": [
+        { "file": "packages/core/src/core/contentGenerator.ts", "line": 210 }
+      ]
+    },
+    {
+      "language": "TypeScript",
+      "symbol": "ToolRegistry",
+      "note": "Tool registry (core + scripts interface)",
+      "definitions": [
+        { "file": "packages/core/src/tools/tool-registry.ts", "line": 231 },
+        { "file": "scripts/utils/tool-registry.ts", "line": 29 }
+      ]
+    },
+    {
+      "language": "TypeScript",
+      "symbol": "ReadFileTool",
+      "note": "Built-in read-file tool",
+      "definitions": [
+        { "file": "packages/core/src/tools/read-file.ts", "line": 226 }
+      ]
+    },
+    {
+      "language": "TypeScript",
+      "symbol": "ShellTool",
+      "note": "Built-in shell tool",
+      "definitions": [
+        { "file": "packages/core/src/tools/shell.ts", "line": 1090 }
+      ]
+    },
+    {
+      "language": "TypeScript",
+      "symbol": "WriteFileTool",
+      "note": "Built-in write-file tool",
+      "definitions": [
+        { "file": "packages/core/src/tools/write-file.ts", "line": 586 }
+      ]
+    },
+    {
+      "language": "TypeScript",
+      "symbol": "EditTool",
+      "note": "Built-in edit tool",
+      "definitions": [
+        { "file": "packages/core/src/tools/edit.ts", "line": 1091 }
+      ]
+    },
+    {
+      "language": "TypeScript",
+      "symbol": "GrepTool",
+      "note": "Built-in grep tool",
+      "definitions": [
+        { "file": "packages/core/src/tools/grep.ts", "line": 687 }
+      ]
+    }
+  ]
+}

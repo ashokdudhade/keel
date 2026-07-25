@@ -1,0 +1,546 @@
+{
+  "title": "Keel accuracy on google-gemini/gemini-cli",
+  "repo": {
+    "id": "google-gemini-gemini-cli",
+    "url": "https://github.com/google-gemini/gemini-cli",
+    "ssh": "git@github.com:google-gemini/gemini-cli.git",
+    "language_mix": [
+      "TypeScript",
+      "TSX",
+      "JavaScript",
+      "Python"
+    ]
+  },
+  "head": "c776c66",
+  "index": {
+    "seconds": 0.115,
+    "stdout": "Indexed 0 file(s) (skipped 2217, removed 0, errors 0).",
+    "extension_counts": {
+      ".js": 57,
+      ".ts": 1721,
+      ".cjs": 11,
+      ".tsx": 418,
+      ".mjs": 3,
+      ".py": 14
+    },
+    "cold_seconds": 32.629,
+    "cold_stdout": "Indexed 2217 file(s) (skipped 0, removed 0, errors 0).",
+    "note": "Cold index timed on first pass; subsequent incremental index skipped unchanged files."
+  },
+  "summary": {
+    "without_keel": {
+      "tp": 11,
+      "fp": 151,
+      "fn": 0,
+      "precision": 0.06790123456790123,
+      "recall": 1.0,
+      "f1": 0.12716763005780346
+    },
+    "with_keel": {
+      "tp": 11,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "queries": 10
+  },
+  "rows": [
+    {
+      "symbol": "GeminiClient",
+      "language": "TypeScript",
+      "note": "Core Gemini API client",
+      "without_keel": {
+        "tp": 1,
+        "fp": 9,
+        "fn": 0,
+        "precision": 0.1,
+        "recall": 1.0,
+        "f1": 0.18181818181818182,
+        "predicted": [
+          "packages/a2a-server/src/agent/task.ts:10",
+          "packages/cli/src/ui/commands/chatCommand.test.ts:12",
+          "packages/cli/src/ui/commands/clearCommand.test.ts:24",
+          "packages/cli/src/ui/commands/compressCommand.test.ts:10",
+          "packages/cli/src/ui/commands/rewindCommand.tsx:24",
+          "packages/cli/src/ui/hooks/slashCommandProcessor.test.tsx:23",
+          "packages/cli/src/ui/hooks/useExecutionLifecycle.test.tsx:115",
+          "packages/core/src/context/toolDistillationService.ts:15",
+          "packages/core/src/core/client.ts:93",
+          "packages/sdk/src/session.ts:16"
+        ],
+        "expected": [
+          "packages/core/src/core/client.ts:93"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/core/client.ts:93"
+        ],
+        "expected": [
+          "packages/core/src/core/client.ts:93"
+        ]
+      },
+      "keel_reference_count": 0
+    },
+    {
+      "symbol": "Config",
+      "language": "TypeScript",
+      "note": "Runtime configuration class",
+      "without_keel": {
+        "tp": 1,
+        "fp": 136,
+        "fn": 0,
+        "precision": 0.0072992700729927005,
+        "recall": 1.0,
+        "f1": 0.014492753623188404,
+        "predicted": [
+          "evals/auto_memory_contract.eval.ts:28",
+          "evals/skill_extraction.eval.ts:11",
+          "evals/unsafe-cloning.eval.ts:17",
+          "packages/a2a-server/src/agent/executor.ts:19",
+          "packages/a2a-server/src/agent/race-condition.test.ts:12",
+          "packages/a2a-server/src/agent/task-event-driven.test.ts:9",
+          "packages/a2a-server/src/agent/task.test.ts:11",
+          "packages/a2a-server/src/agent/task.ts:30",
+          "packages/a2a-server/src/commands/init.test.ts:12",
+          "packages/a2a-server/src/commands/memory.test.ts:11",
+          "packages/a2a-server/src/http/app.test.ts:10",
+          "packages/a2a-server/src/http/endpoints.test.ts:19",
+          "packages/a2a-server/src/utils/testing_utils.ts:22",
+          "packages/cli/src/acp/acpResume.test.ts:21",
+          "packages/cli/src/acp/acpRpcDispatcher.test.ts:20",
+          "packages/cli/src/acp/acpSession.test.ts:23",
+          "packages/cli/src/acp/acpSessionManager.test.ts:21",
+          "packages/cli/src/acp/acpSessionManager.ts:8",
+          "packages/cli/src/acp/acpStdioTransport.ts:7",
+          "packages/cli/src/acp/acpUtils.ts:8",
+          "packages/cli/src/acp/commands/extensions.ts:9",
+          "packages/cli/src/commands/skills/list.test.ts:16",
+          "packages/cli/src/config/extension-manager-themes.spec.ts:25",
+          "packages/cli/src/core/auth.test.ts:10",
+          "packages/cli/src/core/auth.ts:9",
+          "packages/cli/src/core/initializer.test.ts:13",
+          "packages/cli/src/core/initializer.ts:12",
+          "packages/cli/src/gemini.test.tsx:44",
+          "packages/cli/src/gemini.tsx:10",
+          "packages/cli/src/gemini_cleanup.test.tsx:12",
+          "packages/cli/src/interactiveCli.tsx:19",
+          "packages/cli/src/nonInteractiveCliCommands.ts:13",
+          "packages/cli/src/output-redirection.test.ts:9",
+          "packages/cli/src/services/BuiltinCommandLoader.test.ts:55",
+          "packages/cli/src/services/FileCommandLoader.test.ts:12",
+          "packages/cli/src/services/FileCommandLoader.ts:12",
+          "packages/cli/src/services/McpPromptLoader.ts:10",
+          "packages/cli/src/services/SkillCommandLoader.ts:7",
+          "packages/cli/src/test-utils/AppRig.tsx:21",
+          "packages/cli/src/test-utils/render.tsx:46",
+          "packages/cli/src/ui/AppContainer.test.tsx:24",
+          "packages/cli/src/ui/AppContainer.tsx:50",
+          "packages/cli/src/ui/auth/AuthDialog.test.tsx:19",
+          "packages/cli/src/ui/auth/AuthDialog.tsx:20",
+          "packages/cli/src/ui/auth/LoginRestartDialog.test.tsx:16",
+          "packages/cli/src/ui/auth/LoginRestartDialog.tsx:7",
+          "packages/cli/src/ui/auth/useAuth.test.tsx:13",
+          "packages/cli/src/ui/auth/useAuth.ts:11",
+          "packages/cli/src/ui/commands/bugCommand.test.ts:12",
+          "packages/cli/src/ui/commands/commandsCommand.test.ts:8",
+          "packages/cli/src/ui/commands/directoryCommand.tsx:18",
+          "packages/cli/src/ui/commands/ideCommand.ts:8",
+          "packages/cli/src/ui/commands/memoryCommand.ts:9",
+          "packages/cli/src/ui/commands/policiesCommand.test.ts:13",
+          "packages/cli/src/ui/commands/restoreCommand.test.ts:16",
+          "packages/cli/src/ui/commands/restoreCommand.ts:11",
+          "packages/cli/src/ui/components/ExitPlanModeDialog.tsx:15",
+          "packages/cli/src/ui/components/Footer.test.tsx:12",
+          "packages/cli/src/ui/components/HistoryItemDisplay.test.tsx:14",
+          "packages/cli/src/ui/components/InboxDialog.tsx:30",
+          "packages/cli/src/ui/components/InputPrompt.test.tsx:56",
+          "packages/cli/src/ui/components/InputPrompt.tsx:58",
+          "packages/cli/src/ui/components/MultiFolderTrustDialog.tsx:20",
+          "packages/cli/src/ui/components/PolicyUpdateDialog.test.tsx:13",
+          "packages/cli/src/ui/components/PolicyUpdateDialog.tsx:12",
+          "packages/cli/src/ui/components/SessionBrowser.test.tsx:11",
+          "packages/cli/src/ui/components/Tips.tsx:10",
+          "packages/cli/src/ui/components/ToolConfirmationQueue.test.tsx:15",
+          "packages/cli/src/ui/components/UserIdentity.tsx:12",
+          "packages/cli/src/ui/components/messages/ShellToolMessage.test.tsx:14",
+          "packages/cli/src/ui/components/messages/ShellToolMessage.tsx:29",
+          "packages/cli/src/ui/components/messages/ToolConfirmationMessage.test.tsx:12",
+          "packages/cli/src/ui/components/messages/ToolConfirmationMessage.tsx:14",
+          "packages/cli/src/ui/components/messages/ToolMessage.tsx:24",
+          "packages/cli/src/ui/components/messages/ToolMessageFocusHint.test.tsx:18",
+          "packages/cli/src/ui/components/messages/ToolShared.tsx:19",
+          "packages/cli/src/ui/components/triage/TriageDuplicates.tsx:14",
+          "packages/cli/src/ui/components/triage/TriageIssues.tsx:14",
+          "packages/cli/src/ui/contexts/ConfigContext.tsx:8",
+          "packages/cli/src/ui/contexts/KeypressContext.tsx:7",
+          "packages/cli/src/ui/contexts/ToolActionsContext.test.tsx:12",
+          "packages/cli/src/ui/contexts/ToolActionsContext.tsx:19",
+          "packages/cli/src/ui/hooks/atCommandProcessor.test.ts:33",
+          "packages/cli/src/ui/hooks/creditsFlowHandler.test.ts:11",
+          "packages/cli/src/ui/hooks/creditsFlowHandler.ts:8",
+          "packages/cli/src/ui/hooks/useApprovalModeIndicator.test.ts:23",
+          "packages/cli/src/ui/hooks/useApprovalModeIndicator.ts:10",
+          "packages/cli/src/ui/hooks/useAtCompletion.test.ts:17",
+          "packages/cli/src/ui/hooks/useAtCompletion.ts:14",
+          "packages/cli/src/ui/hooks/useExecutionLifecycle.test.tsx:114",
+          "packages/cli/src/ui/hooks/useFlickerDetector.test.ts:11",
+          "packages/cli/src/ui/hooks/useIncludeDirsTrust.tsx:8",
+          "packages/cli/src/ui/hooks/useLogger.test.tsx:11",
+          "packages/cli/src/ui/hooks/useLogger.ts:8",
+          "packages/cli/src/ui/hooks/useMcpStatus.test.tsx:13",
+          "packages/cli/src/ui/hooks/useMcpStatus.ts:9",
+          "packages/cli/src/ui/hooks/usePrivacySettings.test.tsx:13",
+          "packages/cli/src/ui/hooks/usePrivacySettings.ts:9",
+          "packages/cli/src/ui/hooks/usePromptCompletion.ts:12",
+          "packages/cli/src/ui/hooks/useQuotaAndFallback.test.ts:20",
+          "packages/cli/src/ui/hooks/useQuotaAndFallback.ts:9",
+          "packages/cli/src/ui/hooks/useSessionBrowser.test.ts:17",
+          "packages/cli/src/ui/hooks/useTerminalTheme.test.tsx:10",
+          "packages/cli/src/ui/hooks/useToolScheduler.test.ts:14",
+          "packages/cli/src/ui/hooks/useToolScheduler.ts:8",
+          "packages/cli/src/ui/hooks/useVoiceMode.ts:12",
+          "packages/cli/src/ui/privacy/PrivacyNotice.tsx:8",
+          "packages/cli/src/utils/activityLogger.ts:18",
+          "packages/cli/src/utils/autoMemory.ts:10",
+          "packages/cli/src/utils/devtoolsService.ts:7",
+          "packages/cli/src/utils/sessionCleanup.integration.test.ts:12",
+          "packages/cli/src/utils/sessionCleanup.test.ts:13",
+          "packages/cli/src/utils/sessionCleanup.ts:15",
+          "packages/cli/src/utils/sessions.test.ts:8",
+          "packages/cli/src/utils/sessions.ts:12",
+          "packages/cli/src/utils/settingsUtils.ts:15",
+          "packages/cli/src/utils/terminalTheme.test.ts:11",
+          "packages/cli/src/utils/terminalTheme.ts:15",
+          "packages/cli/src/validateNonInterActiveAuth.ts:12",
+          "packages/core/src/agents/registry_acknowledgement.test.ts:13",
+          "packages/core/src/config/config.ts:751",
+          "packages/core/src/context/contextCompressionService.ts:6",
+          "packages/core/src/context/toolDistillationService.ts:12",
+          "packages/core/src/policy/policy-updater.test.ts:16",
+          "packages/core/src/scheduler/tool-executor.test.ts:10",
+          "packages/core/src/scheduler/tool-executor.ts:16",
+          "packages/core/src/tools/edit.test.ts:70",
+          "packages/core/src/tools/glob.ts:26",
+          "packages/core/src/tools/mcp-client.test.ts:16",
+          "packages/core/src/tools/mcp-client.ts:45",
+          "packages/core/src/tools/read-many-files.ts:33",
+          "packages/core/src/tools/shell.test.ts:54",
+          "packages/core/src/tools/shell_proactive.test.ts:19",
+          "packages/core/src/utils/atCommandUtils.test.ts:12",
+          "packages/core/src/utils/atCommandUtils.ts:10",
+          "packages/core/src/utils/tool-utils.test.ts:9",
+          "packages/sdk/src/shell.ts:11"
+        ],
+        "expected": [
+          "packages/core/src/config/config.ts:751"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/config/config.ts:751"
+        ],
+        "expected": [
+          "packages/core/src/config/config.ts:751"
+        ]
+      },
+      "keel_reference_count": 0
+    },
+    {
+      "symbol": "AuthType",
+      "language": "TypeScript",
+      "note": "Auth provider enum",
+      "without_keel": {
+        "tp": 1,
+        "fp": 4,
+        "fn": 0,
+        "precision": 0.2,
+        "recall": 1.0,
+        "f1": 0.33333333333333337,
+        "predicted": [
+          "packages/cli/src/config/settingsSchema.ts:21",
+          "packages/cli/src/core/auth.ts:8",
+          "packages/cli/src/ui/contexts/UIActionsContext.tsx:12",
+          "packages/cli/src/validateNonInterActiveAuth.ts:13",
+          "packages/core/src/core/contentGenerator.ts:63"
+        ],
+        "expected": [
+          "packages/core/src/core/contentGenerator.ts:63"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/core/contentGenerator.ts:63"
+        ],
+        "expected": [
+          "packages/core/src/core/contentGenerator.ts:63"
+        ]
+      },
+      "keel_reference_count": 0
+    },
+    {
+      "symbol": "createContentGenerator",
+      "language": "TypeScript",
+      "note": "Content generator factory",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/core/contentGenerator.ts:210"
+        ],
+        "expected": [
+          "packages/core/src/core/contentGenerator.ts:210"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/core/contentGenerator.ts:210"
+        ],
+        "expected": [
+          "packages/core/src/core/contentGenerator.ts:210"
+        ]
+      },
+      "keel_reference_count": 41
+    },
+    {
+      "symbol": "ToolRegistry",
+      "language": "TypeScript",
+      "note": "Tool registry (core + scripts interface)",
+      "without_keel": {
+        "tp": 2,
+        "fp": 2,
+        "fn": 0,
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6666666666666666,
+        "predicted": [
+          "packages/a2a-server/src/utils/testing_utils.ts:25",
+          "packages/core/src/tools/tool-registry.ts:231",
+          "packages/sdk/src/session.ts:20",
+          "scripts/utils/tool-registry.ts:29"
+        ],
+        "expected": [
+          "packages/core/src/tools/tool-registry.ts:231",
+          "scripts/utils/tool-registry.ts:29"
+        ]
+      },
+      "with_keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/tools/tool-registry.ts:231",
+          "scripts/utils/tool-registry.ts:29"
+        ],
+        "expected": [
+          "packages/core/src/tools/tool-registry.ts:231",
+          "scripts/utils/tool-registry.ts:29"
+        ]
+      },
+      "keel_reference_count": 0
+    },
+    {
+      "symbol": "ReadFileTool",
+      "language": "TypeScript",
+      "note": "Built-in read-file tool",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/tools/read-file.ts:226"
+        ],
+        "expected": [
+          "packages/core/src/tools/read-file.ts:226"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/tools/read-file.ts:226"
+        ],
+        "expected": [
+          "packages/core/src/tools/read-file.ts:226"
+        ]
+      },
+      "keel_reference_count": 0
+    },
+    {
+      "symbol": "ShellTool",
+      "language": "TypeScript",
+      "note": "Built-in shell tool",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/tools/shell.ts:1090"
+        ],
+        "expected": [
+          "packages/core/src/tools/shell.ts:1090"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/tools/shell.ts:1090"
+        ],
+        "expected": [
+          "packages/core/src/tools/shell.ts:1090"
+        ]
+      },
+      "keel_reference_count": 0
+    },
+    {
+      "symbol": "WriteFileTool",
+      "language": "TypeScript",
+      "note": "Built-in write-file tool",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/tools/write-file.ts:586"
+        ],
+        "expected": [
+          "packages/core/src/tools/write-file.ts:586"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/tools/write-file.ts:586"
+        ],
+        "expected": [
+          "packages/core/src/tools/write-file.ts:586"
+        ]
+      },
+      "keel_reference_count": 0
+    },
+    {
+      "symbol": "EditTool",
+      "language": "TypeScript",
+      "note": "Built-in edit tool",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/tools/edit.ts:1091"
+        ],
+        "expected": [
+          "packages/core/src/tools/edit.ts:1091"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/tools/edit.ts:1091"
+        ],
+        "expected": [
+          "packages/core/src/tools/edit.ts:1091"
+        ]
+      },
+      "keel_reference_count": 0
+    },
+    {
+      "symbol": "GrepTool",
+      "language": "TypeScript",
+      "note": "Built-in grep tool",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/tools/grep.ts:687"
+        ],
+        "expected": [
+          "packages/core/src/tools/grep.ts:687"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "packages/core/src/tools/grep.ts:687"
+        ],
+        "expected": [
+          "packages/core/src/tools/grep.ts:687"
+        ]
+      },
+      "keel_reference_count": 0
+    }
+  ]
+}
