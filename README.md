@@ -1,30 +1,18 @@
 # Keel
 
 Deterministic, local-first code intelligence for AI coding agents. Keel
-indexes source code with Tree-sitter and answers structural queries from a local
-SQLite database—without LLMs, embeddings, or semantic search.
+indexes source with Tree-sitter and answers structural queries from a local
+SQLite database—no LLMs, embeddings, or semantic search.
 
-Supported languages:
+**Languages:** Rust, TypeScript/TSX, JavaScript/JSX, Python, Go.
 
-- Rust (`.rs`)
-- TypeScript / TSX (`.ts`, `.tsx`, `.mts`, `.cts`)
-- JavaScript / JSX (`.js`, `.jsx`, `.mjs`, `.cjs`)
-- Python / Python stubs (`.py`, `.pyi`)
-- Go (`.go`)
-
-Interfaces:
-
-- `keel` command-line tool
-- MCP stdio server for Cursor and other coding agents
-- Local JSON HTTP API
-- Stable Rust `Index` library API
+**Primary use:** Cursor (and other agents) via MCP. CLI and a local JSON API
+are also available.
 
 ## Install
 
-Pick one:
-
 ```bash
-# macOS (Homebrew) — formula lives in this repo; tap it first
+# macOS (Homebrew)
 brew tap ashokdudhade/keel https://github.com/ashokdudhade/keel
 brew install ashokdudhade/keel/keel
 
@@ -32,48 +20,81 @@ brew install ashokdudhade/keel/keel
 curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
 ```
 
-Both paths need a published GitHub Release with binaries. If install fails
-looking for release archives, use a source build instead (see
-[`keel/README.md`](keel/README.md#build-from-source-contributors)) or wait for
-the next tagged release.
-
-Then confirm:
+Confirm:
 
 ```bash
 keel --help
 ```
 
-The curl installer puts `keel` in `~/.local/bin` (override with `KEEL_INSTALL_DIR`).
-Pin a release with `KEEL_VERSION=v1.1.0`.
+Curl installs to `~/.local/bin` (override with `KEEL_INSTALL_DIR`). Pin a
+release with `KEEL_VERSION=v1.1.2`. Add that directory to `PATH` if needed.
 
-Homebrew does **not** edit `.zshrc` / `.bashrc`; it installs into Homebrew’s
-`bin`, which is already on PATH when Homebrew itself is set up.
+Both installers need a published GitHub Release with binaries. If that fails,
+build from source in [`keel/README.md`](keel/README.md#build-from-source-contributors).
 
-Building from source is only needed for Keel development — see
-[`keel/README.md`](keel/README.md#build-from-source-contributors).
+> The crates.io name `keel` is taken. Use GitHub binaries / Homebrew, not
+> `cargo install keel` from crates.io.
 
-## Quick start
+## Quick start (Cursor)
 
 ```bash
-# Once per machine — Homebrew keeps the daemon running
-brew services start keel
-# Without Homebrew: keel daemon
+# 1. Once per machine
+brew services start keel          # or: keel daemon
 
-# Per project — indexes into .keel/ and registers a file watcher
+# 2. In each project you care about
 cd /path/to/your/project
-keel start
+keel start                        # indexes into .keel/ and watches files
+keel status                       # confirm daemon + watch
+```
 
-# Queries auto-run a fast incremental index when needed
+Add `.keel/` to the project's `.gitignore`.
+
+### 3. Wire Cursor MCP
+
+Use an **absolute** path to the binary and set `KEEL_INDEX_DB` to the project
+index. Prefer `env` over `cwd`—Cursor often ignores `cwd`.
+
+```bash
+which keel
+# e.g. /opt/homebrew/bin/keel  or  /usr/local/bin/keel  or  ~/.local/bin/keel
+```
+
+Global `~/.cursor/mcp.json` or project `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "keel": {
+      "command": "/opt/homebrew/bin/keel",
+      "args": ["mcp"],
+      "env": {
+        "KEEL_INDEX_DB": "/absolute/path/to/your/project/.keel/index.db"
+      }
+    }
+  }
+}
+```
+
+Replace both paths with yours. After saving, refresh MCP in Cursor Settings.
+You should see **seven tools**: `definition`, `references`, `callers`,
+`implementations`, `dependencies`, `impact`, `index`.
+
+### 4. Try it
+
+In chat:
+
+```text
+Use keel definition for AuthService
+Use keel references for create_order
+```
+
+CLI works the same way without MCP:
+
+```bash
 keel definition AuthService
 keel references create_order
 keel callers create_order
-
-keel status   # global daemon + this project's watch
-keel stop     # unregister this project only
 ```
-
-Index path: `./.keel/index.db` (add `.keel/` to `.gitignore`).
-Daemon state: `~/.keel/daemon/` (override with `KEEL_HOME`).
 
 Example output:
 
@@ -81,80 +102,35 @@ Example output:
 src/auth/service.rs:12:12	struct	AuthService
 ```
 
-## Commands
+## Everyday commands
 
 ```bash
-brew services start keel          # start global daemon (Homebrew)
-keel daemon [--port 7646]         # same daemon in the foreground
-keel start [path]                 # register project: index + watch
-keel stop                         # unregister this project
+brew services start keel          # global daemon (once per machine)
+keel start [path]                 # register this project (index + watch)
+keel stop                         # unregister this project only
 keel status                       # daemon + this project
-keel index <path>                 # one-shot create/update the index
-keel watch <path>                 # foreground re-index on file changes
 keel definition <name>            # find definitions (auto-indexes)
-keel references <name>            # find references (auto-indexes)
-keel callers <name>               # find call/use sites (auto-indexes)
-keel implementations <trait>      # find trait implementations
-keel dependencies <name|module>   # find dependencies
-keel impact <name>                # estimate transitive impact
-keel serve [--port 7645]          # run the local JSON API
-keel mcp                          # run the MCP stdio server
+keel references <name>
+keel callers <name>
+keel implementations <trait>
+keel dependencies <name|module>
+keel impact <name>
 ```
+
+Index path: `./.keel/index.db`. Daemon state: `~/.keel/daemon/` (`KEEL_HOME`).
 
 Global flag: `--no-auto-index` skips the incremental ensure-index before queries.
 
-## Keep the index current
-
-Preferred: one global daemon, then register each project you care about.
+## Without Homebrew / without the daemon
 
 ```bash
-brew services start keel          # once per machine
-cd /path/to/your/project && keel start
-keel status
-keel stop                         # when you no longer need that project watched
-```
-
-Without brew services, run the daemon yourself:
-
-```bash
-keel daemon                       # leave running in a terminal or supervisor
-```
-
-One-shot refresh / foreground watcher (no daemon):
-
-```bash
+keel daemon                       # leave running (or use a supervisor)
+# or one-shot / foreground:
 keel index .
 keel watch .
-# reset: rm -rf .keel && keel index .
 ```
 
-## Use with Cursor via MCP
-
-```bash
-brew services start keel
-cd /path/to/your/project
-keel start   # optional; queries also auto-index
-which keel
-```
-
-```json
-{
-  "mcpServers": {
-    "keel": {
-      "command": "/absolute/path/to/keel",
-      "args": ["mcp"],
-      "cwd": "/absolute/path/to/your/project"
-    }
-  }
-}
-```
-
-`cwd` must be the indexed project so `keel mcp` opens `./.keel/index.db`.
-
-Available MCP tools: `definition`, `references`, `callers`, `implementations`,
-`dependencies`, `impact`, `index`.
-
-## Local JSON API
+## Local JSON API (optional)
 
 ```bash
 keel serve --port 7645
@@ -163,6 +139,57 @@ curl http://127.0.0.1:7645/symbol/AuthService
 ```
 
 Binds to `127.0.0.1` only by default.
+
+## Troubleshooting
+
+### `keel: command not found`
+
+```bash
+export PATH="${KEEL_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
+```
+
+### `keel daemon is not running`
+
+`keel start` needs the global daemon:
+
+```bash
+brew services start keel   # or: keel daemon
+keel status
+```
+
+### MCP tools never appear / yellow “loading tools”
+
+1. Use an **absolute** `command` path (`which keel`), not a bare `keel`.
+2. Set `KEEL_INDEX_DB` to an existing `…/.keel/index.db` (run `keel start` first).
+3. Do not rely on `cwd` alone.
+4. Refresh MCP servers in Cursor Settings after editing `mcp.json`.
+5. Smoke-test outside Cursor:
+
+```bash
+printf '%s\n' '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' \
+  | KEEL_INDEX_DB=/absolute/path/to/project/.keel/index.db "$(which keel)" mcp
+```
+
+You should get a single JSON line back (not hang).
+
+### Queries or MCP tools return empty results
+
+1. Confirm `KEEL_INDEX_DB` (or your shell cwd) points at the right project.
+2. Run `keel index .` or `keel start` again.
+3. Check `.gitignore` is not excluding the file you care about.
+4. Use the exact, case-sensitive symbol name.
+5. Rebuild: `rm -rf .keel && keel start` (daemon must be up).
+
+## Uninstall
+
+```bash
+brew services stop keel
+brew uninstall keel                                    # Homebrew
+rm -f "${KEEL_INSTALL_DIR:-$HOME/.local/bin}/keel"     # curl
+```
+
+Per-project indexes: `rm -rf /path/to/project/.keel`.  
+Optional daemon state: `rm -rf ~/.keel`.
 
 ## Accuracy
 
@@ -174,57 +201,9 @@ hand-verified gold symbols:
 | Without Keel (keyword grep) | 78.9% | 71.4% | 75.0% |
 | With Keel | 100% | 100% | 100% |
 
-Full report: [`reports/realworld-accuracy-benchmark.html`](reports/realworld-accuracy-benchmark.html)
-(regenerate with `scripts/realworld-accuracy-benchmark.sh`).
-
-## Troubleshooting
-
-### `keel: command not found`
-
-```bash
-# curl install
-export PATH="${KEEL_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
-```
-
-Homebrew usually configures PATH during install.
-
-### `keel daemon is not running`
-
-`keel start` needs the global daemon:
-
-```bash
-brew services start keel
-# or: keel daemon
-keel status
-```
-
-### Queries return no results
-
-1. Confirm the shell and MCP server use the same project directory.
-2. Run `keel index .` (or `keel start` with the daemon up) again.
-3. Check whether `.gitignore` excludes the file.
-4. Use the exact, case-sensitive symbol name.
-5. Rebuild with `rm -rf .keel && keel index .`.
-
-### MCP tools return empty results
-
-Ensure the MCP configuration's `cwd` contains the expected `.keel/index.db`.
-
-## Uninstall
-
-```bash
-brew services stop keel                                # if started via brew
-brew uninstall keel                                    # Homebrew
-rm -f "${KEEL_INSTALL_DIR:-$HOME/.local/bin}/keel"     # curl
-```
-
-Remove per-project indexes with `rm -rf /path/to/project/.keel`.
-Optional daemon state: `rm -rf ~/.keel`.
+Full report: [`reports/realworld-accuracy-benchmark.html`](reports/realworld-accuracy-benchmark.html).
 
 ## Further documentation
 
-See [`keel/README.md`](keel/README.md) for the library API, plugins, MCP/HTTP
-details, resolution model, and CLI reference.
-
-> The crates.io name `keel` is already taken. Public installs use GitHub
-> release binaries (curl / Homebrew), not `cargo install keel` from crates.io.
+[`keel/README.md`](keel/README.md) — library API, language plugins, MCP/HTTP
+contracts, resolution model, and contributor build notes.

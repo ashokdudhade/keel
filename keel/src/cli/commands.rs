@@ -163,13 +163,26 @@ pub fn run_serve(port: u16, auto_index: bool) -> Result<()> {
 }
 
 /// Serve the MCP stdio server using `.keel/index.db` under CWD.
+///
+/// Override with `KEEL_INDEX_DB` (absolute path to `index.db`) when the MCP
+/// client does not honor `cwd` (recommended for Cursor).
 pub fn run_mcp(auto_index: bool) -> Result<()> {
-    std::fs::create_dir_all(DB_DIR).map_err(|source| KeelError::Io {
-        path: PathBuf::from(DB_DIR),
-        source,
-    })?;
-    eprintln!("Serving Keel MCP on stdio (db={})", db_path().display());
-    mcp::serve(&db_path(), auto_index)
+    let db = std::env::var_os("KEEL_INDEX_DB")
+        .map(PathBuf::from)
+        .unwrap_or_else(db_path);
+    if let Some(parent) = db.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|source| KeelError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+    }
+    // Stay quiet on stderr by default — Cursor surfaces stderr as MCP errors.
+    if std::env::var_os("KEEL_MCP_DEBUG").is_some() {
+        eprintln!("Serving Keel MCP on stdio (db={})", db.display());
+    }
+    mcp::serve(&db, auto_index)
 }
 
 /// Project root that owns a `.keel/index.db` path.
