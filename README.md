@@ -79,13 +79,26 @@ Replace both paths with yours. After saving, refresh MCP in Cursor Settings.
 You should see **seven tools**: `definition`, `references`, `callers`,
 `implementations`, `dependencies`, `impact`, `index`.
 
-### 4. Try it
+### 3b. Make the agent use Keel without saying “use keel”
 
-In chat:
+Add a project rule so Cursor prefers Keel for structural search automatically
+(this repo already includes [`.cursor/rules/keel-mcp.mdc`](.cursor/rules/keel-mcp.mdc)):
 
 ```text
-Use keel definition for AuthService
-Use keel references for create_order
+.cursor/rules/keel-mcp.mdc   # alwaysApply: prefer Keel MCP over Grep for symbols
+```
+
+Then ask normally, e.g. “Where is AuthService defined?” or “Who calls
+create_order?” — no need to mention Keel.
+
+### 4. Try it
+
+In chat (no need to say “use keel” if the project rule is enabled):
+
+```text
+Where is AuthService defined?
+Who references create_order?
+Who calls create_order?
 ```
 
 CLI works the same way without MCP:

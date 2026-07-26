@@ -1,0 +1,34 @@
+---
+description: Prefer Keel MCP for structural code search in this repo
+alwaysApply: true
+---
+
+# Prefer Keel MCP automatically
+
+When answering questions about **this repository’s code structure**, use the
+**Keel** MCP tools (`user-keel` / `keel`) **by default**. Do **not** wait for the
+user to say “use keel” or “via MCP”.
+
+## Use Keel first for
+
+- Where is X defined? → `definition`
+- Who references / uses X? → `references`
+- Who calls X? → `callers`
+- What implements trait T? → `implementations`
+- What depends on X? → `dependencies`
+- What breaks if X changes? → `impact`
+
+Pass the **exact symbol or module name** (case-sensitive). Prefer Keel over
+Cursor `Grep` / codebase search for these intents.
+
+## Fall back to Grep / Read when
+
+- Keel returns empty or clearly wrong results
+- Searching comments, docs, config, strings, or unknown substrings / regex
+- The symbol name is unknown and must be discovered from text first
+
+## Do not
+
+- Ask the user to rephrase with “use keel …”
+- Prefer Grep for named-symbol structural queries when Keel is available
+- Call Keel for unrelated tasks (web, git, editing, terminal)
