@@ -1,17 +1,26 @@
 # Keel
 
-Deterministic, local-first code intelligence for AI coding agents. Keel
-indexes source with Tree-sitter and answers structural queries from a local
-SQLite database—no LLMs, embeddings, or semantic search.
+Local code intelligence for AI coding agents. Keel indexes your repository
+with Tree-sitter and answers structural queries from a local on-disk
+index—no LLMs, embeddings, or cloud index.
 
-**Languages:** Rust, TypeScript/TSX, JavaScript/JSX, Python, Go.
+**What it is:** name-based structural search (not semantic search). Grep
+finds text; language servers resolve types in an IDE. Keel is a persistent
+symbol index your agent queries by name. For a given index state, answers
+are stable and repeatable.
 
-**Primary use:** Cursor (and other agents) via MCP. CLI and a local JSON API
-are also available.
+**Languages:** Rust, TypeScript/TSX, JavaScript/JSX, Python, Go (mixed
+monorepos in one pass).
+
+**Interfaces:** MCP (`keel mcp`) for Cursor, Claude Code, and other MCP
+clients; CLI for the same queries; optional JSON API on `127.0.0.1`.
+
+**Site:** [ashokdudhade.github.io/keel](https://ashokdudhade.github.io/keel/)
+(`website/`).
 
 ## Install
 
-Pick one path:
+Install → daemon → index → MCP. Pick one path:
 
 | Platform | Recommended |
 |----------|-------------|
@@ -115,8 +124,20 @@ Global `~/.cursor/mcp.json` or project `.cursor/mcp.json`:
 ```
 
 Replace both paths with yours. After saving, refresh MCP in Cursor Settings.
-You should see **seven tools**: `definition`, `references`, `callers`,
-`implementations`, `dependencies`, `impact`, `index`.
+You should see **seven tools**:
+
+| Tool | Purpose |
+|------|---------|
+| `definition` | Definition location(s) for a symbol name |
+| `references` | Reference sites for a name |
+| `callers` | Call/use sites; import-aware when a unique definition module is known |
+| `implementations` | Rust trait implementations for a trait name |
+| `dependencies` | Modules/files a module or symbol depends on |
+| `impact` | Symbols transitively impacted by changing a name |
+| `index` | Index a repository path; returns indexing stats |
+
+Prefer Keel when you know a symbol or trait name; use text search for regex.
+The same `mcpServers` shape works for Claude Code and other MCP clients.
 
 ### 4. Prefer Keel automatically in chat
 
@@ -136,6 +157,7 @@ In chat:
 Where is AuthService defined?
 Who references create_order?
 Who calls create_order?
+What is impacted if WireFormat changes?
 ```
 
 Or from the CLI:
@@ -144,6 +166,7 @@ Or from the CLI:
 keel definition AuthService
 keel references create_order
 keel callers create_order
+keel impact WireFormat
 ```
 
 Example output:
@@ -163,12 +186,13 @@ keel status                # daemon + this project
 keel definition <name>     # find definitions (auto-indexes)
 keel references <name>
 keel callers <name>
-keel implementations <trait>
+keel implementations <trait>   # Rust traits today
 keel dependencies <name|module>
 keel impact <name>
 ```
 
-Index path: `./.keel/index.db`. Daemon state: `~/.keel/daemon/` (`KEEL_HOME`).
+Index path: `./.keel/index.db` (add `.keel/` to `.gitignore`). Daemon state:
+`~/.keel/daemon/` (`KEEL_HOME`).
 
 Global flag: `--no-auto-index` skips the incremental ensure-index before queries.
 

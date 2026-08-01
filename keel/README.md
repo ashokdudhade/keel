@@ -2,7 +2,7 @@
 
 Deterministic, local-first code intelligence for AI coding agents. Keel
 indexes a repository with Tree-sitter and answers structural queries from a
-local SQLite database — no LLMs, embeddings, or semantic search.
+local on-disk index — no LLMs, embeddings, or semantic search.
 
 **For install, Cursor MCP, and everyday CLI usage, start at the
 [repository-root README](../README.md).** This file covers the Rust library,
@@ -121,7 +121,7 @@ Stable tools:
 | `definition` | `{ "name" }` | Symbol definition(s) |
 | `references` | `{ "name" }` | Reference sites |
 | `callers` | `{ "name" }` | Call/use sites (import-aware when unique) |
-| `implementations` | `{ "name" }` | Trait implementations |
+| `implementations` | `{ "name" }` | Rust trait implementations |
 | `dependencies` | `{ "name" }` | Module/file dependencies |
 | `impact` | `{ "name" }` | Transitively impacted symbols |
 | `index` | `{ "path" }` | Index a repository; returns `IndexStats` JSON |

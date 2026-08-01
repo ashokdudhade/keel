@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Keel — Code intelligence for AI coding agents</title>
+  <meta name="description" content="Deterministic, local-first code intelligence for Cursor, Claude Code, and any MCP client. Tree-sitter + SQLite — definitions, references, callers, impact." />
+  <meta name="theme-color" content="#0a1219" />
+  <meta property="og:title" content="Keel — Code intelligence for AI coding agents" />
+  <meta property="og:description" content="Structural search for Cursor and Claude Code via MCP. Local, deterministic, no embeddings." />
+  <meta property="og:type" content="website" />
+  <link rel="canonical" href="https://ashokdudhade.github.io/keel/" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230a1219'/%3E%3Cpath d='M6 24h20M8 24C12 12 20 12 24 24' stroke='%237eb8c0' stroke-width='2' fill='none'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #0a1219;
+      --ink-2: #1a2836;
+      --slate: #3d4f61;
+      --muted: #6b7c8f;
+      --mist: #f0f3f6;
+      --cloud: #e4eaef;
+      --line: rgba(10, 18, 25, 0.1);
+      --line-strong: rgba(10, 18, 25, 0.18);
+      --sea: #1a6a72;
+      --sea-bright: #2d8f99;
+      --foam: #f7fafb;
+      --code-bg: #0d1620;
+      --max: 1080px;
+      --gutter: clamp(1.25rem, 4vw, 2rem);
+      --display: "Syne", system-ui, sans-serif;
+      --sans: "IBM Plex Sans", system-ui, sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--mist);
+      font-family: var(--sans);
+      font-size: 1.0625rem;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    a { color: var(--sea); text-underline-offset: 0.15em; }
+    a:hover { color: var(--ink); }
+    .mono { font-family: var(--mono); font-size: 0.9em; }
+    .wrap {
+      width: min(100% - 2 * var(--gutter), var(--max));
+      margin-inline: auto;
+    }
+
+    /* —— Hero —— */
+    .hero {
+      position: relative;
+      min-height: 100svh;
+      display: flex;
+      flex-direction: column;
+      color: var(--foam);
+      background:
+        radial-gradient(ellipse 90% 70% at 85% 0%, rgba(45, 143, 153, 0.22), transparent 55%),
+        radial-gradient(ellipse 50% 40% at 10% 100%, rgba(26, 106, 114, 0.12), transparent 50%),
+        linear-gradient(160deg, #060c12 0%, #0f1a24 42%, #0a1219 100%);
+      overflow: hidden;
+    }
+    .hero__texture {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(240, 243, 246, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(240, 243, 246, 0.035) 1px, transparent 1px);
+      background-size: 56px 56px;
+      mask-image: radial-gradient(ellipse 80% 70% at 60% 30%, black, transparent 75%);
+      animation: drift 36s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes drift {
+      from { background-position: 0 0; }
+      to { background-position: 56px 28px; }
+    }
+    .hero__diagram {
+      position: absolute;
+      right: max(-4%, calc(50% - 640px));
+      top: 12%;
+      width: min(58vw, 640px);
+      opacity: 0.5;
+      pointer-events: none;
+      animation: fade-diagram 1.4s cubic-bezier(0.16, 1, 0.3, 1) 0.2s both;
+    }
+    @keyframes fade-diagram {
+      from { opacity: 0; transform: translate(12px, 8px); }
+      to { opacity: 0.5; transform: none; }
+    }
+    .hero__inner {
+      position: relative;
+      z-index: 1;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      width: min(100% - 2 * var(--gutter), var(--max));
+      margin-inline: auto;
+      padding: 1.5rem 0 3rem;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-shrink: 0;
+      animation: rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+    .nav__mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+      color: var(--foam);
+      text-decoration: none;
+      font-family: var(--display);
+      font-weight: 700;
+      font-size: 1rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .nav__mark svg { width: 22px; height: 22px; }
+    .nav__links {
+      display: flex;
+      gap: clamp(1rem, 3vw, 1.75rem);
+      font-size: 0.9375rem;
+      font-weight: 500;
+    }
+    .nav__links a {
+      color: rgba(247, 250, 251, 0.72);
+      text-decoration: none;
+      transition: color 0.2s ease;
+    }
+    .nav__links a:hover { color: #fff; }
+
+    .hero__copy {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      max-width: 34rem;
+      padding: clamp(2.5rem, 8vh, 5rem) 0 clamp(1.5rem, 4vh, 2.5rem);
+      animation: rise 0.85s cubic-bezier(0.16, 1, 0.3, 1) 0.12s both;
+    }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: none; }
+    }
+    .hero__eyebrow {
+      margin: 0 0 1.25rem;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #7eb8c0;
+    }
+    .hero__brand {
+      margin: 0 0 0.65rem;
+      font-family: var(--display);
+      font-weight: 800;
+      font-size: clamp(3.75rem, 11vw, 6.25rem);
+      line-height: 0.88;
+      letter-spacing: -0.035em;
+    }
+    .hero__headline {
+      margin: 0 0 1rem;
+      font-family: var(--display);
+      font-weight: 700;
+      font-size: clamp(1.35rem, 2.8vw, 1.75rem);
+      line-height: 1.25;
+      letter-spacing: -0.025em;
+      color: rgba(247, 250, 251, 0.94);
+      max-width: 16ch;
+    }
+    .hero__lede {
+      margin: 0 0 1.85rem;
+      font-size: 1.0625rem;
+      line-height: 1.55;
+      color: rgba(247, 250, 251, 0.68);
+      max-width: 36ch;
+    }
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      align-items: center;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.8rem 1.2rem;
+      border: 1px solid transparent;
+      border-radius: 1px;
+      font-family: var(--sans);
+      font-weight: 600;
+      font-size: 0.9375rem;
+      text-decoration: none;
+      letter-spacing: -0.01em;
+      transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.15s ease;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn--solid {
+      background: var(--foam);
+      color: var(--ink);
+    }
+    .btn--solid:hover { background: #fff; color: var(--ink); }
+    .btn--line {
+      background: transparent;
+      color: var(--foam);
+      border-color: rgba(247, 250, 251, 0.28);
+    }
+    .btn--line:hover {
+      border-color: rgba(247, 250, 251, 0.7);
+      color: #fff;
+    }
+    .btn--sea {
+      background: var(--sea);
+      color: #fff;
+    }
+    .btn--sea:hover { background: #15565c; color: #fff; }
+    .btn--line-dark {
+      background: transparent;
+      color: var(--foam);
+      border-color: rgba(247, 250, 251, 0.28);
+    }
+    .btn--line-dark:hover { border-color: #fff; color: #fff; }
+
+    /* —— Sections —— */
+    section { padding: clamp(4rem, 9vw, 6rem) 0; }
+    .kicker {
+      margin: 0 0 0.65rem;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 500;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--sea);
+    }
+    .title {
+      margin: 0 0 0.85rem;
+      font-family: var(--display);
+      font-weight: 700;
+      font-size: clamp(1.85rem, 3.6vw, 2.5rem);
+      letter-spacing: -0.03em;
+      line-height: 1.12;
+      max-width: 14ch;
+    }
+    .lede {
+      margin: 0 0 2.5rem;
+      color: var(--muted);
+      max-width: 40ch;
+      font-size: 1.05rem;
+    }
+
+    /* Agents */
+    .agents {
+      background: #fff;
+      border-block: 1px solid var(--line);
+    }
+    .agent-grid {
+      display: grid;
+      gap: 1px;
+      background: var(--line-strong);
+      border: 1px solid var(--line-strong);
+    }
+    @media (min-width: 800px) {
+      .agent-grid { grid-template-columns: 1fr 1fr; }
+    }
+    .agent {
+      background: #fff;
+      padding: 1.5rem 1.5rem 1.35rem;
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+    }
+    .agent__head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.4rem;
+    }
+    .agent h3 {
+      margin: 0;
+      font-family: var(--display);
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .agent__badge {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .agent > p {
+      margin: 0 0 1.15rem;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    .tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 0;
+    }
+    .tab {
+      appearance: none;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      background: transparent;
+      color: var(--muted);
+      padding: 0.55rem 0.85rem 0.65rem;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: color 0.15s ease, border-color 0.15s ease;
+    }
+    .tab:hover { color: var(--ink); }
+    .tab[aria-selected="true"] {
+      color: var(--ink);
+      border-bottom-color: var(--sea);
+    }
+    .panel[hidden] { display: none; }
+    .terminal {
+      margin: 0;
+      background: var(--code-bg);
+      color: #c5d3df;
+      border: 0;
+      overflow: hidden;
+    }
+    .terminal__bar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.55rem 0.85rem;
+      background: rgba(255, 255, 255, 0.04);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: rgba(197, 211, 223, 0.55);
+    }
+    .terminal__bar span {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: rgba(197, 211, 223, 0.25);
+    }
+    .terminal pre {
+      margin: 0;
+      padding: 1rem 1.05rem 1.15rem;
+      overflow-x: auto;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      line-height: 1.55;
+      white-space: pre;
+    }
+
+    /* Why */
+    .why-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 0;
+      border-top: 1px solid var(--line);
+    }
+    @media (min-width: 800px) {
+      .why-list { grid-template-columns: repeat(3, 1fr); }
+    }
+    .why-list li {
+      padding: 1.75rem 0 0;
+      border-bottom: 1px solid var(--line);
+    }
+    @media (min-width: 800px) {
+      .why-list li {
+        padding: 1.75rem 1.5rem 0 0;
+        border-bottom: 0;
+        border-right: 1px solid var(--line);
+      }
+      .why-list li:last-child {
+        border-right: 0;
+        padding-right: 0;
+      }
+      .why-list li:first-child { padding-left: 0; }
+    }
+    .why-list .num {
+      display: block;
+      margin-bottom: 0.85rem;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      color: var(--sea);
+    }
+    .why-list h3 {
+      margin: 0 0 0.5rem;
+      font-family: var(--display);
+      font-size: 1.2rem;
+      letter-spacing: -0.02em;
+    }
+    .why-list p {
+      margin: 0 0 1.75rem;
+      color: var(--muted);
+      font-size: 0.98rem;
+    }
+
+    /* Tools */
+    .tools { background: var(--cloud); }
+    .tool-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin: 0 0 1.75rem;
+      padding: 0;
+      list-style: none;
+    }
+    .tool-row li {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      padding: 0.5rem 0.75rem;
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid var(--line);
+      color: var(--ink-2);
+    }
+    .lang-label {
+      margin: 0 0 0.55rem;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+    .langs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem 1rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      color: var(--slate);
+    }
+
+    /* Install */
+    .install {
+      background: var(--ink);
+      color: var(--foam);
+    }
+    .install .kicker { color: #7eb8c0; }
+    .install .title { color: var(--foam); max-width: 16ch; }
+    .install .lede { color: rgba(247, 250, 251, 0.62); }
+    .install-grid {
+      display: grid;
+      gap: 1px;
+      background: rgba(247, 250, 251, 0.12);
+      border: 1px solid rgba(247, 250, 251, 0.12);
+    }
+    @media (min-width: 800px) {
+      .install-grid { grid-template-columns: 1fr 1fr; }
+    }
+    .install-block {
+      background: #0d1620;
+      padding: 0;
+    }
+    .install-block .terminal__bar {
+      color: rgba(197, 211, 223, 0.5);
+    }
+    .install-block pre {
+      margin: 0;
+      padding: 1.1rem 1.15rem 1.25rem;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      line-height: 1.55;
+      color: #c5d3df;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .install__note {
+      margin: 1.5rem 0 0;
+      font-size: 0.9rem;
+      color: rgba(247, 250, 251, 0.55);
+      max-width: 52ch;
+      line-height: 1.55;
+    }
+    .install .cta-row { margin-top: 1.75rem; }
+
+    footer {
+      padding: 2rem 0;
+      background: #fff;
+      border-top: 1px solid var(--line);
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+    footer .wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1.5rem;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    footer strong {
+      font-family: var(--display);
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: -0.02em;
+    }
+    footer a {
+      color: var(--slate);
+      text-decoration: none;
+    }
+    footer a:hover { color: var(--sea); }
+    footer nav { display: flex; gap: 1.15rem; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="hero__texture" aria-hidden="true"></div>
+    <svg class="hero__diagram" viewBox="0 0 640 480" fill="none" aria-hidden="true">
+      <rect x="48" y="48" width="544" height="384" stroke="rgba(240,243,246,0.14)" stroke-width="1"/>
+      <path d="M96 120 H544" stroke="rgba(126,184,192,0.35)" stroke-width="1" stroke-dasharray="4 10"/>
+      <path d="M96 200 H544" stroke="rgba(240,243,246,0.08)" stroke-width="1"/>
+      <path d="M96 280 H544" stroke="rgba(240,243,246,0.08)" stroke-width="1"/>
+      <path d="M96 360 H544" stroke="rgba(240,243,246,0.08)" stroke-width="1"/>
+      <path d="M180 120 V380" stroke="rgba(240,243,246,0.08)" stroke-width="1"/>
+      <path d="M320 120 V380" stroke="rgba(240,243,246,0.1)" stroke-width="1"/>
+      <path d="M460 120 V380" stroke="rgba(240,243,246,0.08)" stroke-width="1"/>
+      <path d="M140 372 C 230 188, 410 188, 500 372" stroke="#7eb8c0" stroke-width="2.5"/>
+      <path d="M140 372 H500" stroke="rgba(247,250,251,0.45)" stroke-width="1.5"/>
+      <circle cx="320" cy="280" r="4" fill="#7eb8c0"/>
+      <text x="332" y="284" fill="rgba(247,250,251,0.4)" font-family="IBM Plex Mono, monospace" font-size="11">spine</text>
+    </svg>
+
+    <div class="hero__inner">
+      <nav class="nav" aria-label="Primary">
+        <a class="nav__mark" href="#">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M3 19h18M5 19C8.5 10 15.5 10 19 19" stroke="#7eb8c0" stroke-width="1.75"/>
+          </svg>
+          Keel
+        </a>
+        <div class="nav__links">
+          <a href="#agents">Agents</a>
+          <a href="#install">Install</a>
+          <a href="https://github.com/ashokdudhade/keel">GitHub</a>
+        </div>
+      </nav>
+
+      <div class="hero__copy">
+        <p class="hero__eyebrow">Local · Deterministic · MCP</p>
+        <p class="hero__brand">Keel</p>
+        <h1 class="hero__headline">Structural code intelligence for AI agents</h1>
+        <p class="hero__lede">
+          Definitions, references, callers, and impact — from a Tree-sitter index on your machine.
+          Built for Cursor, Claude Code, and any MCP client.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn--solid" href="#install">Install Keel</a>
+          <a class="btn btn--line" href="https://github.com/ashokdudhade/keel#quick-start-cursor">Documentation</a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section class="agents" id="agents">
+    <div class="wrap">
+      <p class="kicker">Agent integration</p>
+      <h2 class="title">One server. Two agents.</h2>
+      <p class="lede">
+        Same MCP tools and the same index. Configure once for Cursor or Claude Code — prefer an absolute <span class="mono">KEEL_INDEX_DB</span>.
+      </p>
+
+      <div class="agent-grid">
+        <article class="agent">
+          <div class="agent__head">
+            <h3>Cursor</h3>
+            <span class="agent__badge">mcp.json</span>
+          </div>
+          <p>Global <span class="mono">~/.cursor/mcp.json</span> or project <span class="mono">.cursor/mcp.json</span>.</p>
+          <div class="tabs" role="tablist" aria-label="Cursor examples">
+            <button class="tab" type="button" role="tab" aria-selected="true" data-panel="cursor-mcp">Config</button>
+            <button class="tab" type="button" role="tab" aria-selected="false" data-panel="cursor-prompt">Prompts</button>
+          </div>
+          <div class="panel terminal" id="cursor-mcp" role="tabpanel">
+            <div class="terminal__bar"><span></span><span></span><span></span> mcp.json</div>
+            <pre>{
+  "mcpServers": {
+    "keel": {
+      "command": "/absolute/path/to/keel",
+      "args": ["mcp"],
+      "env": {
+        "KEEL_INDEX_DB": "/abs/project/.keel/index.db"
+      }
+    }
+  }
+}</pre>
+          </div>
+          <div class="panel terminal" id="cursor-prompt" role="tabpanel" hidden>
+            <div class="terminal__bar"><span></span><span></span><span></span> chat</div>
+            <pre>Where is AuthService defined?
+Who calls create_order?
+What is impacted if WireFormat changes?</pre>
+          </div>
+        </article>
+
+        <article class="agent">
+          <div class="agent__head">
+            <h3>Claude Code</h3>
+            <span class="agent__badge">MCP</span>
+          </div>
+          <p>Add Keel in Claude Code MCP settings — same binary and environment.</p>
+          <div class="tabs" role="tablist" aria-label="Claude Code examples">
+            <button class="tab" type="button" role="tab" aria-selected="true" data-panel="claude-mcp">Config</button>
+            <button class="tab" type="button" role="tab" aria-selected="false" data-panel="claude-prompt">Prompts</button>
+          </div>
+          <div class="panel terminal" id="claude-mcp" role="tabpanel">
+            <div class="terminal__bar"><span></span><span></span><span></span> mcpServers</div>
+            <pre>{
+  "mcpServers": {
+    "keel": {
+      "command": "/absolute/path/to/keel",
+      "args": ["mcp"],
+      "env": {
+        "KEEL_INDEX_DB": "/abs/project/.keel/index.db"
+      }
+    }
+  }
+}</pre>
+          </div>
+          <div class="panel terminal" id="claude-prompt" role="tabpanel" hidden>
+            <div class="terminal__bar"><span></span><span></span><span></span> chat</div>
+            <pre>Find implementations of LanguagePlugin.
+Show references to read_message.
+Estimate impact of changing Registry.</pre>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="why">
+    <div class="wrap">
+      <p class="kicker">Why Keel</p>
+      <h2 class="title">The spine under the agent</h2>
+      <p class="lede">Agents infer from text. Keel answers from an indexed graph of your repository.</p>
+      <ul class="why-list">
+        <li>
+          <span class="num">01</span>
+          <h3>Deterministic</h3>
+          <p>Same repo state produces the same answers. No embeddings, no semantic drift, no cloud index.</p>
+        </li>
+        <li>
+          <span class="num">02</span>
+          <h3>Local-first</h3>
+          <p>Tree-sitter parsing and SQLite on your machine. Your source never leaves your environment.</p>
+        </li>
+        <li>
+          <span class="num">03</span>
+          <h3>Agent-native</h3>
+          <p>MCP tools for definition, references, callers, implementations, dependencies, and impact.</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="tools" id="tools">
+    <div class="wrap">
+      <p class="kicker">Capabilities</p>
+      <h2 class="title">What the agent can call</h2>
+      <p class="lede">Seven structural tools. Prefer Keel for named symbols; fall back to text search when you need regex.</p>
+      <ul class="tool-row">
+        <li>definition</li>
+        <li>references</li>
+        <li>callers</li>
+        <li>implementations</li>
+        <li>dependencies</li>
+        <li>impact</li>
+        <li>index</li>
+      </ul>
+      <p class="lang-label">Languages indexed in one pass</p>
+      <ul class="langs">
+        <li>Rust</li>
+        <li>TypeScript / TSX</li>
+        <li>JavaScript / JSX</li>
+        <li>Python</li>
+        <li>Go</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="install" id="install">
+    <div class="wrap">
+      <p class="kicker">Get started</p>
+      <h2 class="title">Install, then wire your agent</h2>
+      <p class="lede">
+        macOS with Homebrew is the smoothest path. Linux and WSL use the curl installer, which detects OS/arch and puts <span class="mono">keel</span> on PATH.
+      </p>
+
+      <div class="install-grid">
+        <div class="install-block">
+          <div class="terminal__bar"><span></span><span></span><span></span> Homebrew</div>
+          <pre>brew tap ashokdudhade/keel https://github.com/ashokdudhade/keel
+brew install ashokdudhade/keel/keel
+brew services start keel
+cd /path/to/project && keel start</pre>
+        </div>
+        <div class="install-block">
+          <div class="terminal__bar"><span></span><span></span><span></span> curl</div>
+          <pre>curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
+# open a new terminal, then:
+keel daemon
+cd /path/to/project && keel start</pre>
+        </div>
+      </div>
+
+      <p class="install__note">
+        After indexing, set <span class="mono">KEEL_INDEX_DB</span> to
+        <span class="mono">/absolute/path/to/project/.keel/index.db</span> in your agent MCP config.
+        Native Windows is not supported — use WSL2.
+      </p>
+
+      <div class="cta-row">
+        <a class="btn btn--sea" href="https://github.com/ashokdudhade/keel">GitHub repository</a>
+        <a class="btn btn--line-dark" href="https://github.com/ashokdudhade/keel#quick-start-cursor">Full quick start</a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <div><strong>Keel</strong> — local-first code intelligence for AI coding agents.</div>
+      <nav aria-label="Footer">
+        <a href="https://github.com/ashokdudhade/keel">GitHub</a>
+        <a href="https://github.com/ashokdudhade/keel/blob/main/README.md">README</a>
+        <a href="#install">Install</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script>
+    document.querySelectorAll(".agent").forEach((agent) => {
+      const tabs = agent.querySelectorAll(".tab");
+      tabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          const id = tab.getAttribute("data-panel");
+          tabs.forEach((t) => t.setAttribute("aria-selected", String(t === tab)));
+          agent.querySelectorAll(".panel").forEach((panel) => {
+            panel.hidden = panel.id !== id;
+          });
+        });
+      });
+    });
+  </script>
+</body>
+</html>

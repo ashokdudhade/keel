@@ -1,0 +1,86 @@
+:root {
+  --ink: #101418;
+  --ink-2: #1c242c;
+  --slate: #44505c;
+  --muted: #5c6976;
+  --mist: #f0f2f4;
+  --cloud: #e4e8ec;
+  --foam: #f7f8f9;
+  --line: rgba(16, 20, 24, 0.1);
+  --line-strong: rgba(16, 20, 24, 0.15);
+  --sea: #2f5d56;
+  --sea-bright: #3a7068;
+  --sea-soft: #8aada6;
+  --code: #12181e;
+  --display: "Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif;
+  --sans: "Source Sans 3 Variable", "Source Sans 3", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --max: 1160px;
+  --gutter: clamp(1.25rem, 4vw, 2.25rem);
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: linear-gradient(180deg, #f5f6f7 0%, var(--mist) 50%, #eaedef 100%);
+  font-family: var(--sans);
+  font-size: 1.0625rem;
+  font-optical-sizing: auto;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(47, 93, 86, 0.22);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--sea-bright);
+  outline-offset: 3px;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+a {
+  color: var(--sea);
+  text-underline-offset: 0.15em;
+}
+
+a:hover {
+  color: var(--ink);
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+.wrap {
+  width: min(100% - 2 * var(--gutter), var(--max));
+  margin-inline: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
