@@ -22,8 +22,8 @@ esac
 TARGET="${ARCH_KEY}-${OS_KEY}"
 ARCHIVE="keel-${VERSION}-${TARGET}.tar.gz"
 
-mkdir -p "$TMP/payload" "$TMP/bin" "$TMP/www"
-printf '#!/bin/sh\necho keel-mock-ok\n' > "$TMP/payload/keel"
+mkdir -p "$TMP/payload" "$TMP/bin" "$TMP/www" "$TMP/home"
+printf '#!/bin/sh\nif [ "${1:-}" = "--help" ]; then echo "keel help"; exit 0; fi\necho keel-mock-ok\n' > "$TMP/payload/keel"
 chmod +x "$TMP/payload/keel"
 printf 'readme\n' > "$TMP/payload/README.md"
 printf 'changelog\n' > "$TMP/payload/CHANGELOG.md"
@@ -75,10 +75,38 @@ sed \
   -e "s|https://github.com/|http://127.0.0.1:${PORT}/|g" \
   "$ROOT/install.sh" > "$MOCK_INSTALL"
 
+# Isolate profile writes from the developer's real home directory.
+export HOME="$TMP/home"
+export SHELL="/bin/zsh"
+touch "$HOME/.zshrc"
+
 KEEL_VERSION="v${VERSION}" \
 KEEL_INSTALL_DIR="$TMP/bin" \
   sh "$MOCK_INSTALL"
 
 test -x "$TMP/bin/keel"
 test "$("$TMP/bin/keel")" = "keel-mock-ok"
+
+grep -F 'keel PATH (managed by install.sh)' "$HOME/.profile" >/dev/null
+grep -F 'keel PATH (managed by install.sh)' "$HOME/.zshrc" >/dev/null
+grep -F "$TMP/bin" "$HOME/.zshrc" >/dev/null
+
+# Re-run should refresh without duplicating markers.
+KEEL_VERSION="v${VERSION}" \
+KEEL_INSTALL_DIR="$TMP/bin" \
+  sh "$MOCK_INSTALL"
+test "$(grep -c 'keel PATH (managed by install.sh)' "$HOME/.zshrc")" -eq 2  # begin+end
+
+# Opt-out must not touch profiles further when markers already exist — use fresh home.
+HOME2="$TMP/home2"
+mkdir -p "$HOME2"
+export HOME="$HOME2"
+export SHELL="/bin/bash"
+KEEL_VERSION="v${VERSION}" \
+KEEL_INSTALL_DIR="$TMP/bin2" \
+KEEL_NO_MODIFY_PATH=1 \
+  sh "$MOCK_INSTALL"
+test -x "$TMP/bin2/keel"
+test ! -f "$HOME2/.profile"
+
 echo "OK: install.sh mock release test passed"

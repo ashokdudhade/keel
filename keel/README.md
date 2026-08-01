@@ -19,9 +19,10 @@ contracts.
 brew tap ashokdudhade/keel https://github.com/ashokdudhade/keel
 brew install ashokdudhade/keel/keel
 # or: curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
+#     (detects OS/arch, installs to ~/.local/bin, updates shell PATH)
 ```
 
-Then: `brew services start keel` once per machine, `keel start` in each
+Then: `brew services start keel` (or `keel daemon`), `keel start` in each
 project, and configure Cursor with `KEEL_INDEX_DB` as documented in the
 [root README](../README.md#quick-start-cursor).
 
