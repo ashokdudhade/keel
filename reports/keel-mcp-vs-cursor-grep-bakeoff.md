@@ -48,7 +48,9 @@ Keel was used **~1.4× as often as Grep** in this controlled pass. Grep calls ex
 
 ## Qualitative notes
 
-1. **MCP is usable end-to-end** after the NDJSON + `KEEL_INDEX_DB` fix; all 10 Keel calls returned JSON without timeouts.
+1. **MCP is usable end-to-end** after the NDJSON handshake fix (and later
+   optional `KEEL_INDEX_DB` auto-resolution); all 10 Keel calls returned JSON
+   without timeouts.
 2. **Precision > recall for agents:** Grep often includes the definition line; Keel `references` / `callers` separate those concerns.
 3. **Impact is the clearest differentiator:** no single Grep call replaces transitive impact.
 4. **Gap to watch:** `dependencies` returned empty for `crate::mcp` — agent must fall back to Grep/Read for module wiring until that query is stronger.

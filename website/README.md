@@ -17,3 +17,6 @@ Fonts (self-hosted via Fontsource):
 - **IBM Plex Mono** — code
 
 GitHub Pages deploys `website/dist` with `base: /keel/` via `.github/workflows/pages.yml`.
+
+MCP setup shown on the site: absolute `keel` path only; `KEEL_INDEX_DB` is
+optional (cwd walk-up → daemon registry → fallback).

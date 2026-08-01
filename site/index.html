@@ -587,7 +587,7 @@
       <p class="kicker">Agent integration</p>
       <h2 class="title">One server. Two agents.</h2>
       <p class="lede">
-        Same MCP tools and the same index. Configure once for Cursor or Claude Code — prefer an absolute <span class="mono">KEEL_INDEX_DB</span>.
+        Same MCP tools and the same index. Absolute path to the <span class="mono">keel</span> binary; <span class="mono">KEEL_INDEX_DB</span> is optional (auto-resolved).
       </p>
 
       <div class="agent-grid">
@@ -596,7 +596,7 @@
             <h3>Cursor</h3>
             <span class="agent__badge">mcp.json</span>
           </div>
-          <p>Global <span class="mono">~/.cursor/mcp.json</span> or project <span class="mono">.cursor/mcp.json</span>.</p>
+          <p>Global <span class="mono">~/.cursor/mcp.json</span> or project <span class="mono">.cursor/mcp.json</span>. Index discovery runs after <span class="mono">keel start</span>.</p>
           <div class="tabs" role="tablist" aria-label="Cursor examples">
             <button class="tab" type="button" role="tab" aria-selected="true" data-panel="cursor-mcp">Config</button>
             <button class="tab" type="button" role="tab" aria-selected="false" data-panel="cursor-prompt">Prompts</button>
@@ -607,10 +607,7 @@
   "mcpServers": {
     "keel": {
       "command": "/absolute/path/to/keel",
-      "args": ["mcp"],
-      "env": {
-        "KEEL_INDEX_DB": "/abs/project/.keel/index.db"
-      }
+      "args": ["mcp"]
     }
   }
 }</pre>
@@ -628,7 +625,7 @@ What is impacted if WireFormat changes?</pre>
             <h3>Claude Code</h3>
             <span class="agent__badge">MCP</span>
           </div>
-          <p>Add Keel in Claude Code MCP settings — same binary and environment.</p>
+          <p>Add Keel in Claude Code MCP settings — same binary. <span class="mono">KEEL_INDEX_DB</span> optional.</p>
           <div class="tabs" role="tablist" aria-label="Claude Code examples">
             <button class="tab" type="button" role="tab" aria-selected="true" data-panel="claude-mcp">Config</button>
             <button class="tab" type="button" role="tab" aria-selected="false" data-panel="claude-prompt">Prompts</button>
@@ -639,10 +636,7 @@ What is impacted if WireFormat changes?</pre>
   "mcpServers": {
     "keel": {
       "command": "/absolute/path/to/keel",
-      "args": ["mcp"],
-      "env": {
-        "KEEL_INDEX_DB": "/abs/project/.keel/index.db"
-      }
+      "args": ["mcp"]
     }
   }
 }</pre>
@@ -734,8 +728,8 @@ cd /path/to/project && keel start</pre>
       </div>
 
       <p class="install__note">
-        After indexing, set <span class="mono">KEEL_INDEX_DB</span> to
-        <span class="mono">/absolute/path/to/project/.keel/index.db</span> in your agent MCP config.
+        After <span class="mono">keel start</span>, wire MCP with an absolute path to
+        <span class="mono">keel</span>. <span class="mono">KEEL_INDEX_DB</span> is optional.
         Native Windows is not supported — use WSL2.
       </p>
 

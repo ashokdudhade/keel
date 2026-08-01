@@ -98,8 +98,19 @@ Add `.keel/` to the project's `.gitignore`.
 
 ### 3. Wire Cursor MCP
 
-Use an **absolute** path to the binary and set `KEEL_INDEX_DB` to the project
-index. Prefer `env` over `cwd`—Cursor often ignores `cwd`.
+Use an **absolute** path to the `keel` binary (`which keel`; expand `~`).
+`KEEL_INDEX_DB` is **optional**. When unset, MCP picks the best index it can
+find:
+
+1. Walk up from the process cwd for an existing `.keel/index.db` (nearest wins)
+2. Else use the daemon registry (`keel start` projects): the project that
+   contains cwd, or the sole registered index, or the most recently modified
+   registered index
+3. Else fall back to `cwd/.keel/index.db`
+
+Set `KEEL_INDEX_DB` only when you need to pin a specific project (for example
+several registered indexes and a client that starts with a useless cwd).
+Use `KEEL_MCP_DEBUG=1` to print the resolved db path on stderr.
 
 ```bash
 which keel
@@ -108,6 +119,19 @@ which keel
 ```
 
 Global `~/.cursor/mcp.json` or project `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "keel": {
+      "command": "/absolute/path/to/keel",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Optional pin:
 
 ```json
 {
@@ -123,8 +147,7 @@ Global `~/.cursor/mcp.json` or project `.cursor/mcp.json`:
 }
 ```
 
-Replace both paths with yours. After saving, refresh MCP in Cursor Settings.
-You should see **seven tools**:
+After saving, refresh MCP in Cursor Settings. You should see **seven tools**:
 
 | Tool | Purpose |
 |------|---------|
@@ -240,21 +263,24 @@ keel status
 ### MCP tools never appear / yellow “loading tools”
 
 1. Use an **absolute** `command` path (`which keel`), not a bare `keel`.
-2. Set `KEEL_INDEX_DB` to an existing `…/.keel/index.db` (run `keel start` first).
-3. Do not rely on `cwd` alone.
-4. Refresh MCP servers in Cursor Settings after editing `mcp.json`.
-5. Smoke-test outside Cursor:
+2. Run `keel start` in the project so `.keel/index.db` exists (and is
+   registered with the daemon). `KEEL_INDEX_DB` is optional; set it only to
+   pin a specific index.
+3. Refresh MCP servers in Cursor Settings after editing `mcp.json`.
+4. Smoke-test outside Cursor:
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' \
-  | KEEL_INDEX_DB=/absolute/path/to/project/.keel/index.db "$(which keel)" mcp
+  | "$(which keel)" mcp
 ```
 
-You should get a single JSON line back (not hang).
+You should get a single JSON line back (not hang). With
+`KEEL_MCP_DEBUG=1` the resolved db path is printed on stderr.
 
 ### Queries or MCP tools return empty results
 
-1. Confirm `KEEL_INDEX_DB` (or your shell cwd) points at the right project.
+1. Confirm the resolved index is the right project (`KEEL_MCP_DEBUG=1` or set
+   `KEEL_INDEX_DB` explicitly).
 2. Run `keel index .` or `keel start` again.
 3. Check `.gitignore` is not excluding the file you care about.
 4. Use the exact, case-sensitive symbol name.

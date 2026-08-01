@@ -95,6 +95,18 @@ fn load_registry() -> RegistryFile {
         .unwrap_or_default()
 }
 
+/// Absolute roots currently recorded in the daemon registry (`projects.json`).
+///
+/// Used by MCP index resolution when `KEEL_INDEX_DB` is unset.
+pub fn registered_project_roots() -> Vec<PathBuf> {
+    load_registry()
+        .projects
+        .into_iter()
+        .map(|e| PathBuf::from(e.path))
+        .filter(|p| !p.as_os_str().is_empty())
+        .collect()
+}
+
 fn save_registry(reg: &RegistryFile) -> Result<()> {
     ensure_daemon_dir()?;
     let text = serde_json::to_string_pretty(reg).map_err(|e| KeelError::Watch(e.to_string()))?;

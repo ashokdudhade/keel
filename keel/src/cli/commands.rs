@@ -19,6 +19,91 @@ fn db_path() -> PathBuf {
     Path::new(DB_DIR).join(DB_FILE)
 }
 
+fn project_index_db(root: &Path) -> PathBuf {
+    root.join(DB_DIR).join(DB_FILE)
+}
+
+/// Resolve which on-disk index MCP (and similar callers) should open.
+///
+/// Priority:
+/// 1. `KEEL_INDEX_DB` when set
+/// 2. Walk up from `cwd` for an existing `.keel/index.db`
+/// 3. Daemon registry: project containing `cwd`, else sole registered index,
+///    else most recently modified registered index
+/// 4. Fallback: `cwd/.keel/index.db` (may be created on first use)
+pub fn resolve_index_db(cwd: &Path) -> PathBuf {
+    if let Some(p) = std::env::var_os("KEEL_INDEX_DB") {
+        return PathBuf::from(p);
+    }
+    if let Some(found) = find_index_walking_up(cwd) {
+        return found;
+    }
+    if let Some(found) = find_index_from_registry(cwd) {
+        return found;
+    }
+    cwd.join(DB_DIR).join(DB_FILE)
+}
+
+fn find_index_walking_up(start: &Path) -> Option<PathBuf> {
+    let mut dir = start.to_path_buf();
+    loop {
+        let candidate = project_index_db(&dir);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+fn find_index_from_registry(cwd: &Path) -> Option<PathBuf> {
+    let roots = crate::daemon::registered_project_roots();
+    if roots.is_empty() {
+        return None;
+    }
+
+    let cwd_canon = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let mut best_prefix: Option<(usize, PathBuf)> = None;
+    for root in &roots {
+        let root_canon = root.canonicalize().unwrap_or_else(|_| root.clone());
+        if cwd_canon.starts_with(&root_canon) {
+            let db = project_index_db(&root_canon);
+            if db.is_file() {
+                let score = root_canon.as_os_str().len();
+                if best_prefix
+                    .as_ref()
+                    .map(|(s, _)| score > *s)
+                    .unwrap_or(true)
+                {
+                    best_prefix = Some((score, db));
+                }
+            }
+        }
+    }
+    if let Some((_, db)) = best_prefix {
+        return Some(db);
+    }
+
+    let mut existing: Vec<(PathBuf, std::time::SystemTime)> = roots
+        .iter()
+        .map(|root| project_index_db(root))
+        .filter(|db| db.is_file())
+        .filter_map(|db| {
+            let modified = std::fs::metadata(&db).ok()?.modified().ok()?;
+            Some((db, modified))
+        })
+        .collect();
+    if existing.is_empty() {
+        return None;
+    }
+    if existing.len() == 1 {
+        return Some(existing.remove(0).0);
+    }
+    existing.sort_by_key(|(_, m)| *m);
+    existing.pop().map(|(db, _)| db)
+}
+
 /// Open (creating the directory if needed) the on-disk index database.
 fn open_db() -> Result<Connection> {
     std::fs::create_dir_all(DB_DIR)
@@ -162,14 +247,15 @@ pub fn run_serve(port: u16, auto_index: bool) -> Result<()> {
     api::serve(&addr, &db_path(), auto_index)
 }
 
-/// Serve the MCP stdio server using `.keel/index.db` under CWD.
+/// Serve the MCP stdio server against the best available index.
 ///
-/// Override with `KEEL_INDEX_DB` (absolute path to `index.db`) when the MCP
-/// client does not honor `cwd` (recommended for Cursor).
+/// Resolution: `KEEL_INDEX_DB` if set; otherwise walk up from cwd for
+/// `.keel/index.db`; otherwise use the daemon registry (project containing
+/// cwd, sole project, or most recently modified index); otherwise
+/// `cwd/.keel/index.db`.
 pub fn run_mcp(auto_index: bool) -> Result<()> {
-    let db = std::env::var_os("KEEL_INDEX_DB")
-        .map(PathBuf::from)
-        .unwrap_or_else(db_path);
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let db = resolve_index_db(&cwd);
     if let Some(parent) = db.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(|source| KeelError::Io {
@@ -199,3 +285,82 @@ pub fn index_root_from_db(db_path: &Path) -> PathBuf {
         })
         .unwrap_or_else(|| PathBuf::from("."))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn write_empty_db(root: &Path) {
+        let dir = root.join(DB_DIR);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(DB_FILE), b"").unwrap();
+    }
+
+    #[test]
+    fn resolve_prefers_keel_index_db_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let override_db = tmp.path().join("custom.db");
+        std::fs::write(&override_db, b"").unwrap();
+        std::env::set_var("KEEL_INDEX_DB", &override_db);
+        let got = resolve_index_db(tmp.path());
+        std::env::remove_var("KEEL_INDEX_DB");
+        assert_eq!(got, override_db);
+    }
+
+    #[test]
+    fn resolve_walks_up_to_existing_index() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("KEEL_INDEX_DB");
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        let nested = project.join("src").join("deep");
+        std::fs::create_dir_all(&nested).unwrap();
+        write_empty_db(&project);
+        let got = resolve_index_db(&nested);
+        assert_eq!(got, project_index_db(&project));
+    }
+
+    #[test]
+    fn resolve_uses_sole_registered_project() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("KEEL_INDEX_DB");
+        let home = tempfile::tempdir().unwrap();
+        let project = home.path().join("only-proj");
+        std::fs::create_dir_all(&project).unwrap();
+        write_empty_db(&project);
+        let daemon = home.path().join(".keel").join("daemon");
+        std::fs::create_dir_all(&daemon).unwrap();
+        std::fs::write(
+            daemon.join("projects.json"),
+            format!(
+                r#"{{"projects":[{{"path":"{}","pid":1}}]}}"#,
+                project.display()
+            ),
+        )
+        .unwrap();
+        std::env::set_var("KEEL_HOME", home.path().join(".keel"));
+        let cwd = home.path().join("elsewhere");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let got = resolve_index_db(&cwd);
+        std::env::remove_var("KEEL_HOME");
+        assert_eq!(got, project_index_db(&project));
+    }
+
+    #[test]
+    fn resolve_falls_back_to_cwd_index_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("KEEL_INDEX_DB");
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("KEEL_HOME", home.path().join("empty-home"));
+        let cwd = home.path().join("fresh");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let got = resolve_index_db(&cwd);
+        std::env::remove_var("KEEL_HOME");
+        assert_eq!(got, project_index_db(&cwd));
+    }
+}
+

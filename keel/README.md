@@ -23,8 +23,8 @@ brew install ashokdudhade/keel/keel
 ```
 
 Then: `brew services start keel` (or `keel daemon`), `keel start` in each
-project, and configure Cursor with `KEEL_INDEX_DB` as documented in the
-[root README](../README.md#quick-start-cursor).
+project, and configure Cursor with an absolute `keel` path as documented in the
+[root README](../README.md#quick-start-cursor). `KEEL_INDEX_DB` is optional.
 
 ### Build from source (contributors)
 
@@ -103,13 +103,33 @@ One indexing pass can process all supported languages in a mixed monorepo.
 
 ## MCP (`keel mcp`)
 
-Stdio MCP server over the index. Prefer an absolute DB path for editors:
+Stdio MCP server over the index. Absolute path to the `keel` binary is
+recommended for editors; **`KEEL_INDEX_DB` is optional**.
+
+Index resolution when `KEEL_INDEX_DB` is unset:
+
+1. Walk up from the process cwd for an existing `.keel/index.db` (nearest wins)
+2. Daemon registry (`keel start`): project containing cwd, else sole registered
+   index, else most recently modified registered index
+3. Fall back to `cwd/.keel/index.db` (may be created on first use)
 
 | Variable / config | Purpose |
 |-------------------|---------|
-| `KEEL_INDEX_DB` | Absolute path to `index.db` (**recommended** for Cursor) |
-| `cwd` + `./.keel/index.db` | Fallback when the client honors working directory |
-| `KEEL_MCP_DEBUG` | Re-enable stderr diagnostics |
+| `KEEL_INDEX_DB` | Optional absolute path to `index.db` (pins a project) |
+| `KEEL_MCP_DEBUG` | Stderr diagnostics, including the resolved db path |
+
+Minimal Cursor / Claude Code config:
+
+```json
+{
+  "mcpServers": {
+    "keel": {
+      "command": "/absolute/path/to/keel",
+      "args": ["mcp"]
+    }
+  }
+}
+```
 
 Wire format: **newline-delimited JSON-RPC** (Cursor `2025-11-25` and similar).
 Older **Content-Length** framing is still accepted. Logs go to stderr only.

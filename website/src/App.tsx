@@ -7,10 +7,7 @@ const mcpConfig = `{
   "mcpServers": {
     "keel": {
       "command": "/absolute/path/to/keel",
-      "args": ["mcp"],
-      "env": {
-        "KEEL_INDEX_DB": "/absolute/path/to/project/.keel/index.db"
-      }
+      "args": ["mcp"]
     }
   }
 }`;
@@ -395,11 +392,13 @@ keel status`}
             Point <span className="mono">command</span> at an absolute{" "}
             <span className="mono">keel</span> path (
             <span className="mono">which keel</span>; expand{" "}
-            <span className="mono">~</span>). Set{" "}
-            <span className="mono">KEEL_INDEX_DB</span> to the project index.
-            Prefer <span className="mono">env</span> over{" "}
-            <span className="mono">cwd</span>—Cursor often ignores working
-            directory. Refresh MCP after saving; you should see all seven tools.
+            <span className="mono">~</span>).{" "}
+            <span className="mono">KEEL_INDEX_DB</span> is optional—MCP walks up
+            from cwd, then uses the daemon registry (
+            <span className="mono">keel start</span>), then falls back to{" "}
+            <span className="mono">cwd/.keel/index.db</span>. Set the env var
+            only to pin a specific project. Refresh MCP after saving; you should
+            see all seven tools.
           </p>
 
           <div className="agent-grid">
@@ -424,9 +423,9 @@ keel status`}
               blurb={
                 <>
                   Same <span className="mono">mcpServers</span> entry and
-                  binary. Point <span className="mono">KEEL_INDEX_DB</span> at
-                  that project's{" "}
-                  <span className="mono">.keel/index.db</span>.
+                  binary. Index discovery is automatic after{" "}
+                  <span className="mono">keel start</span>; optional{" "}
+                  <span className="mono">KEEL_INDEX_DB</span> pins a project.
                 </>
               }
               configLabel="mcpServers"
