@@ -587,7 +587,9 @@
       <p class="kicker">Agent integration</p>
       <h2 class="title">One server. Two agents.</h2>
       <p class="lede">
-        Same MCP tools and the same index. Absolute path to the <span class="mono">keel</span> binary; <span class="mono">KEEL_INDEX_DB</span> is optional (auto-resolved).
+        Same MCP tools and the same index. Absolute path to the <span class="mono">keel</span> binary;
+        <span class="mono">KEEL_INDEX_DB</span> is optional (cwd walk-up → daemon registry → fallback).
+        After upgrades, refresh MCP so tools pick up <span class="mono">module</span> and trust metadata.
       </p>
 
       <div class="agent-grid">
@@ -616,7 +618,8 @@
             <div class="terminal__bar"><span></span><span></span><span></span> chat</div>
             <pre>Where is AuthService defined?
 Who calls create_order?
-What is impacted if WireFormat changes?</pre>
+What is impacted if WireFormat changes?
+Where is serve defined in crate::mcp?</pre>
           </div>
         </article>
 
@@ -645,7 +648,8 @@ What is impacted if WireFormat changes?</pre>
             <div class="terminal__bar"><span></span><span></span><span></span> chat</div>
             <pre>Find implementations of LanguagePlugin.
 Show references to read_message.
-Estimate impact of changing Registry.</pre>
+Estimate impact of changing Registry.
+Disambiguate serve with module crate::mcp.</pre>
           </div>
         </article>
       </div>
@@ -681,7 +685,7 @@ Estimate impact of changing Registry.</pre>
     <div class="wrap">
       <p class="kicker">Capabilities</p>
       <h2 class="title">What the agent can call</h2>
-      <p class="lede">Seven structural tools. Prefer Keel for named symbols; fall back to text search when you need regex.</p>
+      <p class="lede">Seven structural tools. Prefer Keel for named symbols; fall back to text search for regex. Responses include <span class="mono">confidence</span> and <span class="mono">notes</span>. Optional <span class="mono">module</span> (or qualified names like <span class="mono">crate::mcp::serve</span>) disambiguates overloads. Non-empty <span class="mono">impact</span> is a candidate blast radius—verify before edits.</p>
       <ul class="tool-row">
         <li>definition</li>
         <li>references</li>
@@ -733,6 +737,31 @@ cd /path/to/project && keel start</pre>
         Native Windows is not supported — use WSL2.
       </p>
 
+      <p class="kicker" style="margin-top:2.5rem">Upgrade</p>
+      <h2 class="title">Already installed?</h2>
+      <p class="lede">
+        Upgrade the binary, restart the daemon, refresh MCP, and re-index when release notes say so
+        (required after 1.2+ module-identity / trust changes if the index is old).
+      </p>
+      <div class="install-grid">
+        <div class="install-block">
+          <div class="terminal__bar"><span></span><span></span><span></span> Homebrew</div>
+          <pre>brew update
+brew upgrade ashokdudhade/keel/keel
+brew services restart keel
+cd /path/to/project && rm -rf .keel && keel start</pre>
+        </div>
+        <div class="install-block">
+          <div class="terminal__bar"><span></span><span></span><span></span> curl</div>
+          <pre>curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
+# restart keel daemon if running, then:
+cd /path/to/project && rm -rf .keel && keel start</pre>
+        </div>
+      </div>
+      <p class="install__note">
+        Full notes: <a href="https://github.com/ashokdudhade/keel#upgrade">README — Upgrade</a>.
+      </p>
+
       <div class="cta-row">
         <a class="btn btn--sea" href="https://github.com/ashokdudhade/keel">GitHub repository</a>
         <a class="btn btn--line-dark" href="https://github.com/ashokdudhade/keel#quick-start-cursor">Full quick start</a>
@@ -746,6 +775,7 @@ cd /path/to/project && keel start</pre>
       <nav aria-label="Footer">
         <a href="https://github.com/ashokdudhade/keel">GitHub</a>
         <a href="https://github.com/ashokdudhade/keel/blob/main/README.md">README</a>
+        <a href="https://github.com/ashokdudhade/keel#upgrade">Upgrade</a>
         <a href="#install">Install</a>
       </nav>
     </div>

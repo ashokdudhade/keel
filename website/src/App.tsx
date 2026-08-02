@@ -15,26 +15,29 @@ const mcpConfig = `{
 const cursorPrompts = `Where is AuthService defined?
 Who references create_order?
 Who calls create_order?
-What is impacted if WireFormat changes?`;
+What is impacted if WireFormat changes?
+Where is serve defined in crate::mcp?`;
 
 const claudePrompts = `Where is LanguagePlugin defined?
 Who references read_message?
 What implements LanguagePlugin?
-What is impacted if Registry changes?`;
+What is impacted if Registry changes?
+Disambiguate serve with module crate::mcp`;
 
 const tools: { name: string; summary: string }[] = [
   {
     name: "definition",
-    summary: "Definition location(s) for a symbol name",
+    summary:
+      "Definition(s) for a symbol; optional module or qualified name (crate::mcp::serve)",
   },
   {
     name: "references",
-    summary: "Reference sites for a name",
+    summary: "Reference sites; optional module narrows when names collide",
   },
   {
     name: "callers",
     summary:
-      "Call/use sites; import-aware when a unique definition module is known",
+      "Call/use sites; import-aware when module is unique or provided",
   },
   {
     name: "implementations",
@@ -42,11 +45,12 @@ const tools: { name: string; summary: string }[] = [
   },
   {
     name: "dependencies",
-    summary: "Modules/files a module or symbol depends on",
+    summary: "Modules/files a module path, file, or symbol depends on",
   },
   {
     name: "impact",
-    summary: "Symbols transitively impacted by changing a name",
+    summary:
+      "Candidate blast radius (medium/low when non-empty); optional module",
   },
   {
     name: "index",
@@ -292,10 +296,13 @@ export default function App() {
           <h2 className="title">Seven tools over one index</h2>
           <p className="lede">
             Prefer Keel when you know a symbol or trait name; use text search
-            for regex. <span className="mono">callers</span> is import-aware
-            when a unique definition module is known.{" "}
-            <span className="mono">implementations</span> covers Rust traits
-            today.
+            for regex. Responses include <span className="mono">confidence</span>{" "}
+            and <span className="mono">notes</span>—empty + “No matching symbols
+            found” is a confident miss; low confidence means disambiguate with{" "}
+            <span className="mono">module</span> or a qualified name.{" "}
+            <span className="mono">impact</span> is a candidate blast radius,
+            not a delete list. <span className="mono">implementations</span>{" "}
+            covers Rust traits today.
           </p>
           <ul className="tool-list">
             {tools.map((tool) => (
@@ -361,10 +368,49 @@ keel status`}
           </p>
           <p className="install__note">
             CLI: <span className="mono">keel definition AuthService</span>,{" "}
-            <span className="mono">keel callers create_order</span>. The
+            <span className="mono">keel callers create_order</span>,{" "}
+            <span className="mono">keel definition crate::mcp::serve</span>. The
             crates.io name <span className="mono">keel</span> is taken—use
             GitHub binaries or Homebrew, not{" "}
             <span className="mono">cargo install keel</span> from crates.io.
+          </p>
+
+          <p className="kicker" style={{ marginTop: "2.5rem" }}>
+            Upgrade
+          </p>
+          <h2 className="title">Already installed?</h2>
+          <p className="lede">
+            After a new release: upgrade the binary, restart the daemon, refresh
+            MCP, and re-index when release notes say so (required after 1.2+
+            module-identity / trust changes if the index is old).
+          </p>
+          <div className="install-grid">
+            <div className="install-block">
+              <Terminal
+                label="Homebrew upgrade"
+                code={`brew update
+brew upgrade ashokdudhade/keel/keel
+brew services restart keel
+cd /path/to/project && rm -rf .keel && keel start`}
+              />
+            </div>
+            <div className="install-block">
+              <Terminal
+                label="curl upgrade"
+                code={`curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
+# restart keel daemon if running, then:
+cd /path/to/project && rm -rf .keel && keel start`}
+              />
+            </div>
+          </div>
+          <p className="install__note">
+            Then refresh MCP in Cursor / Claude Code settings so tools/list picks
+            up <span className="mono">module</span> and trust descriptions. Full
+            notes:{" "}
+            <a href="https://github.com/ashokdudhade/keel#upgrade">
+              README — Upgrade
+            </a>
+            .
           </p>
 
           <div className="cta-row">
@@ -394,11 +440,13 @@ keel status`}
             <span className="mono">which keel</span>; expand{" "}
             <span className="mono">~</span>).{" "}
             <span className="mono">KEEL_INDEX_DB</span> is optional—MCP walks up
-            from cwd, then uses the daemon registry (
-            <span className="mono">keel start</span>), then falls back to{" "}
+            from cwd, then the daemon registry (
+            <span className="mono">keel start</span>; sole project only—never
+            guesses among unrelated indexes), then{" "}
             <span className="mono">cwd/.keel/index.db</span>. Set the env var
-            only to pin a specific project. Refresh MCP after saving; you should
-            see all seven tools.
+            only to pin a project. Refresh MCP after saving (and after
+            upgrades); you should see all seven tools, including optional{" "}
+            <span className="mono">module</span> on structural queries.
           </p>
 
           <div className="agent-grid">
@@ -447,6 +495,7 @@ keel status`}
             <a href="https://github.com/ashokdudhade/keel/blob/main/README.md">
               README
             </a>
+            <a href="https://github.com/ashokdudhade/keel#upgrade">Upgrade</a>
             <a href="#install">Install</a>
           </nav>
         </div>

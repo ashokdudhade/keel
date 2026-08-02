@@ -19,4 +19,5 @@ Fonts (self-hosted via Fontsource):
 GitHub Pages deploys `website/dist` with `base: /keel/` via `.github/workflows/pages.yml`.
 
 MCP setup shown on the site: absolute `keel` path only; `KEEL_INDEX_DB` is
-optional (cwd walk-up → daemon registry → fallback).
+optional (cwd walk-up → daemon registry sole/cwd match → fallback). Install
+section includes Homebrew/curl **upgrade** steps and re-index guidance.

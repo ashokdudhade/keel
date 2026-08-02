@@ -203,20 +203,21 @@ After saving, refresh MCP in Cursor Settings. You should see **seven tools**:
 
 | Tool | Purpose |
 |------|---------|
-| `definition` | Definition location(s) for a symbol name |
-| `references` | Reference sites for a name |
-| `callers` | Call/use sites; import-aware when a unique definition module is known |
+| `definition` | Definition(s) for a symbol; optional `module` or qualified name (`crate::mcp::serve`) |
+| `references` | Reference sites; optional `module` narrows when names collide |
+| `callers` | Call/use sites; import-aware when module is unique or provided |
 | `implementations` | Rust trait implementations for a trait name |
-| `dependencies` | Modules/files a module or symbol depends on |
-| `impact` | Symbols transitively impacted by changing a name |
+| `dependencies` | Modules/files a module path, file, or symbol depends on |
+| `impact` | Candidate blast radius for a name (always medium/low confidence when non-empty); optional `module` |
 | `index` | Index a repository path; returns indexing stats |
 
 Prefer Keel when you know a symbol or trait name; use text search for regex.
-Query responses (MCP / `keel <cmd> --json`) include `confidence` and `notes`.
-Empty + “No matching symbols found” is a confident miss; `confidence: low` or
-ambiguity notes mean disambiguate with `module` / a qualified name
-(`crate::mcp::serve`) before treating hits as ground truth. After upgrades that
-change module identity, re-index with `rm -rf .keel && keel start`.
+Query responses (MCP / `keel <cmd> --json`) include `confidence`, `resolution_tier`,
+and `notes`. Empty + “No matching symbols found” is a confident miss
+(`confidence: high`, `resolution_tier: 0`). `confidence: low` or ambiguity notes
+mean disambiguate with `module` / a qualified name before treating hits as ground
+truth. Non-empty `impact` is a candidate list—verify before edits. After upgrades
+that change module identity, re-index with `rm -rf .keel && keel start`.
 The same `mcpServers` shape works for Claude Code and other MCP clients.
 
 ### 4. Prefer Keel automatically in chat
@@ -368,6 +369,8 @@ hand-verified gold symbols:
 | With Keel | 100% | 100% | 100% |
 
 Full report: [`reports/realworld-accuracy-benchmark.html`](reports/realworld-accuracy-benchmark.html).
+Agent bake-off (dated): [`reports/keel-mcp-vs-cursor-grep-bakeoff.md`](reports/keel-mcp-vs-cursor-grep-bakeoff.md)
+— empty `dependencies crate::mcp` noted there was fixed in 1.2+.
 
 ## Further documentation
 

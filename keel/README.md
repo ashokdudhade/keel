@@ -139,13 +139,16 @@ Stable tools:
 
 | Tool | Arguments | Description |
 |------|-----------|-------------|
-| `definition` | `{ "name" }` | Symbol definition(s) |
-| `references` | `{ "name" }` | Reference sites |
-| `callers` | `{ "name" }` | Call/use sites (import-aware when unique) |
+| `definition` | `{ "name", "module"? }` | Symbol definition(s); `module` or qualified `name` disambiguates |
+| `references` | `{ "name", "module"? }` | Reference sites (import-aware when module known) |
+| `callers` | `{ "name", "module"? }` | Call/use sites (import-aware when unique or provided) |
 | `implementations` | `{ "name" }` | Rust trait implementations |
-| `dependencies` | `{ "name" }` | Module/file dependencies |
-| `impact` | `{ "name" }` | Transitively impacted symbols |
+| `dependencies` | `{ "name" }` | Module/file/symbol dependencies |
+| `impact` | `{ "name", "module"? }` | Candidate blast radius (`medium`/`low` when non-empty) |
 | `index` | `{ "path" }` | Index a repository; returns `IndexStats` JSON |
+
+Query payloads include `confidence`, `resolution_tier`, and `notes`. See
+[root README — Upgrade](../README.md#upgrade) after a new release.
 
 Also handles `initialize`, `tools/list`, `tools/call`, `ping`, and empty
 `resources/list` / `prompts/list` / `resources/templates/list` for client probes.
