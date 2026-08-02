@@ -7,28 +7,28 @@
 class Keel < Formula
   desc "Deterministic local-first code intelligence for AI coding agents"
   homepage "https://github.com/ashokdudhade/keel"
-  version "1.1.2"
+  version "1.2.0"
   license "MIT"
 
   on_macos do
     on_arm do
       url "https://github.com/ashokdudhade/keel/releases/download/v#{version}/keel-#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "3efc77c564a842b552f05c3aaed3c0c2dcdea498781cc6abed6f3ad3d99535ce"
+      sha256 "d9d86368d3bce11e2234a6f5fd10847f124f98ae39b4323d8daeea0442f1814e"
     end
     on_intel do
       url "https://github.com/ashokdudhade/keel/releases/download/v#{version}/keel-#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "aed91c59734b650fb6d82a3ef82fd23cf3ae00d6c69df6a98294eeca09e61c78"
+      sha256 "9d2cfced13e4a650b7792bdd5638ab0ed6991dacc53192a1e5928ba15ce7f043"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/ashokdudhade/keel/releases/download/v#{version}/keel-#{version}-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "17e2e2c729a4ab7fad3b58adba44a87821f3896162ccc6f77c2a93088f4db8ac"
+      sha256 "1a0d449acb04473f84821bdc3854d951a166fa1afe026dd230169d253ebbeab5"
     end
     on_intel do
       url "https://github.com/ashokdudhade/keel/releases/download/v#{version}/keel-#{version}-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "0c8474b07bc909f2406614e623755ad3d033c2a98dc21e19e7b7bf4d04717abb"
+      sha256 "dd89d8ca41f7e3ffd573eabcb0911aae7ba70707f29e257e91f52fc81dcde488"
     end
   end
 
