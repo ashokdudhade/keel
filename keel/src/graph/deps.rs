@@ -58,18 +58,9 @@ pub fn find_dependencies(conn: &Connection, target: &str) -> Result<Vec<Dependen
         .collect())
 }
 
-/// Collect file paths belonging to `target` (module path and/or symbol name).
+/// Collect file paths belonging to `target` (module path, file path, and/or symbol name).
 fn files_for_target(conn: &Connection, target: &str) -> Result<Vec<String>> {
-    let mut files = queries::files_for_module_path(conn, target)?;
-    for sym in queries::find_definition(conn, target)? {
-        let path = sym.file.to_string_lossy().into_owned();
-        if !files.contains(&path) {
-            files.push(path);
-        }
-    }
-    files.sort();
-    files.dedup();
-    Ok(files)
+    Ok(crate::graph::target::normalize_target(conn, target)?.files)
 }
 
 /// Map an import path to a dependency module.
