@@ -214,11 +214,10 @@ pub fn definition_with_meta_opts(
             "Found {} definitions for `{bare}`; disambiguate with module arg or qualified name (e.g. `crate::mcp::{bare}`).",
             results.len()
         ));
-    } else if results.is_empty() && mod_path.is_some() {
-        notes.push(format!(
-            "No definition for `{bare}` in module `{}`.",
-            mod_path.unwrap()
-        ));
+    } else if results.is_empty() {
+        if let Some(m) = mod_path {
+            notes.push(format!("No definition for `{bare}` in module `{m}`."));
+        }
     }
     Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
 }
@@ -262,11 +261,10 @@ pub fn references_with_meta_opts(
         (vec![2; results.len().max(1)], Vec::new())
     };
     let tiers = if results.is_empty() { vec![] } else { tiers };
-    if results.is_empty() && mod_path.is_some() && defs.is_empty() {
-        notes.push(format!(
-            "No definition for `{bare}` in module `{}`.",
-            mod_path.unwrap()
-        ));
+    if results.is_empty() && defs.is_empty() {
+        if let Some(m) = mod_path {
+            notes.push(format!("No definition for `{bare}` in module `{m}`."));
+        }
     }
     Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
 }
@@ -306,11 +304,10 @@ pub fn callers_with_meta_opts(
         (vec![3; results.len().max(1)], n)
     };
     let tiers = if results.is_empty() { vec![] } else { tiers };
-    if results.is_empty() && mod_path.is_some() && defs.is_empty() {
-        notes.push(format!(
-            "No definition for `{bare}` in module `{}`.",
-            mod_path.unwrap()
-        ));
+    if results.is_empty() && defs.is_empty() {
+        if let Some(m) = mod_path {
+            notes.push(format!("No definition for `{bare}` in module `{m}`."));
+        }
     }
     Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
 }
@@ -381,11 +378,8 @@ pub fn impact_with_meta_opts(
     let mut notes = Vec::new();
 
     if defs.is_empty() {
-        if mod_path.is_some() {
-            notes.push(format!(
-                "No definition for `{bare}` in module `{}`.",
-                mod_path.unwrap()
-            ));
+        if let Some(m) = mod_path {
+            notes.push(format!("No definition for `{bare}` in module `{m}`."));
         }
         return Ok(QueryResult::from_tiers(Vec::new(), &[], false, notes));
     }
@@ -613,7 +607,7 @@ mod tests {
         index.index_path(root).unwrap();
 
         let all = index.references_with_meta("serve").unwrap();
-        assert!(all.results.len() >= 1);
+        assert!(!all.results.is_empty());
 
         let mcp_only = index
             .references_with_meta_opts("serve", Some("crate::mcp"))

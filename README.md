@@ -100,7 +100,7 @@ brew services restart keel
 curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
 
 # pin a version:
-KEEL_VERSION=v1.3.0 curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
+KEEL_VERSION=v1.3.1 curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
 ```
 
 Restart any long-running `keel daemon` (or start a new terminal session so PATH

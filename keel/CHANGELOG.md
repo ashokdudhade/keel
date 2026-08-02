@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-08-02
+
+### Fixed
+
+- Clippy `unnecessary_unwrap` / `len_zero` cleanups so the Release workflow gate
+  passes (1.3.0 tag had no published binaries).
+
 ## [1.3.0] — 2026-08-02
 
 ### Added
