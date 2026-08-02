@@ -71,6 +71,11 @@ Both installers need a published GitHub Release with binaries. If install
 fails looking for archives, build from source in
 [`keel/README.md`](keel/README.md#build-from-source-contributors).
 
+Pushing commits to `main` does **not** publish a new version. To cut a
+release: GitHub → **Actions** → **Tag and release** → **Run workflow**
+(choose `patch` / `minor` / `major`, or set an exact version). That tags
+`vX.Y.Z` and runs the Release workflow (binaries + Homebrew formula).
+
 > The crates.io name `keel` is taken. Use GitHub binaries / Homebrew, not
 > `cargo install keel` from crates.io.
 

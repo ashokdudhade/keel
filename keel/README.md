@@ -262,6 +262,13 @@ index_repository_with(root, &mut conn, &registry)?;
 Implement `LanguagePlugin` (`Sync`) with `extensions`, `extract_symbols`,
 `extract_references`, and optionally `extract_imports` / `extract_impls`.
 
+## Releasing
+
+Do not tag from every push. Use GitHub Actions → **Tag and release** → **Run
+workflow** (patch/minor/major or an exact version). That bumps
+`keel/Cargo.toml`, creates `vX.Y.Z`, and dispatches the **Release** workflow
+(binaries + Homebrew formula). See also the root README install section.
+
 ## Resolution model
 
 Cross-file resolution uses an in-house **module/import-aware deterministic

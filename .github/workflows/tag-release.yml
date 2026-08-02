@@ -1,0 +1,218 @@
+# Create a version tag and kick off a GitHub Release
+#
+# Pushing to main does NOT release. Run this workflow (Actions → Tag and
+# release → Run workflow) to bump the version, push vX.Y.Z, and trigger the
+# existing Release workflow (binaries + Homebrew formula).
+
+name: Tag and release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Semver bump (ignored if version is set)"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      version:
+        description: "Exact version without v (optional, e.g. 1.1.3)"
+        required: false
+        type: string
+        default: ""
+      dry_run:
+        description: "Compute next version only; do not commit or tag"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve next version
+        id: ver
+        env:
+          BUMP: ${{ inputs.bump }}
+          EXPLICIT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+
+          python3 - <<'PY'
+          import os, re, subprocess
+          from pathlib import Path
+
+          def parse(v: str):
+              parts = v.lstrip("v").split(".")
+              if len(parts) != 3 or not all(p.isdigit() for p in parts):
+                  raise SystemExit(f"invalid semver: {v!r}")
+              return tuple(int(p) for p in parts)
+
+          def fmt(t):
+              return f"{t[0]}.{t[1]}.{t[2]}"
+
+          cargo = Path("keel/Cargo.toml").read_text()
+          m = re.search(r'(?m)^version = "([^"]+)"', cargo)
+          if not m:
+              raise SystemExit("could not read version from keel/Cargo.toml")
+          cargo_ver = parse(m.group(1))
+
+          tags = subprocess.check_output(
+              ["git", "tag", "-l", "v*", "--sort=-v:refname"],
+              text=True,
+          ).splitlines()
+          tag_ver = parse(tags[0]) if tags else (0, 0, 0)
+          current = max(cargo_ver, tag_ver)
+
+          explicit = os.environ.get("EXPLICIT", "").strip()
+          if explicit:
+              nxt = parse(explicit)
+              if nxt <= current:
+                  raise SystemExit(
+                      f"version {fmt(nxt)} must be greater than current {fmt(current)}"
+                  )
+          else:
+              major, minor, patch = current
+              bump = os.environ["BUMP"]
+              if bump == "major":
+                  nxt = (major + 1, 0, 0)
+              elif bump == "minor":
+                  nxt = (major, minor + 1, 0)
+              else:
+                  nxt = (major, minor, patch + 1)
+
+          version = fmt(nxt)
+          tag = f"v{version}"
+          if tag in tags:
+              raise SystemExit(f"tag {tag} already exists")
+
+          print(f"current={fmt(current)}")
+          print(f"next={version}")
+          print(f"tag={tag}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"version={version}\n")
+              fh.write(f"tag={tag}\n")
+              fh.write(f"current={fmt(current)}\n")
+          PY
+
+      - name: Bump crate version and changelog
+        if: ${{ inputs.dry_run == false }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re
+          from datetime import date
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          today = date.today().isoformat()
+
+          cargo_path = Path("keel/Cargo.toml")
+          cargo = cargo_path.read_text()
+          cargo_new, n = re.subn(
+              r'(?m)^version = "[^"]+"',
+              f'version = "{version}"',
+              cargo,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit("failed to bump keel/Cargo.toml version")
+          cargo_path.write_text(cargo_new)
+
+          lock_path = Path("keel/Cargo.lock")
+          if lock_path.exists():
+              lines = lock_path.read_text().splitlines(keepends=True)
+              out = []
+              i = 0
+              while i < len(lines):
+                  out.append(lines[i])
+                  if lines[i] == 'name = "keel"\n' and i + 1 < len(lines):
+                      nxt = lines[i + 1]
+                      if nxt.startswith("version = "):
+                          out.append(f'version = "{version}"\n')
+                          i += 2
+                          continue
+                  i += 1
+              lock_path.write_text("".join(out))
+
+          cl_path = Path("keel/CHANGELOG.md")
+          cl = cl_path.read_text()
+          heading = f"## [{version}] — {today}\n\n"
+          stub = (
+              heading
+              + "### Changed\n\n"
+              + f"- Release {version}.\n\n"
+          )
+          if f"## [{version}]" in cl:
+              print("CHANGELOG already has this version; leaving as-is")
+          else:
+              idx = cl.find("\n## [")
+              if idx == -1:
+                  cl_path.write_text(cl.rstrip() + "\n\n" + stub)
+              else:
+                  cl_path.write_text(cl[: idx + 1] + stub + cl[idx + 1 :])
+          PY
+
+      - name: Commit, tag, and push
+        if: ${{ inputs.dry_run == false }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add keel/Cargo.toml keel/Cargo.lock keel/CHANGELOG.md
+          if git diff --staged --quiet; then
+            echo "No version file changes to commit"
+          else
+            git commit -m "chore(release): bump version to ${VERSION}"
+          fi
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin HEAD:main
+          git push origin "refs/tags/${TAG}"
+
+      - name: Trigger Release workflow
+        if: ${{ inputs.dry_run == false }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Tag pushes from GITHUB_TOKEN do not chain-trigger other workflows.
+          gh workflow run release.yml --ref main -f "tag=${TAG}"
+          echo "Queued Release for ${TAG}"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Tag and release"
+            echo ""
+            echo "- Current: \`${{ steps.ver.outputs.current }}\`"
+            echo "- Next: \`${{ steps.ver.outputs.version }}\`"
+            echo "- Tag: \`${{ steps.ver.outputs.tag }}\`"
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "- Mode: **dry run** (no commit/tag)"
+            else
+              echo "- Mode: committed, tagged, Release workflow dispatched"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
