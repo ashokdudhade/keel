@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to rebuild (e.g. v1.1.0)"
+        description: "Existing tag to rebuild (e.g. v1.1.2). Must already exist — use Tag and release to create new versions."
         required: true
         type: string
 
@@ -18,9 +18,53 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve checkout ref
+        id: ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            raw="${INPUT_TAG:-}"
+            raw="${raw#"${raw%%[![:space:]]*}"}"
+            raw="${raw%"${raw##*[![:space:]]}"}"
+            if [ -z "${raw}" ]; then
+              echo "::error::workflow_dispatch requires a non-empty tag input (e.g. v1.1.2)"
+              exit 1
+            fi
+            # Accept "1.1.2" or "v1.1.2"
+            case "${raw}" in
+              v*) REF="${raw}" ;;
+              *) REF="v${raw}" ;;
+            esac
+          else
+            REF="${GITHUB_REF}"
+          fi
+          echo "Resolved checkout ref: ${REF}"
+          echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
+
+      - name: Ensure ref exists
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+        run: |
+          set -euo pipefail
+          # Fail fast with a clear message instead of an opaque checkout git exit 1.
+          if ! git ls-remote --exit-code --tags "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${REF}" >/dev/null; then
+            echo "::error::Tag '${REF}' does not exist on ${GITHUB_REPOSITORY}."
+            echo "Create it first via Actions → Tag and release, or rebuild an existing tag (currently: v1.1.x)."
+            echo "Available tags:"
+            git ls-remote --tags "https://github.com/${GITHUB_REPOSITORY}.git" 'refs/tags/v*' | sed 's#.*refs/tags/##' | sort -V | tail -20
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ steps.ref.outputs.ref }}
+          fetch-depth: 0
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -51,16 +95,38 @@ jobs:
             target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Resolve checkout ref
+        id: ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            raw="${INPUT_TAG:-}"
+            raw="${raw#"${raw%%[![:space:]]*}"}"
+            raw="${raw%"${raw##*[![:space:]]}"}"
+            case "${raw}" in
+              v*) REF="${raw}" ;;
+              *) REF="v${raw}" ;;
+            esac
+          else
+            REF="${GITHUB_REF}"
+          fi
+          echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
+
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ steps.ref.outputs.ref }}
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - name: Build release archive
         working-directory: keel
         env:
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ steps.ref.outputs.ref }}
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
@@ -80,9 +146,30 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve checkout ref
+        id: ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            raw="${INPUT_TAG:-}"
+            raw="${raw#"${raw%%[![:space:]]*}"}"
+            raw="${raw%"${raw##*[![:space:]]}"}"
+            case "${raw}" in
+              v*) REF="${raw}" ;;
+              *) REF="v${raw}" ;;
+            esac
+          else
+            REF="${GITHUB_REF}"
+          fi
+          echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
+
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ steps.ref.outputs.ref }}
           # Need a branch we can push formula checksums back to.
           fetch-depth: 0
       - uses: actions/download-artifact@v4
@@ -91,7 +178,7 @@ jobs:
           merge-multiple: true
       - name: Write SHA256SUMS and patch Homebrew formula
         env:
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ steps.ref.outputs.ref }}
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
@@ -129,7 +216,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: ${{ steps.ref.outputs.ref }}
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS
@@ -137,7 +224,7 @@ jobs:
           fail_on_unmatched_files: true
       - name: Commit updated Homebrew formula to main
         env:
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ steps.ref.outputs.ref }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
