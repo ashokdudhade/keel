@@ -23,7 +23,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_TAG: ${{ github.event.inputs.tag }}
-          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
@@ -40,7 +40,8 @@ jobs:
               *) REF="v${raw}" ;;
             esac
           else
-            REF="${GITHUB_REF}"
+            # Tag push: ref_name is "v1.2.0" (not refs/tags/...), required for archive names.
+            REF="${GITHUB_REF_NAME}"
           fi
           echo "Resolved checkout ref: ${REF}"
           echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
@@ -100,7 +101,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_TAG: ${{ github.event.inputs.tag }}
-          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
@@ -112,7 +113,7 @@ jobs:
               *) REF="v${raw}" ;;
             esac
           else
-            REF="${GITHUB_REF}"
+            REF="${GITHUB_REF_NAME}"
           fi
           echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
 
@@ -151,7 +152,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_TAG: ${{ github.event.inputs.tag }}
-          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
@@ -163,7 +164,7 @@ jobs:
               *) REF="v${raw}" ;;
             esac
           else
-            REF="${GITHUB_REF}"
+            REF="${GITHUB_REF_NAME}"
           fi
           echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
 
