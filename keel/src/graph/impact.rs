@@ -10,27 +10,38 @@ use std::path::Path;
 
 /// Return the transitive set of symbols that reference `name`.
 ///
+/// Seeds the worklist from every definition of `name` (or the bare name when
+/// none exist). See [`find_impact_from_defs`] to seed a specific identity.
+///
 /// Expansion uses qualified identities (`module_path::name` when module is
 /// non-empty). References are accepted only when
 /// [`resolve::resolve_definition_ranked`] from the reference's file yields an
 /// [`resolve::acceptable_top_match`] whose identity equals the worklist target.
-/// Results are ordered by `(name, path, line, col)` and de-duplicated by symbol
-/// identity `(name, module_path, path, line, col)`.
 pub fn find_impact(conn: &Connection, name: &str) -> Result<Vec<Symbol>> {
+    let defs = queries::find_definition(conn, name)?;
+    if defs.is_empty() {
+        find_impact_from_identities(conn, &[name.to_string()])
+    } else {
+        find_impact_from_defs(conn, &defs)
+    }
+}
+
+/// Impact seeded only from the given definition symbols (qualified identities).
+///
+/// Use this when the caller has already disambiguated (module / qualified name)
+/// so bare-name collisions do not expand unrelated same-named definitions.
+pub fn find_impact_from_defs(conn: &Connection, defs: &[Symbol]) -> Result<Vec<Symbol>> {
+    let identities: Vec<String> = defs.iter().map(symbol_identity).collect();
+    find_impact_from_identities(conn, &identities)
+}
+
+fn find_impact_from_identities(conn: &Connection, seed_ids: &[String]) -> Result<Vec<Symbol>> {
     let mut visited: HashSet<String> = HashSet::new();
     let mut worklist: BTreeSet<String> = BTreeSet::new();
 
-    let defs = queries::find_definition(conn, name)?;
-    if defs.is_empty() {
-        let id = name.to_string();
+    for id in seed_ids {
         visited.insert(id.clone());
-        worklist.insert(id);
-    } else {
-        for d in &defs {
-            let id = symbol_identity(d);
-            visited.insert(id.clone());
-            worklist.insert(id);
-        }
+        worklist.insert(id.clone());
     }
 
     let mut impact: Vec<Symbol> = Vec::new();
@@ -358,5 +369,111 @@ mod tests {
         // Idempotent under re-query (no growth from residual cycle state).
         let again = find_impact(&conn, "x").unwrap();
         assert_eq!(again.len(), impact.len());
+    }
+
+    #[test]
+    fn find_impact_from_defs_seeds_only_given_identity() {
+        let conn = setup();
+        // Two `serve` symbols in different modules; only mcp::serve is referenced.
+        let api = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/api.rs"),
+                content_hash: "a".into(),
+            },
+        )
+        .unwrap();
+        let mcp = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/mcp.rs"),
+                content_hash: "m".into(),
+            },
+        )
+        .unwrap();
+        let main = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/main.rs"),
+                content_hash: "main".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            api,
+            &[Symbol {
+                name: "serve".into(),
+                kind: SymbolKind::Function,
+                file: PathBuf::from("src/api.rs"),
+                start_line: 1,
+                start_col: 1,
+                module_path: "crate::api".into(),
+            }],
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            mcp,
+            &[Symbol {
+                name: "serve".into(),
+                kind: SymbolKind::Function,
+                file: PathBuf::from("src/mcp.rs"),
+                start_line: 1,
+                start_col: 1,
+                module_path: "crate::mcp".into(),
+            }],
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            main,
+            &[Symbol {
+                name: "boot".into(),
+                kind: SymbolKind::Function,
+                file: PathBuf::from("src/main.rs"),
+                start_line: 1,
+                start_col: 1,
+                module_path: "crate".into(),
+            }],
+        )
+        .unwrap();
+        queries::insert_imports(
+            &conn,
+            main,
+            &[crate::graph::types::Import {
+                module_path: "crate::mcp::serve".into(),
+                alias: None,
+                file: PathBuf::from("src/main.rs"),
+            }],
+        )
+        .unwrap();
+        queries::insert_references(
+            &conn,
+            main,
+            &[Reference {
+                name: "serve".into(),
+                file: PathBuf::from("src/main.rs"),
+                start_line: 2,
+                start_col: 10,
+                kind: ReferenceKind::Call,
+                container: "crate::boot".into(),
+            }],
+        )
+        .unwrap();
+
+        let mcp_serve = queries::find_definition_by_qualified(&conn, "crate::mcp", "serve").unwrap();
+        assert_eq!(mcp_serve.len(), 1);
+        let impact = find_impact_from_defs(&conn, &mcp_serve).unwrap();
+        let names: Vec<&str> = impact.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["boot"]);
+
+        // Seeding only api::serve (unreferenced) must not pull boot via bare name.
+        let api_serve = queries::find_definition_by_qualified(&conn, "crate::api", "serve").unwrap();
+        let impact_api = find_impact_from_defs(&conn, &api_serve).unwrap();
+        assert!(
+            impact_api.is_empty(),
+            "api::serve has no callers; got {impact_api:?}"
+        );
     }
 }

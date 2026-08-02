@@ -414,41 +414,60 @@ fn initialize_result(msg: &Value) -> Value {
 }
 
 fn tools_list_result() -> Value {
+    let trust = " Returns JSON with results, confidence (high|medium|low), resolution_tier (0=n/a empty miss), and notes. If confidence is low or notes warn of ambiguity, disambiguate with module / a qualified name (e.g. crate::mcp::serve) or fall back to Grep. Empty results with “No matching symbols found” means a confident miss — try another name, not Grep-for-noise first. Non-empty impact is always a candidate blast radius (medium/low) — verify before edits.";
     json!({
         "tools": [
             tool_def(
                 "definition",
-                "Find definition location(s) for a symbol name.",
-                name_schema(),
+                &format!(
+                    "Find definition location(s) for a symbol. Prefer exact names. Optional module disambiguates overloads.{trust}"
+                ),
+                query_schema(),
+                true,
             ),
             tool_def(
                 "references",
-                "Find reference sites for a name.",
-                name_schema(),
+                &format!(
+                    "Find reference sites for a symbol name. Optional module narrows the defining symbol when names collide.{trust}"
+                ),
+                query_schema(),
+                true,
             ),
             tool_def(
                 "callers",
-                "Find call/use sites of a function or symbol name.",
-                name_schema(),
+                &format!(
+                    "Find call/use sites of a function or symbol. Import-aware when the definition module is unique or provided.{trust}"
+                ),
+                query_schema(),
+                true,
             ),
             tool_def(
                 "implementations",
-                "Find implementations of a trait name.",
+                &format!(
+                    "Find implementations of a Rust trait name (other languages usually empty).{trust}"
+                ),
                 name_schema(),
+                true,
             ),
             tool_def(
                 "dependencies",
-                "Find modules/files that a module or symbol depends on.",
+                &format!(
+                    "Find modules/files a module or symbol depends on. Pass a module path (e.g. crate::mcp), file path, or symbol.{trust}"
+                ),
                 name_schema(),
+                true,
             ),
             tool_def(
                 "impact",
-                "Find symbols transitively impacted by changing a name.",
-                name_schema(),
+                &format!(
+                    "Find symbols transitively impacted by changing a name. Candidate blast radius only — check confidence/notes before editing.{trust}"
+                ),
+                query_schema(),
+                true,
             ),
             tool_def(
                 "index",
-                "Index a repository path into the Keel database.",
+                "Index a repository path into the Keel database (writes the local index).",
                 json!({
                     "type": "object",
                     "properties": {
@@ -459,17 +478,26 @@ fn tools_list_result() -> Value {
                     },
                     "required": ["path"]
                 }),
+                false,
             ),
         ]
     })
 }
 
-fn tool_def(name: &str, description: &str, input_schema: Value) -> Value {
-    json!({
+fn tool_def(name: &str, description: &str, input_schema: Value, read_only: bool) -> Value {
+    let mut tool = json!({
         "name": name,
         "description": description,
         "inputSchema": input_schema,
-    })
+    });
+    if read_only {
+        tool["annotations"] = json!({
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+        });
+    }
+    tool
 }
 
 fn name_schema() -> Value {
@@ -478,11 +506,36 @@ fn name_schema() -> Value {
         "properties": {
             "name": {
                 "type": "string",
-                "description": "Symbol or module name"
+                "description": "Symbol or module name (case-sensitive). Qualified forms like crate::mcp::serve are accepted where applicable."
             }
         },
         "required": ["name"]
     })
+}
+
+fn query_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Symbol name, or qualified name (module::symbol) such as crate::mcp::serve"
+            },
+            "module": {
+                "type": "string",
+                "description": "Optional module_path to disambiguate when multiple definitions share the same name (e.g. crate::mcp)"
+            }
+        },
+        "required": ["name"]
+    })
+}
+
+fn optional_module_arg(arguments: &Value) -> Option<String> {
+    arguments
+        .get("module")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+        .filter(|s| !s.is_empty())
 }
 
 fn call_tool(
@@ -514,19 +567,22 @@ fn call_tool(
     let payload = match name {
         "definition" => {
             let symbol = require_string_arg(&arguments, "name")?;
-            let qr = facade::definition_with_meta(conn, &symbol)?
+            let module = optional_module_arg(&arguments);
+            let qr = facade::definition_with_meta_opts(conn, &symbol, module.as_deref())?
                 .map_results(|s| SymbolDto::from(&s));
             json_text(qr)?
         }
         "references" => {
             let symbol = require_string_arg(&arguments, "name")?;
-            let qr = facade::references_with_meta(conn, &symbol)?
+            let module = optional_module_arg(&arguments);
+            let qr = facade::references_with_meta_opts(conn, &symbol, module.as_deref())?
                 .map_results(|r| ReferenceDto::from(&r));
             json_text(qr)?
         }
         "callers" => {
             let symbol = require_string_arg(&arguments, "name")?;
-            let qr = facade::callers_with_meta(conn, &symbol)?
+            let module = optional_module_arg(&arguments);
+            let qr = facade::callers_with_meta_opts(conn, &symbol, module.as_deref())?
                 .map_results(|r| ReferenceDto::from(&r));
             json_text(qr)?
         }
@@ -544,7 +600,8 @@ fn call_tool(
         }
         "impact" => {
             let symbol = require_string_arg(&arguments, "name")?;
-            let qr = facade::impact_with_meta(conn, &symbol)?
+            let module = optional_module_arg(&arguments);
+            let qr = facade::impact_with_meta_opts(conn, &symbol, module.as_deref())?
                 .map_results(|s| SymbolDto::from(&s));
             json_text(qr)?
         }
@@ -750,6 +807,24 @@ mod tests {
                 "missing tool {expected}; have {names:?}"
             );
         }
+        let definition = tools
+            .iter()
+            .find(|t| t["name"] == "definition")
+            .expect("definition tool");
+        let desc = definition["description"].as_str().unwrap_or("");
+        assert!(
+            desc.contains("confidence"),
+            "definition description should teach trust envelope, got: {desc}"
+        );
+        assert!(
+            definition["inputSchema"]["properties"]["module"].is_object(),
+            "definition should accept optional module"
+        );
+        assert_eq!(
+            definition["annotations"]["readOnlyHint"],
+            true,
+            "definition should be readOnly for agent approval UX"
+        );
     }
 
     #[test]

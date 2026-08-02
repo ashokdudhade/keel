@@ -21,13 +21,14 @@ pub enum ResolutionTier {
 }
 
 impl ResolutionTier {
-    /// Build from the set of tiers observed (ignores empty → treated as low/unknown).
+    /// Build from the set of tiers observed.
+    /// Empty input → `Single(0)` (no resolution ran / not applicable).
     pub fn from_tiers(tiers: &[u8]) -> Self {
         let mut uniq: Vec<u8> = tiers.to_vec();
         uniq.sort_unstable();
         uniq.dedup();
         match uniq.as_slice() {
-            [] => Self::Single(3),
+            [] => Self::Single(0),
             [only] => Self::Single(*only),
             _ => Self::Mixed,
         }
@@ -82,17 +83,29 @@ impl<T> QueryResult<T> {
         multi_def: bool,
         mut notes: Vec<String>,
     ) -> Self {
+        // Empty hit lists are confident misses (or caller-supplied empty notes),
+        // not name-only fallback. Low confidence applies only when hits exist.
+        if results.is_empty() {
+            if notes.is_empty() {
+                notes.push("No matching symbols found.".into());
+            }
+            return Self::new(
+                results,
+                Confidence::High,
+                ResolutionTier::from_tiers(tiers),
+                notes,
+            );
+        }
+
         let confidence = confidence_from_tiers(tiers, multi_def);
         if matches!(confidence, Confidence::Low) && notes.is_empty() {
             notes.push(
                 "Resolution used name-only fallback; results may include unrelated same-named symbols."
                     .into(),
             );
-        } else if multi_def && !notes.iter().any(|n| n.contains("multiple definitions")) {
-            notes.push(
-                "Target has multiple definitions; expansion may over-approximate impact.".into(),
-            );
         }
+        // Do not inject impact-only wording here — callers that expand transitively
+        // (impact_with_meta) attach their own multi-def notes.
         Self::new(
             results,
             confidence,
@@ -159,5 +172,46 @@ mod tests {
         assert_eq!(single, serde_json::json!(2));
         let mixed = serde_json::to_value(ResolutionTier::Mixed).unwrap();
         assert_eq!(mixed, serde_json::json!("mixed"));
+    }
+
+    #[test]
+    fn empty_results_are_not_found_not_fallback_lie() {
+        let qr = QueryResult::<()>::from_tiers(vec![], &[], false, vec![]);
+        assert!(qr.results.is_empty());
+        assert_eq!(qr.confidence, Confidence::High);
+        assert_eq!(qr.resolution_tier, ResolutionTier::Single(0));
+        assert_eq!(qr.notes, vec!["No matching symbols found.".to_string()]);
+        assert!(!qr.notes.iter().any(|n| n.contains("name-only fallback")));
+    }
+
+    #[test]
+    fn empty_preserves_caller_notes() {
+        let qr = QueryResult::<()>::from_tiers(
+            vec![],
+            &[],
+            false,
+            vec!["No indexed files found for target `x`.".into()],
+        );
+        assert_eq!(qr.confidence, Confidence::High);
+        assert_eq!(qr.notes.len(), 1);
+        assert!(qr.notes[0].contains("No indexed files"));
+    }
+
+    #[test]
+    fn low_confidence_with_hits_keeps_fallback_note() {
+        let qr = QueryResult::from_tiers(vec!["hit"], &[3], false, vec![]);
+        assert_eq!(qr.confidence, Confidence::Low);
+        assert!(qr.notes.iter().any(|n| n.contains("name-only fallback")));
+    }
+
+    #[test]
+    fn multi_def_does_not_inject_impact_note() {
+        let qr = QueryResult::from_tiers(
+            vec!["a", "b"],
+            &[3, 3],
+            true,
+            vec!["Found 2 definitions for `serve`; disambiguate by module if needed.".into()],
+        );
+        assert!(!qr.notes.iter().any(|n| n.contains("over-approximate impact")));
     }
 }

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-08-02
+
+### Added
+
+- Optional MCP `module` argument (and qualified names like `crate::mcp::serve`)
+  for `definition` / `references` / `callers` / `impact` disambiguation.
+- MCP tool descriptions and Cursor rule guidance for reading `confidence` /
+  `notes` before acting.
+- `find_impact_from_defs` so impact seeds a specific qualified identity.
+- `scripts/keel-mcp.sh` prefers workspace `target/{release,debug}/keel` over
+  Homebrew so local agent fixes are visible.
+- `scripts/mcp-trust-smoke.py` + CI workflow asserting the agent trust envelope.
+- MCP `readOnlyHint` annotations on query tools.
+
+### Fixed
+
+- Empty query results no longer claim “name-only fallback”; they report a
+  confident “No matching symbols found” miss (`resolution_tier: 0`).
+- Multi-definition responses no longer append impact-only over-approx notes to
+  non-impact queries.
+- `references` with `module` / qualified name filter via import-aware resolve
+  (same path as callers) instead of name-only hits with High confidence.
+- `impact` no longer re-seeds from all bare-name definitions after disambiguation;
+  non-empty impact is always `medium`/`low` with a candidate-blast-radius note
+  (never fabricated High tiers).
+- Passing both `module` and a qualified `name` strips to the bare symbol.
+- Ambiguous daemon registry (multiple projects, cwd in none) no longer picks the
+  most recently modified index — falls back to `cwd/.keel/index.db`.
+
 ## [1.2.0] — 2026-08-01
 
 ### Added

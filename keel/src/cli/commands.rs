@@ -26,8 +26,8 @@ fn project_index_db(root: &Path) -> PathBuf {
 /// Priority:
 /// 1. `KEEL_INDEX_DB` when set
 /// 2. Walk up from `cwd` for an existing `.keel/index.db`
-/// 3. Daemon registry: project containing `cwd`, else sole registered index,
-///    else most recently modified registered index
+/// 3. Daemon registry: project containing `cwd`, else sole registered index
+///    (never guess among multiple unrelated registered projects)
 /// 4. Fallback: `cwd/.keel/index.db` (may be created on first use)
 pub fn resolve_index_db(cwd: &Path) -> PathBuf {
     if let Some(p) = std::env::var_os("KEEL_INDEX_DB") {
@@ -83,23 +83,26 @@ fn find_index_from_registry(cwd: &Path) -> Option<PathBuf> {
         return Some(db);
     }
 
-    let mut existing: Vec<(PathBuf, std::time::SystemTime)> = roots
+    let existing: Vec<PathBuf> = roots
         .iter()
         .map(|root| project_index_db(root))
         .filter(|db| db.is_file())
-        .filter_map(|db| {
-            let modified = std::fs::metadata(&db).ok()?.modified().ok()?;
-            Some((db, modified))
-        })
         .collect();
     if existing.is_empty() {
         return None;
     }
     if existing.len() == 1 {
-        return Some(existing.remove(0).0);
+        return Some(existing.into_iter().next().unwrap());
     }
-    existing.sort_by_key(|(_, m)| *m);
-    existing.pop().map(|(db, _)| db)
+    // Multiple registered indexes and cwd matches none — do not guess by mtime
+    // (wrong-repo High-confidence answers are worse than a fresh cwd index).
+    if std::env::var_os("KEEL_MCP_DEBUG").is_some() {
+        eprintln!(
+            "keel: {} registered indexes and cwd is in none; falling back to cwd/.keel/index.db",
+            existing.len()
+        );
+    }
+    None
 }
 
 /// Open (creating the directory if needed) the on-disk index database.
@@ -284,8 +287,7 @@ pub fn run_serve(port: u16, auto_index: bool) -> Result<()> {
 ///
 /// Resolution: `KEEL_INDEX_DB` if set; otherwise walk up from cwd for
 /// `.keel/index.db`; otherwise use the daemon registry (project containing
-/// cwd, sole project, or most recently modified index); otherwise
-/// `cwd/.keel/index.db`.
+/// cwd, or sole project); otherwise `cwd/.keel/index.db`.
 pub fn run_mcp(auto_index: bool) -> Result<()> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let db = resolve_index_db(&cwd);
@@ -381,6 +383,40 @@ mod tests {
         let got = resolve_index_db(&cwd);
         std::env::remove_var("KEEL_HOME");
         assert_eq!(got, project_index_db(&project));
+    }
+
+    #[test]
+    fn resolve_ambiguous_registry_does_not_guess() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("KEEL_INDEX_DB");
+        let home = tempfile::tempdir().unwrap();
+        let a = home.path().join("proj-a");
+        let b = home.path().join("proj-b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        write_empty_db(&a);
+        write_empty_db(&b);
+        let daemon = home.path().join(".keel").join("daemon");
+        std::fs::create_dir_all(&daemon).unwrap();
+        std::fs::write(
+            daemon.join("projects.json"),
+            format!(
+                r#"{{"projects":[{{"path":"{}","pid":1}},{{"path":"{}","pid":2}}]}}"#,
+                a.display(),
+                b.display()
+            ),
+        )
+        .unwrap();
+        std::env::set_var("KEEL_HOME", home.path().join(".keel"));
+        let cwd = home.path().join("elsewhere");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let got = resolve_index_db(&cwd);
+        std::env::remove_var("KEEL_HOME");
+        assert_eq!(
+            got,
+            project_index_db(&cwd),
+            "must not pick an unrelated registered project by mtime"
+        );
     }
 
     #[test]

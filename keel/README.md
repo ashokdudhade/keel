@@ -4,9 +4,10 @@ Deterministic, local-first code intelligence for AI coding agents. Keel
 indexes a repository with Tree-sitter and answers structural queries from a
 local on-disk index — no LLMs, embeddings, or semantic search.
 
-**For install, Cursor MCP, and everyday CLI usage, start at the
-[repository-root README](../README.md).** This file covers the Rust library,
-language plugins, protocol details, and building from source.
+**For install, upgrade, Cursor MCP, and everyday CLI usage, start at the
+[repository-root README](../README.md)** (see **Upgrade** after a new release).
+This file covers the Rust library, language plugins, protocol details, and
+building from source.
 
 **1.1** adds JavaScript/JSX and Python indexing plus binary distribution via
 curl and Homebrew. Semver guarantees apply to the public crate surface
@@ -110,7 +111,7 @@ Index resolution when `KEEL_INDEX_DB` is unset:
 
 1. Walk up from the process cwd for an existing `.keel/index.db` (nearest wins)
 2. Daemon registry (`keel start`): project containing cwd, else sole registered
-   index, else most recently modified registered index
+   index (refuses to guess among multiple unrelated projects)
 3. Fall back to `cwd/.keel/index.db` (may be created on first use)
 
 | Variable / config | Purpose |
@@ -295,12 +296,19 @@ include:
 |-------|---------|
 | `results` | Same hits as the plain query |
 | `confidence` | `high` / `medium` / `low` from resolve tiers |
-| `resolution_tier` | `1`, `2`, `3`, or `"mixed"` |
+| `resolution_tier` | `0` (empty / n/a), `1`, `2`, `3`, or `"mixed"` |
 | `notes` | Human/agent hints when falling back or ambiguous |
 
 **high** = all accepted edges at tier ≤ 2 and a unique target; **low** =
-name-only fallback dominated. Soft uncertainty still returns success with
-notes — it does not fail the tool call.
+name-only fallback dominated (with hits). Empty `results` with note
+“No matching symbols found” is a **confident miss** (`confidence: high`), not
+a fallback failure. Soft uncertainty still returns success with notes — it
+does not fail the tool call.
+
+MCP `definition` / `references` / `callers` / `impact` accept an optional
+`module` argument, or a qualified `name` such as `crate::mcp::serve`.
+Non-empty **impact** is always a candidate blast radius (`confidence: medium`
+or `low`) — never treat it as an exclusive edit/delete list.
 
 After upgrading past module-identity changes, re-index:
 `rm -rf .keel && keel start` (or let query auto-index rebuild).

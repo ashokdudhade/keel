@@ -79,6 +79,53 @@ release: GitHub → **Actions** → **Tag and release** → **Run workflow**
 > The crates.io name `keel` is taken. Use GitHub binaries / Homebrew, not
 > `cargo install keel` from crates.io.
 
+## Upgrade
+
+After a new GitHub Release ships, upgrade the binary, restart the daemon, refresh
+MCP, and re-index projects when the release notes say module identity or the
+index format changed.
+
+### Homebrew
+
+```bash
+brew update
+brew upgrade ashokdudhade/keel/keel
+brew services restart keel
+```
+
+### curl installer
+
+```bash
+# latest release:
+curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
+
+# pin a version:
+KEEL_VERSION=v1.3.0 curl -fsSL https://raw.githubusercontent.com/ashokdudhade/keel/main/install.sh | sh
+```
+
+Restart any long-running `keel daemon` (or start a new terminal session so PATH
+picks up the new binary).
+
+### After upgrading (every install path)
+
+1. Confirm the binary: `keel --help` (or `which keel` still points at the install you expect).
+2. Re-index each project when notes say so (required after 1.2+ module-identity
+   and trust fixes if the index is old):
+
+   ```bash
+   cd /path/to/your/project
+   rm -rf .keel
+   keel start    # needs daemon up; or: keel index .
+   ```
+
+3. **Cursor / Claude Code:** refresh MCP servers in settings (or restart the
+   IDE) so tools/list picks up new schemas (`module`, trust descriptions).
+   If MCP is pinned to an absolute path, point it at the upgraded `keel`.
+
+4. Optional smoke: `python3 scripts/mcp-trust-smoke.py` from a checkout that has
+   an index, or query `definition` for a known symbol and a nonsense name and
+   confirm empty misses say `No matching symbols found` with `confidence: high`.
+
 ## Quick start (Cursor)
 
 ### 1. Start the global daemon (once per machine)
@@ -109,8 +156,8 @@ find:
 
 1. Walk up from the process cwd for an existing `.keel/index.db` (nearest wins)
 2. Else use the daemon registry (`keel start` projects): the project that
-   contains cwd, or the sole registered index, or the most recently modified
-   registered index
+   contains cwd, or the sole registered index (never guess among multiple
+   unrelated projects)
 3. Else fall back to `cwd/.keel/index.db`
 
 Set `KEEL_INDEX_DB` only when you need to pin a specific project (for example
@@ -165,9 +212,11 @@ After saving, refresh MCP in Cursor Settings. You should see **seven tools**:
 | `index` | Index a repository path; returns indexing stats |
 
 Prefer Keel when you know a symbol or trait name; use text search for regex.
-Query responses (MCP / `keel <cmd> --json`) include `confidence` and `notes`
-when resolution falls back to name-only matching. After upgrades that change
-module identity, re-index with `rm -rf .keel && keel start`.
+Query responses (MCP / `keel <cmd> --json`) include `confidence` and `notes`.
+Empty + “No matching symbols found” is a confident miss; `confidence: low` or
+ambiguity notes mean disambiguate with `module` / a qualified name
+(`crate::mcp::serve`) before treating hits as ground truth. After upgrades that
+change module identity, re-index with `rm -rf .keel && keel start`.
 The same `mcpServers` shape works for Claude Code and other MCP clients.
 
 ### 4. Prefer Keel automatically in chat

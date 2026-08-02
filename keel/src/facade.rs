@@ -64,6 +64,15 @@ impl Index {
         definition_with_meta(&self.conn, name)
     }
 
+    /// Definitions with optional module disambiguation.
+    pub fn definition_with_meta_opts(
+        &self,
+        name: &str,
+        module: Option<&str>,
+    ) -> Result<QueryResult<Symbol>> {
+        definition_with_meta_opts(&self.conn, name, module)
+    }
+
     /// Find references matching `name`.
     pub fn references(&self, name: &str) -> Result<Vec<Reference>> {
         Ok(self.references_with_meta(name)?.results)
@@ -74,6 +83,15 @@ impl Index {
         references_with_meta(&self.conn, name)
     }
 
+    /// References with optional module disambiguation for the defining symbol.
+    pub fn references_with_meta_opts(
+        &self,
+        name: &str,
+        module: Option<&str>,
+    ) -> Result<QueryResult<Reference>> {
+        references_with_meta_opts(&self.conn, name, module)
+    }
+
     /// Find callers of `name` (import-aware when a unique definition module exists).
     pub fn callers(&self, name: &str) -> Result<Vec<Reference>> {
         Ok(self.callers_with_meta(name)?.results)
@@ -82,6 +100,15 @@ impl Index {
     /// Callers plus confidence metadata.
     pub fn callers_with_meta(&self, name: &str) -> Result<QueryResult<Reference>> {
         callers_with_meta(&self.conn, name)
+    }
+
+    /// Callers with optional module disambiguation.
+    pub fn callers_with_meta_opts(
+        &self,
+        name: &str,
+        module: Option<&str>,
+    ) -> Result<QueryResult<Reference>> {
+        callers_with_meta_opts(&self.conn, name, module)
     }
 
     /// Find trait implementations for `trait_name`.
@@ -116,11 +143,63 @@ impl Index {
     pub fn impact_with_meta(&self, name: &str) -> Result<QueryResult<Symbol>> {
         impact_with_meta(&self.conn, name)
     }
+
+    /// Impact with optional module disambiguation.
+    pub fn impact_with_meta_opts(
+        &self,
+        name: &str,
+        module: Option<&str>,
+    ) -> Result<QueryResult<Symbol>> {
+        impact_with_meta_opts(&self.conn, name, module)
+    }
+}
+
+/// Split `module::…::symbol` into `(module_path, symbol)` when unambiguous.
+///
+/// Returns `None` when there is no `::` separator (bare symbol).
+pub fn split_qualified_name(name: &str) -> Option<(&str, &str)> {
+    let (module, symbol) = name.rsplit_once("::")?;
+    if module.is_empty() || symbol.is_empty() || symbol.contains("::") {
+        return None;
+    }
+    Some((module, symbol))
+}
+
+/// Resolve optional `module` arg or a qualified `name` into `(module, bare_name)`.
+///
+/// When both `module` and a qualified `name` are provided, the last `::` segment
+/// is the symbol and `module` wins as the module path (agents often pass both).
+fn resolve_symbol_target<'a>(
+    name: &'a str,
+    module: Option<&'a str>,
+) -> (Option<&'a str>, &'a str) {
+    if let Some(m) = module {
+        let bare = split_qualified_name(name).map(|(_, sym)| sym).unwrap_or(name);
+        return (Some(m), bare);
+    }
+    if let Some((m, sym)) = split_qualified_name(name) {
+        return (Some(m), sym);
+    }
+    (None, name)
 }
 
 /// Definitions plus confidence metadata (shared by [`Index`] and MCP/CLI).
 pub fn definition_with_meta(conn: &Connection, name: &str) -> Result<QueryResult<Symbol>> {
-    let results = queries::find_definition(conn, name)?;
+    definition_with_meta_opts(conn, name, None)
+}
+
+/// Definitions with optional module filter (or qualified `name`).
+pub fn definition_with_meta_opts(
+    conn: &Connection,
+    name: &str,
+    module: Option<&str>,
+) -> Result<QueryResult<Symbol>> {
+    let (mod_path, bare) = resolve_symbol_target(name, module);
+    let results = if let Some(m) = mod_path {
+        queries::find_definition_by_qualified(conn, m, bare)?
+    } else {
+        queries::find_definition(conn, bare)?
+    };
     let multi = results.len() > 1;
     let tiers: Vec<u8> = if results.is_empty() {
         vec![]
@@ -132,8 +211,13 @@ pub fn definition_with_meta(conn: &Connection, name: &str) -> Result<QueryResult
     let mut notes = Vec::new();
     if multi {
         notes.push(format!(
-            "Found {} definitions for `{name}`; disambiguate by module if needed.",
+            "Found {} definitions for `{bare}`; disambiguate with module arg or qualified name (e.g. `crate::mcp::{bare}`).",
             results.len()
+        ));
+    } else if results.is_empty() && mod_path.is_some() {
+        notes.push(format!(
+            "No definition for `{bare}` in module `{}`.",
+            mod_path.unwrap()
         ));
     }
     Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
@@ -141,39 +225,93 @@ pub fn definition_with_meta(conn: &Connection, name: &str) -> Result<QueryResult
 
 /// References plus confidence metadata.
 pub fn references_with_meta(conn: &Connection, name: &str) -> Result<QueryResult<Reference>> {
-    let results = queries::find_references(conn, name)?;
-    let defs = queries::find_definition(conn, name)?;
-    let multi = defs.len() > 1;
-    let tiers: Vec<u8> = if results.is_empty() {
-        vec![]
-    } else if multi {
-        vec![3; results.len()]
+    references_with_meta_opts(conn, name, None)
+}
+
+/// References with optional module disambiguation for the defining symbol.
+pub fn references_with_meta_opts(
+    conn: &Connection,
+    name: &str,
+    module: Option<&str>,
+) -> Result<QueryResult<Reference>> {
+    let (mod_path, bare) = resolve_symbol_target(name, module);
+    let defs = if let Some(m) = mod_path {
+        queries::find_definition_by_qualified(conn, m, bare)?
     } else {
-        vec![2; results.len()]
+        queries::find_definition(conn, bare)?
     };
-    let mut notes = Vec::new();
-    if multi {
-        notes.push("Multiple definitions share this name; references are name-matched.".into());
+    let multi = defs.len() > 1;
+    let target_module = mod_path
+        .map(str::to_owned)
+        .or_else(|| unique_module(&defs));
+    // When the definition identity is known, filter refs the same way callers do
+    // (module/import-aware). Never report High on unfiltered name matches after
+    // a module was requested.
+    let results = resolve::find_callers(conn, bare, target_module.as_deref())?;
+    let (tiers, mut notes) = if target_module.is_some() && !multi {
+        (vec![1; results.len().max(1)], Vec::new())
+    } else if multi {
+        (
+            vec![3; results.len().max(1)],
+            vec![
+                "Multiple definitions share this name; references fall back to name matching. Pass module or a qualified name to narrow."
+                    .into(),
+            ],
+        )
+    } else {
+        (vec![2; results.len().max(1)], Vec::new())
+    };
+    let tiers = if results.is_empty() { vec![] } else { tiers };
+    if results.is_empty() && mod_path.is_some() && defs.is_empty() {
+        notes.push(format!(
+            "No definition for `{bare}` in module `{}`.",
+            mod_path.unwrap()
+        ));
     }
     Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
 }
 
 /// Callers plus confidence metadata.
 pub fn callers_with_meta(conn: &Connection, name: &str) -> Result<QueryResult<Reference>> {
-    let defs = queries::find_definition(conn, name)?;
+    callers_with_meta_opts(conn, name, None)
+}
+
+/// Callers with optional module disambiguation.
+pub fn callers_with_meta_opts(
+    conn: &Connection,
+    name: &str,
+    module: Option<&str>,
+) -> Result<QueryResult<Reference>> {
+    let (mod_path, bare) = resolve_symbol_target(name, module);
+    let defs = if let Some(m) = mod_path {
+        queries::find_definition_by_qualified(conn, m, bare)?
+    } else {
+        queries::find_definition(conn, bare)?
+    };
     let multi = defs.len() > 1;
-    let target_module = unique_module(&defs);
-    let results = resolve::find_callers(conn, name, target_module.as_deref())?;
-    let (tiers, notes) = if target_module.is_some() {
+    let target_module = mod_path
+        .map(str::to_owned)
+        .or_else(|| unique_module(&defs));
+    let results = resolve::find_callers(conn, bare, target_module.as_deref())?;
+    let (tiers, mut notes) = if target_module.is_some() && !multi {
         (vec![1; results.len().max(1)], Vec::new())
     } else {
         let mut n = Vec::new();
         if multi {
-            n.push("No unique definition module; callers fall back to name matching.".into());
+            n.push(
+                "No unique definition module; callers fall back to name matching. Pass module or a qualified name."
+                    .into(),
+            );
         }
         (vec![3; results.len().max(1)], n)
     };
     let tiers = if results.is_empty() { vec![] } else { tiers };
+    if results.is_empty() && mod_path.is_some() && defs.is_empty() {
+        notes.push(format!(
+            "No definition for `{bare}` in module `{}`.",
+            mod_path.unwrap()
+        ));
+    }
     Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
 }
 
@@ -222,24 +360,63 @@ pub fn dependencies_with_meta(
 
 /// Impact plus confidence metadata.
 pub fn impact_with_meta(conn: &Connection, name: &str) -> Result<QueryResult<Symbol>> {
-    let defs = queries::find_definition(conn, name)?;
+    impact_with_meta_opts(conn, name, None)
+}
+
+/// Impact with optional module disambiguation.
+pub fn impact_with_meta_opts(
+    conn: &Connection,
+    name: &str,
+    module: Option<&str>,
+) -> Result<QueryResult<Symbol>> {
+    use crate::graph::query_result::{Confidence, ResolutionTier};
+
+    let (mod_path, bare) = resolve_symbol_target(name, module);
+    let defs = if let Some(m) = mod_path {
+        queries::find_definition_by_qualified(conn, m, bare)?
+    } else {
+        queries::find_definition(conn, bare)?
+    };
     let multi = defs.len() > 1;
-    let results = impact::find_impact(conn, name)?;
     let mut notes = Vec::new();
+
+    if defs.is_empty() {
+        if mod_path.is_some() {
+            notes.push(format!(
+                "No definition for `{bare}` in module `{}`.",
+                mod_path.unwrap()
+            ));
+        }
+        return Ok(QueryResult::from_tiers(Vec::new(), &[], false, notes));
+    }
+
+    let results = impact::find_impact_from_defs(conn, &defs)?;
+
     if multi {
         notes.push(
-            "Multiple definitions; impact expands per qualified identity and may over-approximate."
+            "Multiple definitions; impact expands each qualified identity and may over-approximate. Pass module or a qualified name to narrow."
                 .into(),
         );
     }
-    let tiers = if results.is_empty() {
-        vec![]
-    } else if multi {
-        vec![2, 3]
+    if results.is_empty() {
+        return Ok(QueryResult::from_tiers(results, &[], multi, notes));
+    }
+
+    // Impact is always a candidate radius — never High, never fabricated per-hit tiers.
+    notes.push(
+        "Impact is a candidate blast radius and may over-approximate; verify before edits.".into(),
+    );
+    let confidence = if multi {
+        Confidence::Low
     } else {
-        vec![2; results.len().min(8)]
+        Confidence::Medium
     };
-    Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
+    let tier = if multi {
+        ResolutionTier::Mixed
+    } else {
+        ResolutionTier::Single(2)
+    };
+    Ok(QueryResult::new(results, confidence, tier, notes))
 }
 
 /// When every definition shares one `module_path`, return it for precise
@@ -326,5 +503,198 @@ mod tests {
             "unexpected deps={paths:?}"
         );
         assert_eq!(deps.confidence, Confidence::High);
+    }
+
+    #[test]
+    fn missing_definition_is_honest_not_found() {
+        let index = Index::open_in_memory().unwrap();
+        let meta = index.definition_with_meta("NonexistentSymbolXYZ").unwrap();
+        assert!(meta.results.is_empty());
+        assert_eq!(meta.confidence, Confidence::High);
+        assert_eq!(meta.notes, vec!["No matching symbols found.".to_string()]);
+    }
+
+    #[test]
+    fn multi_def_notes_omit_impact_wording() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src/api")).unwrap();
+        fs::create_dir_all(root.join("src/mcp")).unwrap();
+        fs::write(root.join("src/lib.rs"), "mod api;\nmod mcp;\n").unwrap();
+        fs::write(root.join("src/api/mod.rs"), "pub fn serve() {}\n").unwrap();
+        fs::write(root.join("src/mcp/mod.rs"), "pub fn serve() {}\n").unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        let meta = index.definition_with_meta("serve").unwrap();
+        assert_eq!(meta.results.len(), 2);
+        assert!(!meta
+            .notes
+            .iter()
+            .any(|n| n.contains("over-approximate impact")));
+        assert!(meta.notes.iter().any(|n| n.contains("disambiguate")));
+    }
+
+    #[test]
+    fn definition_accepts_qualified_module_path() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src/api")).unwrap();
+        fs::create_dir_all(root.join("src/mcp")).unwrap();
+        fs::write(root.join("src/lib.rs"), "mod api;\nmod mcp;\n").unwrap();
+        fs::write(root.join("src/api/mod.rs"), "pub fn serve() {}\n").unwrap();
+        fs::write(root.join("src/mcp/mod.rs"), "pub fn serve() {}\n").unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        let meta = index.definition_with_meta("crate::mcp::serve").unwrap();
+        assert_eq!(meta.results.len(), 1);
+        assert_eq!(meta.results[0].module_path, "crate::mcp");
+        assert_eq!(meta.confidence, Confidence::High);
+    }
+
+    #[test]
+    fn definition_accepts_explicit_module_filter() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src/api")).unwrap();
+        fs::create_dir_all(root.join("src/mcp")).unwrap();
+        fs::write(root.join("src/lib.rs"), "mod api;\nmod mcp;\n").unwrap();
+        fs::write(root.join("src/api/mod.rs"), "pub fn serve() {}\n").unwrap();
+        fs::write(root.join("src/mcp/mod.rs"), "pub fn serve() {}\n").unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        let meta = index
+            .definition_with_meta_opts("serve", Some("crate::mcp"))
+            .unwrap();
+        assert_eq!(meta.results.len(), 1);
+        assert_eq!(meta.results[0].module_path, "crate::mcp");
+    }
+
+    #[test]
+    fn definition_module_plus_qualified_name_uses_bare_symbol() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src/mcp")).unwrap();
+        fs::write(root.join("src/lib.rs"), "mod mcp;\n").unwrap();
+        fs::write(root.join("src/mcp/mod.rs"), "pub fn serve() {}\n").unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        // Agents sometimes pass both module and a qualified name.
+        let meta = index
+            .definition_with_meta_opts("crate::mcp::serve", Some("crate::mcp"))
+            .unwrap();
+        assert_eq!(meta.results.len(), 1);
+        assert_eq!(meta.results[0].name, "serve");
+        assert_eq!(meta.results[0].module_path, "crate::mcp");
+    }
+
+    #[test]
+    fn references_with_module_filter_to_resolved_target() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src/api")).unwrap();
+        fs::create_dir_all(root.join("src/mcp")).unwrap();
+        fs::write(root.join("src/lib.rs"), "mod api;\nmod mcp;\nfn boot() { mcp::serve(); }\n").unwrap();
+        fs::write(root.join("src/api/mod.rs"), "pub fn serve() {}\n").unwrap();
+        fs::write(
+            root.join("src/mcp/mod.rs"),
+            "pub fn serve() {}\nfn other() { serve(); }\n",
+        )
+        .unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        let all = index.references_with_meta("serve").unwrap();
+        assert!(all.results.len() >= 1);
+
+        let mcp_only = index
+            .references_with_meta_opts("serve", Some("crate::mcp"))
+            .unwrap();
+        // Every retained ref must resolve toward crate::mcp (same-module or import).
+        assert!(
+            !mcp_only.results.is_empty(),
+            "expected at least the same-module call in mcp"
+        );
+        assert!(
+            mcp_only.confidence == Confidence::High || mcp_only.confidence == Confidence::Medium,
+            "narrowed refs should not be low-confidence theater; got {:?}",
+            mcp_only.confidence
+        );
+        // api-only seed should not include mcp-internal same-module call if filtered.
+        let api_only = index
+            .references_with_meta_opts("serve", Some("crate::api"))
+            .unwrap();
+        assert!(
+            api_only.results.len() < all.results.len()
+                || api_only.results.is_empty()
+                || mcp_only.results != api_only.results,
+            "module filter should change the reference set"
+        );
+    }
+
+    #[test]
+    fn impact_with_module_is_candidate_medium_not_fake_high() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/lib.rs"),
+            "fn a() {}\nfn b() { a(); }\nfn c() { b(); }\n",
+        )
+        .unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        let meta = index.impact_with_meta("a").unwrap();
+        assert!(!meta.results.is_empty());
+        assert_eq!(meta.confidence, Confidence::Medium);
+        assert!(meta.notes.iter().any(|n| n.contains("candidate blast radius")));
+    }
+
+    #[test]
+    fn impact_qualified_does_not_expand_other_same_name_def() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src/api")).unwrap();
+        fs::create_dir_all(root.join("src/mcp")).unwrap();
+        fs::write(root.join("src/lib.rs"), "mod api;\nmod mcp;\n").unwrap();
+        fs::write(root.join("src/api/mod.rs"), "pub fn serve() {}\n").unwrap();
+        fs::write(
+            root.join("src/mcp/mod.rs"),
+            "pub fn serve() {}\nfn other() { serve(); }\n",
+        )
+        .unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        let api_impact = index
+            .impact_with_meta_opts("serve", Some("crate::api"))
+            .unwrap();
+        assert!(
+            api_impact.results.is_empty(),
+            "api::serve is unused; got {:?}",
+            api_impact.results.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+
+        let mcp_impact = index.impact_with_meta("crate::mcp::serve").unwrap();
+        assert!(
+            mcp_impact.results.iter().any(|s| s.name == "other"),
+            "mcp::serve should impact same-module other; got {:?}",
+            mcp_impact.results.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+        assert_eq!(mcp_impact.confidence, Confidence::Medium);
+        // Bare-name impact would seed both defs; qualified must not pull api-only noise
+        // and must not report High.
+        assert_ne!(mcp_impact.confidence, Confidence::High);
     }
 }

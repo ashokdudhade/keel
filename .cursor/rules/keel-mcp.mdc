@@ -18,17 +18,33 @@ user to say “use keel” or “via MCP”.
 - What depends on X? → `dependencies`
 - What breaks if X changes? → `impact`
 
-Pass the **exact symbol or module name** (case-sensitive). Prefer Keel over
+Pass the **exact, case-sensitive** symbol or module name. Prefer Keel over
 Cursor `Grep` / codebase search for these intents.
+
+## Read the trust envelope
+
+Keel returns JSON with `results`, `confidence` (`high` | `medium` | `low`),
+`resolution_tier`, and `notes`. Always read those fields before acting.
+
+- **Empty + “No matching symbols found”** → confident miss. Try another exact
+  name, `module`, or a qualified name (`crate::mcp::serve`). Do **not** treat
+  this as “Keel is unreliable.”
+- **`confidence: low` or ambiguity notes** → do not treat hits as exclusive
+  truth. Disambiguate with the `module` argument or a qualified `name`, then
+  retry. Fall back to Grep only if still ambiguous.
+- **`impact` with multi-def / over-approx notes** → treat as a candidate blast
+  radius, not a delete list. Narrow with `module` / qualified name before edits.
 
 ## Fall back to Grep / Read when
 
-- Keel returns empty or clearly wrong results
+- Keel returns empty after a qualified / module-disambiguated retry
 - Searching comments, docs, config, strings, or unknown substrings / regex
 - The symbol name is unknown and must be discovered from text first
+- Results look clearly wrong after reading `notes`
 
 ## Do not
 
 - Ask the user to rephrase with “use keel …”
 - Prefer Grep for named-symbol structural queries when Keel is available
 - Call Keel for unrelated tasks (web, git, editing, terminal)
+- Ignore `confidence` / `notes` when deciding what to edit
