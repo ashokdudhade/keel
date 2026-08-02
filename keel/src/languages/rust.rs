@@ -7,6 +7,8 @@
 //!
 //! ## Known limitations
 //!
+//! - File-module paths are derived from a `src/` layout (`src/mcp/mod.rs` →
+//!   `crate::mcp`). Non-`src` layouts fall back to path-relative segments.
 //! - Impact analysis uses qualified identity with resolve-aware expansion; see
 //!   `graph::impact`.
 //! - Go has no trait-impl form; `implementations` stays empty for Go sources.
@@ -50,10 +52,10 @@ impl LanguagePlugin for RustPlugin {
         &["rs"]
     }
 
-    fn extract_symbols(&self, _path: &Path, source_code: &str) -> Result<Vec<Symbol>> {
+    fn extract_symbols(&self, path: &Path, source_code: &str) -> Result<Vec<Symbol>> {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
-        let mut mods: Vec<String> = Vec::new();
+        let mut mods = rust_file_module_segments(path);
         let mut out = Vec::new();
         walk_symbols(tree.root_node(), src, &mut mods, &mut out)?;
         Ok(out)
@@ -63,9 +65,17 @@ impl LanguagePlugin for RustPlugin {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
         let file_key = file_path_key(path);
+        let file_mods = rust_file_module_segments(path);
         let mut scope: Vec<String> = Vec::new();
         let mut out = Vec::new();
-        walk_references(tree.root_node(), src, &file_key, &mut scope, &mut out)?;
+        walk_references(
+            tree.root_node(),
+            src,
+            &file_key,
+            &file_mods,
+            &mut scope,
+            &mut out,
+        )?;
         Ok(out)
     }
 
@@ -118,6 +128,65 @@ fn node_text<'a>(node: Node, src: &'a [u8]) -> Result<&'a str> {
         .map_err(|e| KeelError::TreeSitter(e.to_string()))
 }
 
+/// Module path segments for a Rust source file from its path relative to a
+/// crate `src/` root.
+///
+/// Examples: `src/lib.rs` → `[]`, `src/mcp/mod.rs` → `["mcp"]`,
+/// `keel/src/mcp/wire.rs` → `["mcp", "wire"]`.
+fn rust_file_module_segments(path: &Path) -> Vec<String> {
+    let parts: Vec<String> = path
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+
+    let after_src = match parts.iter().position(|p| p == "src") {
+        Some(idx) => &parts[idx + 1..],
+        None => {
+            // No `src/` — treat bare lib/main as crate root; otherwise use
+            // parent directories + file stem (drop mod.rs).
+            return segments_without_src_root(&parts);
+        }
+    };
+
+    segments_from_src_relative(after_src)
+}
+
+fn segments_without_src_root(parts: &[String]) -> Vec<String> {
+    if parts.is_empty() {
+        return Vec::new();
+    }
+    let file = parts.last().map(|s| s.as_str()).unwrap_or("");
+    if matches!(file, "lib.rs" | "main.rs") && parts.len() == 1 {
+        return Vec::new();
+    }
+    segments_from_src_relative(parts)
+}
+
+fn segments_from_src_relative(after_src: &[String]) -> Vec<String> {
+    let mut segs = Vec::new();
+    for (i, part) in after_src.iter().enumerate() {
+        let is_last = i + 1 == after_src.len();
+        if is_last {
+            if matches!(part.as_str(), "lib.rs" | "main.rs" | "mod.rs") {
+                continue;
+            }
+            let stem = Path::new(part)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| part.clone());
+            if !stem.is_empty() {
+                segs.push(stem);
+            }
+        } else {
+            segs.push(part.clone());
+        }
+    }
+    segs
+}
+
 /// Qualified module path for an item nested under `mods` (top level = `crate`).
 fn qualify_mod(mods: &[String]) -> String {
     if mods.is_empty() {
@@ -129,11 +198,17 @@ fn qualify_mod(mods: &[String]) -> String {
 
 /// Qualified name of the enclosing `fn`/`mod` scope, or the file path when
 /// top-level (so empty-scope call sites still participate in impact).
-fn qualify_scope(file_key: &str, scope: &[String]) -> String {
-    if scope.is_empty() {
+///
+/// `file_mods` are path-derived segments (e.g. `mcp` for `src/mcp/mod.rs`);
+/// `scope` is the inline `mod`/`fn` stack inside that file.
+fn qualify_scope(file_key: &str, file_mods: &[String], scope: &[String]) -> String {
+    let mut parts: Vec<&str> = Vec::with_capacity(file_mods.len() + scope.len());
+    parts.extend(file_mods.iter().map(|s| s.as_str()));
+    parts.extend(scope.iter().map(|s| s.as_str()));
+    if parts.is_empty() {
         file_key.to_string()
     } else {
-        format!("crate::{}", scope.join("::"))
+        format!("crate::{}", parts.join("::"))
     }
 }
 
@@ -218,6 +293,7 @@ fn walk_references(
     node: Node,
     src: &[u8],
     file_key: &str,
+    file_mods: &[String],
     scope: &mut Vec<String>,
     out: &mut Vec<Reference>,
 ) -> Result<()> {
@@ -228,7 +304,7 @@ fn walk_references(
                 scope.push(text.to_string());
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
-                    walk_references(child, src, file_key, scope, out)?;
+                    walk_references(child, src, file_key, file_mods, scope, out)?;
                 }
                 scope.pop();
                 return Ok(());
@@ -236,13 +312,21 @@ fn walk_references(
         }
         "call_expression" => {
             if let Some(func) = node.child_by_field_name("function") {
-                emit_call_reference(func, src, file_key, scope, out)?;
+                emit_call_reference(func, src, file_key, file_mods, scope, out)?;
             }
         }
         "macro_invocation" => {
             if let Some(mac) = node.child_by_field_name("macro") {
                 if let Some((name, target)) = final_segment(mac, src)? {
-                    push_reference(name, target, ReferenceKind::Macro, file_key, scope, out);
+                    push_reference(
+                        name,
+                        target,
+                        ReferenceKind::Macro,
+                        file_key,
+                        file_mods,
+                        scope,
+                        out,
+                    );
                 }
             }
         }
@@ -256,6 +340,7 @@ fn walk_references(
                 node,
                 ReferenceKind::Type,
                 file_key,
+                file_mods,
                 scope,
                 out,
             );
@@ -264,7 +349,7 @@ fn walk_references(
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_references(child, src, file_key, scope, out)?;
+        walk_references(child, src, file_key, file_mods, scope, out)?;
     }
     Ok(())
 }
@@ -274,6 +359,7 @@ fn emit_call_reference(
     func: Node,
     src: &[u8],
     file_key: &str,
+    file_mods: &[String],
     scope: &[String],
     out: &mut Vec<Reference>,
 ) -> Result<()> {
@@ -285,13 +371,22 @@ fn emit_call_reference(
                 func,
                 ReferenceKind::Call,
                 file_key,
+                file_mods,
                 scope,
                 out,
             );
         }
         "scoped_identifier" => {
             if let Some((name, target)) = final_segment(func, src)? {
-                push_reference(name, target, ReferenceKind::Path, file_key, scope, out);
+                push_reference(
+                    name,
+                    target,
+                    ReferenceKind::Path,
+                    file_key,
+                    file_mods,
+                    scope,
+                    out,
+                );
             }
         }
         "field_expression" => {
@@ -303,6 +398,7 @@ fn emit_call_reference(
                         field,
                         ReferenceKind::Method,
                         file_key,
+                        file_mods,
                         scope,
                         out,
                     );
@@ -342,6 +438,7 @@ fn push_reference(
     node: Node,
     kind: ReferenceKind,
     file_key: &str,
+    file_mods: &[String],
     scope: &[String],
     out: &mut Vec<Reference>,
 ) {
@@ -352,7 +449,7 @@ fn push_reference(
         start_line: pos.row as u32 + 1,
         start_col: pos.column as u32 + 1,
         kind,
-        container: qualify_scope(file_key, scope),
+        container: qualify_scope(file_key, file_mods, scope),
     });
 }
 
@@ -596,5 +693,57 @@ fn greet() {}
         let has_type_use =
             refs.iter().any(|r| r.name == "MemStore" && r.kind == ReferenceKind::Type);
         assert!(has_type_use, "type usage should be captured");
+    }
+
+    #[test]
+    fn file_module_path_from_src_layout() {
+        let plugin = RustPlugin;
+        let src = "pub fn serve() {}\n";
+        let syms = plugin
+            .extract_symbols(Path::new("src/mcp/mod.rs"), src)
+            .unwrap();
+        let serve = syms.iter().find(|s| s.name == "serve").unwrap();
+        assert_eq!(serve.module_path, "crate::mcp");
+    }
+
+    #[test]
+    fn nested_file_module_path() {
+        let plugin = RustPlugin;
+        let src = "pub struct Wire;\n";
+        let syms = plugin
+            .extract_symbols(Path::new("src/mcp/wire.rs"), src)
+            .unwrap();
+        assert_eq!(syms[0].module_path, "crate::mcp::wire");
+    }
+
+    #[test]
+    fn lib_rs_stays_crate_root() {
+        let plugin = RustPlugin;
+        let src = "pub struct Index;\n";
+        let syms = plugin
+            .extract_symbols(Path::new("src/lib.rs"), src)
+            .unwrap();
+        assert_eq!(syms[0].module_path, "crate");
+    }
+
+    #[test]
+    fn nested_crate_path_still_finds_src() {
+        let plugin = RustPlugin;
+        let src = "pub fn serve() {}\n";
+        let syms = plugin
+            .extract_symbols(Path::new("keel/src/mcp/mod.rs"), src)
+            .unwrap();
+        assert_eq!(syms[0].module_path, "crate::mcp");
+    }
+
+    #[test]
+    fn file_module_reference_container_includes_path_mods() {
+        let plugin = RustPlugin;
+        let src = "fn serve() { read_message(); }\n";
+        let refs = plugin
+            .extract_references(Path::new("src/mcp/mod.rs"), src)
+            .unwrap();
+        let call = refs.iter().find(|r| r.name == "read_message").unwrap();
+        assert_eq!(call.container, "crate::mcp::serve");
     }
 }
