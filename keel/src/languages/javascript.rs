@@ -6,7 +6,7 @@
 //! `.js`/`.mjs`/`.cjs` and `.jsx` share the JavaScript grammar (which includes
 //! JSX). Separate plugin registrations keep extension dispatch explicit.
 
-use super::{file_path_key, path_module_identity, LanguagePlugin};
+use super::{file_path_key, path_module_identity, resolve_relative_path_module, LanguagePlugin};
 use crate::error::{Result, KeelError};
 use crate::graph::types::{Import, Reference, ReferenceKind, Symbol, SymbolKind};
 use std::path::{Path, PathBuf};
@@ -97,11 +97,14 @@ fn extract_references(path: &Path, source_code: &str) -> Result<Vec<Reference>> 
     Ok(out)
 }
 
-fn extract_imports(_path: &Path, source_code: &str) -> Result<Vec<Import>> {
+fn extract_imports(path: &Path, source_code: &str) -> Result<Vec<Import>> {
     let tree = JavaScriptPlugin::parse(source_code)?;
     let src = source_code.as_bytes();
     let mut out = Vec::new();
     walk_imports(tree.root_node(), src, &mut out)?;
+    for imp in &mut out {
+        imp.module_path = resolve_relative_path_module(path, &imp.module_path);
+    }
     Ok(out)
 }
 
@@ -524,19 +527,19 @@ const run = () => {
 
         let named = imports
             .iter()
-            .find(|i| i.module_path == "./util::helper")
+            .find(|i| i.module_path == "src/auth/util::helper")
             .expect("named helper import");
         assert_eq!(named.alias, Some("h".to_string()));
 
         let default = imports
             .iter()
-            .find(|i| i.module_path == "./auth")
+            .find(|i| i.module_path == "src/auth/auth")
             .expect("default Auth import");
         assert_eq!(default.alias, Some("Auth".to_string()));
 
         let side = imports
             .iter()
-            .find(|i| i.module_path == "./polyfill" && i.alias.is_none())
+            .find(|i| i.module_path == "src/auth/polyfill" && i.alias.is_none())
             .expect("side-effect import");
         assert!(side.alias.is_none());
 

@@ -9,7 +9,7 @@ pub mod typescript;
 
 use crate::error::Result;
 use crate::graph::types::{Import, ImplRecord, Reference, Symbol};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Path-based module identity: extension stripped, `/` separators.
 ///
@@ -19,6 +19,48 @@ pub fn path_module_identity(path: &Path) -> String {
     path.with_extension("")
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+/// Resolve a JS/TS-style relative specifier (`./x`, `../y`) against `from_file`
+/// into the same identity [`path_module_identity`] would assign the target file.
+///
+/// Non-relative specifiers (packages, absolute URLs) are returned unchanged.
+/// Specifiers may include a `::export` suffix (named import); only the path
+/// portion is resolved.
+pub fn resolve_relative_path_module(from_file: &Path, specifier: &str) -> String {
+    let (path_part, suffix) = match specifier.split_once("::") {
+        Some((p, rest)) => (p, Some(rest)),
+        None => (specifier, None),
+    };
+    let resolved = if path_part.starts_with("./") || path_part.starts_with("../") {
+        let base = from_file.parent().unwrap_or_else(|| Path::new(""));
+        let joined = base.join(path_part);
+        path_module_identity(&normalize_lexically(&joined))
+    } else {
+        path_part.to_string()
+    };
+    match suffix {
+        Some(rest) => format!("{resolved}::{rest}"),
+        None => resolved,
+    }
+}
+
+/// Collapse `.` / `..` without touching the filesystem.
+fn normalize_lexically(path: &Path) -> PathBuf {
+    use std::path::{Component, PathBuf};
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(s) => out.push(s),
+            Component::RootDir => out.push(Component::RootDir.as_os_str()),
+            Component::Prefix(p) => out.push(p.as_os_str()),
+        }
+    }
+    out
 }
 
 /// Stable file-path string for empty-scope reference containers.
@@ -183,6 +225,23 @@ mod tests {
         assert_eq!(
             path_module_identity(Path::new("src/auth/service.ts")),
             "src/auth/service"
+        );
+    }
+
+    #[test]
+    fn resolve_relative_path_module_against_importer() {
+        let from = Path::new("src/auth/service.ts");
+        assert_eq!(
+            resolve_relative_path_module(from, "./util"),
+            "src/auth/util"
+        );
+        assert_eq!(
+            resolve_relative_path_module(from, "../api/token::Token"),
+            "src/api/token::Token"
+        );
+        assert_eq!(
+            resolve_relative_path_module(from, "lodash"),
+            "lodash"
         );
     }
 }

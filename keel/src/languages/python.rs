@@ -57,11 +57,14 @@ impl LanguagePlugin for PythonPlugin {
         Ok(out)
     }
 
-    fn extract_imports(&self, _path: &Path, source_code: &str) -> Result<Vec<Import>> {
+    fn extract_imports(&self, path: &Path, source_code: &str) -> Result<Vec<Import>> {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
         walk_imports(tree.root_node(), src, &mut out)?;
+        for imp in &mut out {
+            imp.module_path = resolve_python_import_module(path, &imp.module_path);
+        }
         Ok(out)
     }
 }
@@ -400,6 +403,46 @@ fn resolve_from_module(node: Node, src: &[u8]) -> Result<String> {
     Ok(String::new())
 }
 
+/// Resolve a stored Python import module (possibly relative, possibly with
+/// `::name` suffix) against the importing file's package identity.
+fn resolve_python_import_module(from_file: &Path, stored: &str) -> String {
+    let (mod_part, suffix) = match stored.split_once("::") {
+        Some((m, rest)) => (m, Some(rest)),
+        None => (stored, None),
+    };
+    let resolved = if mod_part.starts_with('.') {
+        resolve_python_relative(from_file, mod_part)
+    } else {
+        mod_part.to_string()
+    };
+    match suffix {
+        Some(rest) => format!("{resolved}::{rest}"),
+        None => resolved,
+    }
+}
+
+/// Expand leading-dot relative modules (PEP 328) against the importing package.
+fn resolve_python_relative(from_file: &Path, module: &str) -> String {
+    let package = python_module_identity(from_file);
+    let mut parts: Vec<&str> = package.split('.').filter(|s| !s.is_empty()).collect();
+    if !parts.is_empty() {
+        parts.pop();
+    }
+    let dots = module.chars().take_while(|c| *c == '.').count();
+    let levels_up = dots.saturating_sub(1);
+    for _ in 0..levels_up {
+        parts.pop();
+    }
+    let rest = &module[dots..];
+    if rest.is_empty() {
+        parts.join(".")
+    } else if parts.is_empty() {
+        rest.to_string()
+    } else {
+        format!("{}.{}", parts.join("."), rest)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,7 +510,7 @@ def run():
 
         let helper = imports
             .iter()
-            .find(|i| i.module_path == ".util::helper")
+            .find(|i| i.module_path == "pkg.auth.util::helper")
             .expect("relative helper");
         assert_eq!(helper.alias, Some("h".to_string()));
 

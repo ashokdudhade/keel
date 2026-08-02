@@ -141,18 +141,34 @@ fn import_reaches(sym: &Symbol, name: &str, imports: &[(String, Option<String>)]
         if let Some(alias) = alias {
             if alias == name
                 && (module_path == &qualified
-                    || module_path == &sym.module_path
+                    || import_matches_module(module_path, &sym.module_path)
                     || (path_ends_with_name(module_path, &sym.name)
-                        && module_path_prefix(module_path) == sym.module_path))
+                        && import_matches_module(module_path_prefix(module_path), &sym.module_path)))
             {
                 return true;
             }
         } else if module_path == &qualified
-            || (module_path == &sym.module_path && sym.name == name)
-            || (path_ends_with_name(module_path, name) && module_path_prefix(module_path) == sym.module_path)
+            || (import_matches_module(module_path, &sym.module_path) && sym.name == name)
+            || (path_ends_with_name(module_path, name)
+                && import_matches_module(module_path_prefix(module_path), &sym.module_path))
         {
             return true;
         }
+    }
+    false
+}
+
+/// True when an import path identifies `module_path` (exact, or Go-style last
+/// path segment / trailing `::` segment).
+fn import_matches_module(import_path: &str, module_path: &str) -> bool {
+    if import_path == module_path {
+        return true;
+    }
+    if import_path.rsplit('/').next() == Some(module_path) {
+        return true;
+    }
+    if import_path.rsplit("::").next() == Some(module_path) {
+        return true;
     }
     false
 }

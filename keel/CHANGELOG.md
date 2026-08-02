@@ -13,11 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Index::*_with_meta`, MCP tool JSON, and `keel <query> --json`.
 - Target normalization: queries accept symbol name, module path, or file path.
 - Rust file-module identity from `src/` layout (`src/mcp/mod.rs` → `crate::mcp`).
+- Relative import normalization for TypeScript/JavaScript (`./x` → path module id)
+  and Python (`.util` → package-qualified module); Go import paths match package
+  names by final path segment.
+- Common-path integration tests for all five languages (`tests/common_path.rs`).
 
 ### Fixed
 
 - `dependencies crate::mcp`-style queries no longer miss file modules that were
   incorrectly indexed as bare `crate`.
+- Cross-file `callers` / resolve tier-1 matching for relative JS/TS/Python imports
+  and Go module paths like `example.com/app/helper`.
 
 ## [1.1.0] — 2026-07-20
 

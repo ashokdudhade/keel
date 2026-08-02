@@ -6,7 +6,7 @@
 //! `.ts`/`.mts`/`.cts` parse with the TypeScript grammar; `.tsx` uses the TSX
 //! grammar. Extraction walks are shared.
 
-use super::{file_path_key, path_module_identity, LanguagePlugin};
+use super::{file_path_key, path_module_identity, resolve_relative_path_module, LanguagePlugin};
 use crate::error::{Result, KeelError};
 use crate::graph::types::{Import, Reference, ReferenceKind, Symbol, SymbolKind};
 use std::path::{Path, PathBuf};
@@ -68,11 +68,14 @@ impl LanguagePlugin for TypeScriptPlugin {
         Ok(out)
     }
 
-    fn extract_imports(&self, _path: &Path, source_code: &str) -> Result<Vec<Import>> {
+    fn extract_imports(&self, path: &Path, source_code: &str) -> Result<Vec<Import>> {
         let tree = Self::parse_ts(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
         walk_imports(tree.root_node(), src, &mut out)?;
+        for imp in &mut out {
+            imp.module_path = resolve_relative_path_module(path, &imp.module_path);
+        }
         Ok(out)
     }
 }
@@ -109,11 +112,14 @@ impl LanguagePlugin for TsxPlugin {
         Ok(out)
     }
 
-    fn extract_imports(&self, _path: &Path, source_code: &str) -> Result<Vec<Import>> {
+    fn extract_imports(&self, path: &Path, source_code: &str) -> Result<Vec<Import>> {
         let tree = TypeScriptPlugin::parse_tsx(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
         walk_imports(tree.root_node(), src, &mut out)?;
+        for imp in &mut out {
+            imp.module_path = resolve_relative_path_module(path, &imp.module_path);
+        }
         Ok(out)
     }
 }
@@ -500,13 +506,13 @@ function run(): void {
 
         let named = imports
             .iter()
-            .find(|i| i.module_path == "./util::helper")
+            .find(|i| i.module_path == "src/auth/util::helper")
             .expect("named helper import");
         assert_eq!(named.alias, Some("h".to_string()));
 
         let default = imports
             .iter()
-            .find(|i| i.module_path == "./auth")
+            .find(|i| i.module_path == "src/auth/auth")
             .expect("default Auth import");
         assert_eq!(default.alias, Some("Auth".to_string()));
     }

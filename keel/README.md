@@ -282,7 +282,9 @@ Within a tier, results are ordered by `(path, line, col)`.
 
 Query targets may be a **symbol name**, **module path** (`crate::mcp`), or
 **file path**. Rust file modules derive identity from `src/` layout
-(`src/mcp/mod.rs` → `crate::mcp`).
+(`src/mcp/mod.rs` → `crate::mcp`). Relative JS/TS imports (`./util`) and Python
+relative imports (`.util`) are normalized to the same module ids as defining
+files; Go import paths match packages by their final path segment.
 
 ### Confidence metadata (1.2)
 
