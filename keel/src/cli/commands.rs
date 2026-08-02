@@ -1,11 +1,9 @@
 //! Execution logic behind each CLI subcommand.
 
 use crate::api;
-use crate::db::{queries, schema};
+use crate::db::schema;
 use crate::error::{Result, KeelError};
-use crate::graph::deps::{self, Dependency};
-use crate::graph::impact;
-use crate::graph::resolve;
+use crate::graph::deps::Dependency;
 use crate::graph::types::{ImplRecord, Reference, Symbol};
 use crate::index::{self, IndexStats};
 use crate::mcp;
@@ -173,64 +171,99 @@ pub fn run_daemon(port: u16) -> Result<()> {
 
 /// Look up definitions by name.
 pub fn run_definition(name: &str, auto_index: bool) -> Result<Vec<Symbol>> {
+    Ok(run_definition_meta(name, auto_index)?.results)
+}
+
+/// Definitions with confidence metadata.
+pub fn run_definition_meta(
+    name: &str,
+    auto_index: bool,
+) -> Result<crate::graph::query_result::QueryResult<Symbol>> {
     maybe_ensure_index(auto_index)?;
     let conn = open_db()?;
     schema::initialize(&conn)?;
-    queries::find_definition(&conn, name)
+    crate::facade::definition_with_meta(&conn, name)
 }
 
 /// Look up references by name (also used for `callers` in v0.1).
 pub fn run_references(name: &str, auto_index: bool) -> Result<Vec<Reference>> {
+    Ok(run_references_meta(name, auto_index)?.results)
+}
+
+/// References with confidence metadata.
+pub fn run_references_meta(
+    name: &str,
+    auto_index: bool,
+) -> Result<crate::graph::query_result::QueryResult<Reference>> {
     maybe_ensure_index(auto_index)?;
     let conn = open_db()?;
     schema::initialize(&conn)?;
-    queries::find_references(&conn, name)
+    crate::facade::references_with_meta(&conn, name)
 }
 
 /// Look up callers of `name` with import-aware precision when a unique
 /// definition module can be determined; otherwise falls back to all sites.
 pub fn run_callers(name: &str, auto_index: bool) -> Result<Vec<Reference>> {
+    Ok(run_callers_meta(name, auto_index)?.results)
+}
+
+/// Callers with confidence metadata.
+pub fn run_callers_meta(
+    name: &str,
+    auto_index: bool,
+) -> Result<crate::graph::query_result::QueryResult<Reference>> {
     maybe_ensure_index(auto_index)?;
     let conn = open_db()?;
     schema::initialize(&conn)?;
-    let defs = queries::find_definition(&conn, name)?;
-    let target_module = unique_module(&defs);
-    resolve::find_callers(&conn, name, target_module.as_deref())
-}
-
-/// When every definition shares one `module_path`, return it for precise
-/// caller filtering; otherwise `None` (name-based fallback).
-fn unique_module(defs: &[Symbol]) -> Option<String> {
-    let first = defs.first()?.module_path.clone();
-    if defs.iter().all(|d| d.module_path == first) {
-        Some(first)
-    } else {
-        None
-    }
+    crate::facade::callers_with_meta(&conn, name)
 }
 
 /// Look up trait implementations by trait name.
 pub fn run_implementations(trait_name: &str, auto_index: bool) -> Result<Vec<ImplRecord>> {
+    Ok(run_implementations_meta(trait_name, auto_index)?.results)
+}
+
+/// Implementations with confidence metadata.
+pub fn run_implementations_meta(
+    trait_name: &str,
+    auto_index: bool,
+) -> Result<crate::graph::query_result::QueryResult<ImplRecord>> {
     maybe_ensure_index(auto_index)?;
     let conn = open_db()?;
     schema::initialize(&conn)?;
-    queries::find_implementations(&conn, trait_name)
+    crate::facade::implementations_with_meta(&conn, trait_name)
 }
 
 /// Look up modules/files that `name` (module path or symbol) depends on.
 pub fn run_dependencies(name: &str, auto_index: bool) -> Result<Vec<Dependency>> {
+    Ok(run_dependencies_meta(name, auto_index)?.results)
+}
+
+/// Dependencies with confidence metadata.
+pub fn run_dependencies_meta(
+    name: &str,
+    auto_index: bool,
+) -> Result<crate::graph::query_result::QueryResult<Dependency>> {
     maybe_ensure_index(auto_index)?;
     let conn = open_db()?;
     schema::initialize(&conn)?;
-    deps::find_dependencies(&conn, name)
+    crate::facade::dependencies_with_meta(&conn, name)
 }
 
 /// Look up symbols transitively impacted by changing `name`.
 pub fn run_impact(name: &str, auto_index: bool) -> Result<Vec<Symbol>> {
+    Ok(run_impact_meta(name, auto_index)?.results)
+}
+
+/// Impact with confidence metadata.
+pub fn run_impact_meta(
+    name: &str,
+    auto_index: bool,
+) -> Result<crate::graph::query_result::QueryResult<Symbol>> {
     maybe_ensure_index(auto_index)?;
     let conn = open_db()?;
     schema::initialize(&conn)?;
-    impact::find_impact(&conn, name)
+    crate::facade::impact_with_meta(&conn, name)
 }
 
 /// Serve the JSON API on `127.0.0.1:{port}` using the on-disk index.

@@ -2,11 +2,13 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use keel::api::{DependencyDto, ImplDto, ReferenceDto, SymbolDto};
 use keel::cli::{commands, Cli, Commands};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let auto_index = !cli.no_auto_index;
+    let json = cli.json;
     match cli.command {
         Commands::Index { path } => {
             let stats = commands::run_index(&path)
@@ -34,84 +36,110 @@ fn main() -> Result<()> {
             commands::run_status().context("daemon status")?;
         }
         Commands::Definition { name } => {
-            let defs =
-                commands::run_definition(&name, auto_index).context("querying definition")?;
-            if defs.is_empty() {
-                eprintln!("No definition found for {name}");
-            }
-            for s in defs {
-                println!(
-                    "{}:{}:{}\t{}\t{}",
-                    s.file.display(),
-                    s.start_line,
-                    s.start_col,
-                    s.kind.as_db(),
-                    s.name
-                );
+            let qr =
+                commands::run_definition_meta(&name, auto_index).context("querying definition")?;
+            if json {
+                let out = qr.map_results(|s| SymbolDto::from(&s));
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                if qr.results.is_empty() {
+                    eprintln!("No definition found for {name}");
+                }
+                for s in qr.results {
+                    println!(
+                        "{}:{}:{}\t{}\t{}",
+                        s.file.display(),
+                        s.start_line,
+                        s.start_col,
+                        s.kind.as_db(),
+                        s.name
+                    );
+                }
             }
         }
         Commands::References { name } => {
-            let refs =
-                commands::run_references(&name, auto_index).context("querying references")?;
-            if refs.is_empty() {
-                eprintln!("No references found for {name}");
-            }
-            for r in refs {
-                println!("{}:{}:{}\t{}", r.file.display(), r.start_line, r.start_col, r.name);
+            let qr =
+                commands::run_references_meta(&name, auto_index).context("querying references")?;
+            if json {
+                let out = qr.map_results(|r| ReferenceDto::from(&r));
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                if qr.results.is_empty() {
+                    eprintln!("No references found for {name}");
+                }
+                for r in qr.results {
+                    println!("{}:{}:{}\t{}", r.file.display(), r.start_line, r.start_col, r.name);
+                }
             }
         }
         Commands::Callers { name } => {
-            let refs = commands::run_callers(&name, auto_index).context("querying callers")?;
-            if refs.is_empty() {
+            let qr = commands::run_callers_meta(&name, auto_index).context("querying callers")?;
+            if json {
+                let out = qr.map_results(|r| ReferenceDto::from(&r));
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if qr.results.is_empty() {
                 eprintln!("No callers found for {name}");
-            }
-            for r in refs {
-                println!("{}:{}:{}\t{}", r.file.display(), r.start_line, r.start_col, r.name);
+            } else {
+                for r in qr.results {
+                    println!("{}:{}:{}\t{}", r.file.display(), r.start_line, r.start_col, r.name);
+                }
             }
         }
         Commands::Implementations { name } => {
-            let impls = commands::run_implementations(&name, auto_index)
+            let qr = commands::run_implementations_meta(&name, auto_index)
                 .context("querying implementations")?;
-            if impls.is_empty() {
+            if json {
+                let out = qr.map_results(|i| ImplDto::from(&i));
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if qr.results.is_empty() {
                 eprintln!("No implementations found for {name}");
-            }
-            for i in impls {
-                println!(
-                    "{}:{}:{}\t{}",
-                    i.file.display(),
-                    i.start_line,
-                    i.start_col,
-                    i.type_name
-                );
+            } else {
+                for i in qr.results {
+                    println!(
+                        "{}:{}:{}\t{}",
+                        i.file.display(),
+                        i.start_line,
+                        i.start_col,
+                        i.type_name
+                    );
+                }
             }
         }
         Commands::Dependencies { name } => {
-            let deps =
-                commands::run_dependencies(&name, auto_index).context("querying dependencies")?;
-            if deps.is_empty() {
+            let qr = commands::run_dependencies_meta(&name, auto_index)
+                .context("querying dependencies")?;
+            if json {
+                let out = qr.map_results(|d| DependencyDto::from(&d));
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if qr.results.is_empty() {
                 eprintln!("No dependencies found for {name}");
-            }
-            for d in deps {
-                match &d.file {
-                    Some(file) => println!("{}\t{}", d.module_path, file.display()),
-                    None => println!("{}", d.module_path),
+            } else {
+                for d in qr.results {
+                    match &d.file {
+                        Some(file) => println!("{}\t{}", d.module_path, file.display()),
+                        None => println!("{}", d.module_path),
+                    }
                 }
             }
         }
         Commands::Impact { name } => {
-            let impacted = commands::run_impact(&name, auto_index).context("querying impact")?;
-            if impacted.is_empty() {
+            let qr = commands::run_impact_meta(&name, auto_index).context("querying impact")?;
+            if json {
+                let out = qr.map_results(|s| SymbolDto::from(&s));
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if qr.results.is_empty() {
                 eprintln!("No impact found for {name}");
-            }
-            for s in impacted {
-                println!(
-                    "{}:{}:{}\t{}\t{}",
-                    s.file.display(),
-                    s.start_line,
-                    s.start_col,
-                    s.kind.as_db(),
-                    s.name
-                );
+            } else {
+                for s in qr.results {
+                    println!(
+                        "{}:{}:{}\t{}\t{}",
+                        s.file.display(),
+                        s.start_line,
+                        s.start_col,
+                        s.kind.as_db(),
+                        s.name
+                    );
+                }
             }
         }
         Commands::Serve { port } => {

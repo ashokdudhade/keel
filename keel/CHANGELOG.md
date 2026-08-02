@@ -5,6 +5,20 @@ All notable changes to Keel are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Query result envelope (`confidence`, `resolution_tier`, `notes`) via
+  `Index::*_with_meta`, MCP tool JSON, and `keel <query> --json`.
+- Target normalization: queries accept symbol name, module path, or file path.
+- Rust file-module identity from `src/` layout (`src/mcp/mod.rs` → `crate::mcp`).
+
+### Fixed
+
+- `dependencies crate::mcp`-style queries no longer miss file modules that were
+  incorrectly indexed as bare `crate`.
+
 ## [1.1.0] — 2026-07-20
 
 ### Added

@@ -7,7 +7,7 @@ use crate::db::{queries, schema};
 use crate::error::Result;
 use crate::graph::deps::{self, Dependency};
 use crate::graph::impact;
-use crate::graph::query_result::{Confidence, QueryResult};
+use crate::graph::query_result::QueryResult;
 use crate::graph::resolve;
 use crate::graph::target;
 use crate::graph::types::{ImplRecord, Reference, Symbol};
@@ -61,23 +61,7 @@ impl Index {
 
     /// Definitions plus confidence metadata.
     pub fn definition_with_meta(&self, name: &str) -> Result<QueryResult<Symbol>> {
-        let results = queries::find_definition(&self.conn, name)?;
-        let multi = results.len() > 1;
-        let tiers: Vec<u8> = if results.is_empty() {
-            vec![]
-        } else if multi {
-            vec![3; results.len()]
-        } else {
-            vec![2]
-        };
-        let mut notes = Vec::new();
-        if multi {
-            notes.push(format!(
-                "Found {} definitions for `{name}`; disambiguate by module if needed.",
-                results.len()
-            ));
-        }
-        Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
+        definition_with_meta(&self.conn, name)
     }
 
     /// Find references matching `name`.
@@ -87,23 +71,7 @@ impl Index {
 
     /// References plus confidence metadata.
     pub fn references_with_meta(&self, name: &str) -> Result<QueryResult<Reference>> {
-        let results = queries::find_references(&self.conn, name)?;
-        let defs = queries::find_definition(&self.conn, name)?;
-        let multi = defs.len() > 1;
-        let tiers: Vec<u8> = if results.is_empty() {
-            vec![]
-        } else if multi {
-            vec![3; results.len()]
-        } else {
-            vec![2; results.len()]
-        };
-        let mut notes = Vec::new();
-        if multi {
-            notes.push(
-                "Multiple definitions share this name; references are name-matched.".into(),
-            );
-        }
-        Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
+        references_with_meta(&self.conn, name)
     }
 
     /// Find callers of `name` (import-aware when a unique definition module exists).
@@ -113,23 +81,7 @@ impl Index {
 
     /// Callers plus confidence metadata.
     pub fn callers_with_meta(&self, name: &str) -> Result<QueryResult<Reference>> {
-        let defs = queries::find_definition(&self.conn, name)?;
-        let multi = defs.len() > 1;
-        let target_module = unique_module(&defs);
-        let results = resolve::find_callers(&self.conn, name, target_module.as_deref())?;
-        let (tiers, notes) = if target_module.is_some() {
-            (vec![1; results.len().max(1)], Vec::new())
-        } else {
-            let mut n = Vec::new();
-            if multi {
-                n.push(
-                    "No unique definition module; callers fall back to name matching.".into(),
-                );
-            }
-            (vec![3; results.len().max(1)], n)
-        };
-        let tiers = if results.is_empty() { vec![] } else { tiers };
-        Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
+        callers_with_meta(&self.conn, name)
     }
 
     /// Find trait implementations for `trait_name`.
@@ -142,20 +94,7 @@ impl Index {
         &self,
         trait_name: &str,
     ) -> Result<QueryResult<ImplRecord>> {
-        let results = queries::find_implementations(&self.conn, trait_name)?;
-        let mut notes = Vec::new();
-        if results.is_empty() {
-            notes.push(
-                "No implementations found (Rust traits only today; other languages stay empty when unambiguous extraction is unavailable)."
-                    .into(),
-            );
-        }
-        let tiers = if results.is_empty() {
-            vec![]
-        } else {
-            vec![2; results.len()]
-        };
-        Ok(QueryResult::from_tiers(results, &tiers, false, notes))
+        implementations_with_meta(&self.conn, trait_name)
     }
 
     /// Find modules/files that `name` (module path or symbol) depends on.
@@ -165,31 +104,7 @@ impl Index {
 
     /// Dependencies plus confidence metadata.
     pub fn dependencies_with_meta(&self, name: &str) -> Result<QueryResult<Dependency>> {
-        let resolved = target::normalize_target(&self.conn, name)?;
-        let results = deps::find_dependencies(&self.conn, name)?;
-        let mut notes = Vec::new();
-        if resolved.files.is_empty() {
-            notes.push(format!("No indexed files found for target `{name}`."));
-            return Ok(QueryResult::from_tiers(results, &[], false, notes));
-        }
-        if results.is_empty() {
-            notes.push(format!(
-                "Target resolved to {} file(s) but no import/cross-file dependencies were recorded.",
-                resolved.files.len()
-            ));
-            return Ok(QueryResult::from_tiers(
-                results,
-                &[],
-                false,
-                notes,
-            ));
-        }
-        Ok(QueryResult::from_tiers(
-            results,
-            &[1],
-            false,
-            notes,
-        ))
+        dependencies_with_meta(&self.conn, name)
     }
 
     /// Find symbols transitively impacted by changing `name`.
@@ -199,25 +114,132 @@ impl Index {
 
     /// Impact plus confidence metadata.
     pub fn impact_with_meta(&self, name: &str) -> Result<QueryResult<Symbol>> {
-        let defs = queries::find_definition(&self.conn, name)?;
-        let multi = defs.len() > 1;
-        let results = impact::find_impact(&self.conn, name)?;
-        let mut notes = Vec::new();
-        if multi {
-            notes.push(
-                "Multiple definitions; impact expands per qualified identity and may over-approximate."
-                    .into(),
-            );
-        }
-        let tiers = if results.is_empty() {
-            vec![]
-        } else if multi {
-            vec![2, 3]
-        } else {
-            vec![2; results.len().min(8)]
-        };
-        Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
+        impact_with_meta(&self.conn, name)
     }
+}
+
+/// Definitions plus confidence metadata (shared by [`Index`] and MCP/CLI).
+pub fn definition_with_meta(conn: &Connection, name: &str) -> Result<QueryResult<Symbol>> {
+    let results = queries::find_definition(conn, name)?;
+    let multi = results.len() > 1;
+    let tiers: Vec<u8> = if results.is_empty() {
+        vec![]
+    } else if multi {
+        vec![3; results.len()]
+    } else {
+        vec![2]
+    };
+    let mut notes = Vec::new();
+    if multi {
+        notes.push(format!(
+            "Found {} definitions for `{name}`; disambiguate by module if needed.",
+            results.len()
+        ));
+    }
+    Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
+}
+
+/// References plus confidence metadata.
+pub fn references_with_meta(conn: &Connection, name: &str) -> Result<QueryResult<Reference>> {
+    let results = queries::find_references(conn, name)?;
+    let defs = queries::find_definition(conn, name)?;
+    let multi = defs.len() > 1;
+    let tiers: Vec<u8> = if results.is_empty() {
+        vec![]
+    } else if multi {
+        vec![3; results.len()]
+    } else {
+        vec![2; results.len()]
+    };
+    let mut notes = Vec::new();
+    if multi {
+        notes.push("Multiple definitions share this name; references are name-matched.".into());
+    }
+    Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
+}
+
+/// Callers plus confidence metadata.
+pub fn callers_with_meta(conn: &Connection, name: &str) -> Result<QueryResult<Reference>> {
+    let defs = queries::find_definition(conn, name)?;
+    let multi = defs.len() > 1;
+    let target_module = unique_module(&defs);
+    let results = resolve::find_callers(conn, name, target_module.as_deref())?;
+    let (tiers, notes) = if target_module.is_some() {
+        (vec![1; results.len().max(1)], Vec::new())
+    } else {
+        let mut n = Vec::new();
+        if multi {
+            n.push("No unique definition module; callers fall back to name matching.".into());
+        }
+        (vec![3; results.len().max(1)], n)
+    };
+    let tiers = if results.is_empty() { vec![] } else { tiers };
+    Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
+}
+
+/// Implementations plus confidence metadata.
+pub fn implementations_with_meta(
+    conn: &Connection,
+    trait_name: &str,
+) -> Result<QueryResult<ImplRecord>> {
+    let results = queries::find_implementations(conn, trait_name)?;
+    let mut notes = Vec::new();
+    if results.is_empty() {
+        notes.push(
+            "No implementations found (Rust traits only today; other languages stay empty when unambiguous extraction is unavailable)."
+                .into(),
+        );
+    }
+    let tiers = if results.is_empty() {
+        vec![]
+    } else {
+        vec![2; results.len()]
+    };
+    Ok(QueryResult::from_tiers(results, &tiers, false, notes))
+}
+
+/// Dependencies plus confidence metadata.
+pub fn dependencies_with_meta(
+    conn: &Connection,
+    name: &str,
+) -> Result<QueryResult<Dependency>> {
+    let resolved = target::normalize_target(conn, name)?;
+    let results = deps::find_dependencies(conn, name)?;
+    let mut notes = Vec::new();
+    if resolved.files.is_empty() {
+        notes.push(format!("No indexed files found for target `{name}`."));
+        return Ok(QueryResult::from_tiers(results, &[], false, notes));
+    }
+    if results.is_empty() {
+        notes.push(format!(
+            "Target resolved to {} file(s) but no import/cross-file dependencies were recorded.",
+            resolved.files.len()
+        ));
+        return Ok(QueryResult::from_tiers(results, &[], false, notes));
+    }
+    Ok(QueryResult::from_tiers(results, &[1], false, notes))
+}
+
+/// Impact plus confidence metadata.
+pub fn impact_with_meta(conn: &Connection, name: &str) -> Result<QueryResult<Symbol>> {
+    let defs = queries::find_definition(conn, name)?;
+    let multi = defs.len() > 1;
+    let results = impact::find_impact(conn, name)?;
+    let mut notes = Vec::new();
+    if multi {
+        notes.push(
+            "Multiple definitions; impact expands per qualified identity and may over-approximate."
+                .into(),
+        );
+    }
+    let tiers = if results.is_empty() {
+        vec![]
+    } else if multi {
+        vec![2, 3]
+    } else {
+        vec![2; results.len().min(8)]
+    };
+    Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
 }
 
 /// When every definition shares one `module_path`, return it for precise
@@ -234,6 +256,7 @@ fn unique_module(defs: &[Symbol]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::query_result::Confidence;
     use crate::graph::types::SymbolKind;
     use std::fs;
     use tempfile::tempdir;

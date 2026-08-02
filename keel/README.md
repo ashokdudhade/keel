@@ -280,6 +280,29 @@ resolver** over the SQLite index (not ML):
 
 Within a tier, results are ordered by `(path, line, col)`.
 
+Query targets may be a **symbol name**, **module path** (`crate::mcp`), or
+**file path**. Rust file modules derive identity from `src/` layout
+(`src/mcp/mod.rs` → `crate::mcp`).
+
+### Confidence metadata (1.2)
+
+Library `*_with_meta` methods, MCP tool payloads, and `keel <query> --json`
+include:
+
+| Field | Meaning |
+|-------|---------|
+| `results` | Same hits as the plain query |
+| `confidence` | `high` / `medium` / `low` from resolve tiers |
+| `resolution_tier` | `1`, `2`, `3`, or `"mixed"` |
+| `notes` | Human/agent hints when falling back or ambiguous |
+
+**high** = all accepted edges at tier ≤ 2 and a unique target; **low** =
+name-only fallback dominated. Soft uncertainty still returns success with
+notes — it does not fail the tool call.
+
+After upgrading past module-identity changes, re-index:
+`rm -rf .keel && keel start` (or let query auto-index rebuild).
+
 ## Troubleshooting (contributor)
 
 ### Build fails while compiling SQLite

@@ -165,6 +165,9 @@ After saving, refresh MCP in Cursor Settings. You should see **seven tools**:
 | `index` | Index a repository path; returns indexing stats |
 
 Prefer Keel when you know a symbol or trait name; use text search for regex.
+Query responses (MCP / `keel <cmd> --json`) include `confidence` and `notes`
+when resolution falls back to name-only matching. After upgrades that change
+module identity, re-index with `rm -rf .keel && keel start`.
 The same `mcpServers` shape works for Claude Code and other MCP clients.
 
 ### 4. Prefer Keel automatically in chat

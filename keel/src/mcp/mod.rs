@@ -7,12 +7,9 @@
 //! Logs must go to stderr only — stdout is reserved for JSON-RPC.
 
 use crate::api::{DependencyDto, ImplDto, ReferenceDto, SymbolDto};
-use crate::db::{queries, schema};
+use crate::db::schema;
 use crate::error::{Result, KeelError};
-use crate::graph::deps;
-use crate::graph::impact;
-use crate::graph::resolve;
-use crate::graph::types::Symbol;
+use crate::facade;
 use crate::index::{self, IndexStats};
 use rusqlite::Connection;
 use serde::Serialize;
@@ -517,35 +514,39 @@ fn call_tool(
     let payload = match name {
         "definition" => {
             let symbol = require_string_arg(&arguments, "name")?;
-            let defs = queries::find_definition(conn, &symbol)?;
-            json_text(defs.iter().map(SymbolDto::from).collect::<Vec<_>>())?
+            let qr = facade::definition_with_meta(conn, &symbol)?
+                .map_results(|s| SymbolDto::from(&s));
+            json_text(qr)?
         }
         "references" => {
             let symbol = require_string_arg(&arguments, "name")?;
-            let refs = queries::find_references(conn, &symbol)?;
-            json_text(refs.iter().map(ReferenceDto::from).collect::<Vec<_>>())?
+            let qr = facade::references_with_meta(conn, &symbol)?
+                .map_results(|r| ReferenceDto::from(&r));
+            json_text(qr)?
         }
         "callers" => {
             let symbol = require_string_arg(&arguments, "name")?;
-            let defs = queries::find_definition(conn, &symbol)?;
-            let target_module = unique_module(&defs);
-            let callers = resolve::find_callers(conn, &symbol, target_module.as_deref())?;
-            json_text(callers.iter().map(ReferenceDto::from).collect::<Vec<_>>())?
+            let qr = facade::callers_with_meta(conn, &symbol)?
+                .map_results(|r| ReferenceDto::from(&r));
+            json_text(qr)?
         }
         "implementations" => {
             let symbol = require_string_arg(&arguments, "name")?;
-            let impls = queries::find_implementations(conn, &symbol)?;
-            json_text(impls.iter().map(ImplDto::from).collect::<Vec<_>>())?
+            let qr = facade::implementations_with_meta(conn, &symbol)?
+                .map_results(|i| ImplDto::from(&i));
+            json_text(qr)?
         }
         "dependencies" => {
             let symbol = require_string_arg(&arguments, "name")?;
-            let deps = deps::find_dependencies(conn, &symbol)?;
-            json_text(deps.iter().map(DependencyDto::from).collect::<Vec<_>>())?
+            let qr = facade::dependencies_with_meta(conn, &symbol)?
+                .map_results(|d| DependencyDto::from(&d));
+            json_text(qr)?
         }
         "impact" => {
             let symbol = require_string_arg(&arguments, "name")?;
-            let impacted = impact::find_impact(conn, &symbol)?;
-            json_text(impacted.iter().map(SymbolDto::from).collect::<Vec<_>>())?
+            let qr = facade::impact_with_meta(conn, &symbol)?
+                .map_results(|s| SymbolDto::from(&s));
+            json_text(qr)?
         }
         "index" => {
             let path = require_string_arg(&arguments, "path")?;
@@ -579,15 +580,6 @@ fn json_text<T: Serialize>(value: T) -> Result<Value> {
             }
         ]
     }))
-}
-
-fn unique_module(defs: &[Symbol]) -> Option<String> {
-    let first = defs.first()?.module_path.clone();
-    if defs.iter().all(|d| d.module_path == first) {
-        Some(first)
-    } else {
-        None
-    }
 }
 
 /// Serializable view of [`IndexStats`] for MCP tool results.

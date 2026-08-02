@@ -1,6 +1,6 @@
 //! Query result envelope: hits plus confidence metadata for agents.
 
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 /// How strongly the resolver trusts the returned hits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -12,8 +12,7 @@ pub enum Confidence {
 }
 
 /// Resolution tier summary for a query response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolutionTier {
     /// Single tier used for all accepted hits (1, 2, or 3).
     Single(u8),
@@ -31,6 +30,15 @@ impl ResolutionTier {
             [] => Self::Single(3),
             [only] => Self::Single(*only),
             _ => Self::Mixed,
+        }
+    }
+}
+
+impl Serialize for ResolutionTier {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Self::Single(n) => serializer.serialize_u8(*n),
+            Self::Mixed => serializer.serialize_str("mixed"),
         }
     }
 }
@@ -59,7 +67,21 @@ impl<T> QueryResult<T> {
         }
     }
 
-    pub fn from_tiers(results: Vec<T>, tiers: &[u8], multi_def: bool, mut notes: Vec<String>) -> Self {
+    pub fn map_results<U, F: FnMut(T) -> U>(self, f: F) -> QueryResult<U> {
+        QueryResult {
+            results: self.results.into_iter().map(f).collect(),
+            confidence: self.confidence,
+            resolution_tier: self.resolution_tier,
+            notes: self.notes,
+        }
+    }
+
+    pub fn from_tiers(
+        results: Vec<T>,
+        tiers: &[u8],
+        multi_def: bool,
+        mut notes: Vec<String>,
+    ) -> Self {
         let confidence = confidence_from_tiers(tiers, multi_def);
         if matches!(confidence, Confidence::Low) && notes.is_empty() {
             notes.push(
@@ -71,7 +93,12 @@ impl<T> QueryResult<T> {
                 "Target has multiple definitions; expansion may over-approximate impact.".into(),
             );
         }
-        Self::new(results, confidence, ResolutionTier::from_tiers(tiers), notes)
+        Self::new(
+            results,
+            confidence,
+            ResolutionTier::from_tiers(tiers),
+            notes,
+        )
     }
 }
 
@@ -120,6 +147,17 @@ mod tests {
     #[test]
     fn resolution_tiers_mixed() {
         assert_eq!(ResolutionTier::from_tiers(&[1, 2]), ResolutionTier::Mixed);
-        assert_eq!(ResolutionTier::from_tiers(&[2, 2]), ResolutionTier::Single(2));
+        assert_eq!(
+            ResolutionTier::from_tiers(&[2, 2]),
+            ResolutionTier::Single(2)
+        );
+    }
+
+    #[test]
+    fn resolution_tiers_serialize() {
+        let single = serde_json::to_value(ResolutionTier::Single(2)).unwrap();
+        assert_eq!(single, serde_json::json!(2));
+        let mixed = serde_json::to_value(ResolutionTier::Mixed).unwrap();
+        assert_eq!(mixed, serde_json::json!("mixed"));
     }
 }

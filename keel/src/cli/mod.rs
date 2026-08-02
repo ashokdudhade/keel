@@ -13,6 +13,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_auto_index: bool,
 
+    /// Print query results as JSON including confidence metadata.
+    #[arg(long, global = true)]
+    pub json: bool,
+
     /// The subcommand to run.
     #[command(subcommand)]
     pub command: Commands,
