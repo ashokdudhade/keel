@@ -159,6 +159,14 @@ fn start_without_daemon_errors() {
         err.contains("daemon is not running") || err.contains("brew services start keel"),
         "expected daemon hint: {err}"
     );
+    assert!(
+        err.contains("daemon error:"),
+        "daemon failures must not be labeled watch errors: {err}"
+    );
+    assert!(
+        !err.contains("watch error:"),
+        "no watch-error label on a daemon failure: {err}"
+    );
 }
 
 #[test]

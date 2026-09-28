@@ -3,7 +3,9 @@
     "id": "google-gemini-gemini-cli",
     "url": "https://github.com/google-gemini/gemini-cli",
     "ssh": "git@github.com:google-gemini/gemini-cli.git",
-    "language_mix": ["TypeScript", "TSX", "JavaScript", "Python"]
+    "language_mix": ["TypeScript", "TSX", "JavaScript", "Python"],
+    "head": "2fe7c2d3f065dc40ad573d50b2091116f8a4aa18",
+    "head_note": "Gold lines verified against this upstream HEAD; re-curate if the clone moves."
   },
   "queries": [
     {
@@ -17,9 +19,10 @@
     {
       "language": "TypeScript",
       "symbol": "Config",
-      "note": "Runtime configuration class",
+      "note": "Runtime configuration class + Python caretaker Config",
       "definitions": [
-        { "file": "packages/core/src/config/config.ts", "line": 751 }
+        { "file": "packages/core/src/config/config.ts", "line": 757 },
+        { "file": "tools/caretaker-agent/cloudrun/pr-generator/workflow/config.py", "line": 17 }
       ]
     },
     {
@@ -41,10 +44,15 @@
     {
       "language": "TypeScript",
       "symbol": "ToolRegistry",
-      "note": "Tool registry (core + scripts interface)",
+      "note": "Tool registry (core class + scripts interface + test mock fields)",
       "definitions": [
-        { "file": "packages/core/src/tools/tool-registry.ts", "line": 231 },
-        { "file": "scripts/utils/tool-registry.ts", "line": 29 }
+        { "file": "packages/core/src/tools/tool-registry.ts", "line": 247 },
+        { "file": "scripts/utils/tool-registry.ts", "line": 29 },
+        { "file": "packages/core/src/config/config.test.ts", "line": 1527 },
+        { "file": "packages/core/src/config/config.test.ts", "line": 1550 },
+        { "file": "packages/core/src/config/config.test.ts", "line": 1570 },
+        { "file": "packages/core/src/config/config.test.ts", "line": 1613 },
+        { "file": "packages/core/src/config/config.test.ts", "line": 1633 }
       ]
     },
     {
@@ -52,7 +60,7 @@
       "symbol": "ReadFileTool",
       "note": "Built-in read-file tool",
       "definitions": [
-        { "file": "packages/core/src/tools/read-file.ts", "line": 226 }
+        { "file": "packages/core/src/tools/read-file.ts", "line": 244 }
       ]
     },
     {
@@ -60,7 +68,7 @@
       "symbol": "ShellTool",
       "note": "Built-in shell tool",
       "definitions": [
-        { "file": "packages/core/src/tools/shell.ts", "line": 1090 }
+        { "file": "packages/core/src/tools/shell.ts", "line": 1190 }
       ]
     },
     {
@@ -68,7 +76,7 @@
       "symbol": "WriteFileTool",
       "note": "Built-in write-file tool",
       "definitions": [
-        { "file": "packages/core/src/tools/write-file.ts", "line": 586 }
+        { "file": "packages/core/src/tools/write-file.ts", "line": 594 }
       ]
     },
     {
@@ -76,7 +84,7 @@
       "symbol": "EditTool",
       "note": "Built-in edit tool",
       "definitions": [
-        { "file": "packages/core/src/tools/edit.ts", "line": 1091 }
+        { "file": "packages/core/src/tools/edit.ts", "line": 1111 }
       ]
     },
     {
@@ -84,7 +92,7 @@
       "symbol": "GrepTool",
       "note": "Built-in grep tool",
       "definitions": [
-        { "file": "packages/core/src/tools/grep.ts", "line": 687 }
+        { "file": "packages/core/src/tools/grep.ts", "line": 688 }
       ]
     }
   ]

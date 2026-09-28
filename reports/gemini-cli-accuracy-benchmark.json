@@ -9,35 +9,34 @@
       "TSX",
       "JavaScript",
       "Python"
-    ]
+    ],
+    "head": "2fe7c2d3f065dc40ad573d50b2091116f8a4aa18",
+    "head_note": "Gold lines verified against this upstream HEAD; re-curate if the clone moves."
   },
-  "head": "c776c66",
+  "head": "2fe7c2d",
   "index": {
-    "seconds": 0.115,
-    "stdout": "Indexed 0 file(s) (skipped 2217, removed 0, errors 0).",
+    "seconds": 0.094,
+    "stdout": "Indexed 0 file(s) (skipped 2290, removed 0, errors 0, syntax errors 0).",
     "extension_counts": {
-      ".js": 57,
-      ".ts": 1721,
+      ".js": 58,
+      ".ts": 1757,
       ".cjs": 11,
-      ".tsx": 418,
+      ".py": 49,
       ".mjs": 3,
-      ".py": 14
-    },
-    "cold_seconds": 32.629,
-    "cold_stdout": "Indexed 2217 file(s) (skipped 0, removed 0, errors 0).",
-    "note": "Cold index timed on first pass; subsequent incremental index skipped unchanged files."
+      ".tsx": 419
+    }
   },
   "summary": {
     "without_keel": {
-      "tp": 11,
-      "fp": 151,
-      "fn": 0,
-      "precision": 0.06790123456790123,
-      "recall": 1.0,
-      "f1": 0.12716763005780346
+      "tp": 12,
+      "fp": 153,
+      "fn": 5,
+      "precision": 0.07272727272727272,
+      "recall": 0.7058823529411765,
+      "f1": 0.13186813186813187
     },
     "with_keel": {
-      "tp": 11,
+      "tp": 17,
       "fp": 0,
       "fn": 0,
       "precision": 1.0,
@@ -88,19 +87,19 @@
           "packages/core/src/core/client.ts:93"
         ]
       },
-      "keel_reference_count": 0
+      "keel_reference_count": 63
     },
     {
       "symbol": "Config",
       "language": "TypeScript",
-      "note": "Runtime configuration class",
+      "note": "Runtime configuration class + Python caretaker Config",
       "without_keel": {
-        "tp": 1,
-        "fp": 136,
+        "tp": 2,
+        "fp": 137,
         "fn": 0,
-        "precision": 0.0072992700729927005,
+        "precision": 0.014388489208633094,
         "recall": 1.0,
-        "f1": 0.014492753623188404,
+        "f1": 0.028368794326241138,
         "predicted": [
           "evals/auto_memory_contract.eval.ts:28",
           "evals/skill_extraction.eval.ts:11",
@@ -113,7 +112,7 @@
           "packages/a2a-server/src/commands/init.test.ts:12",
           "packages/a2a-server/src/commands/memory.test.ts:11",
           "packages/a2a-server/src/http/app.test.ts:10",
-          "packages/a2a-server/src/http/endpoints.test.ts:19",
+          "packages/a2a-server/src/http/endpoints.test.ts:28",
           "packages/a2a-server/src/utils/testing_utils.ts:22",
           "packages/cli/src/acp/acpResume.test.ts:21",
           "packages/cli/src/acp/acpRpcDispatcher.test.ts:20",
@@ -136,7 +135,7 @@
           "packages/cli/src/nonInteractiveCliCommands.ts:13",
           "packages/cli/src/output-redirection.test.ts:9",
           "packages/cli/src/services/BuiltinCommandLoader.test.ts:55",
-          "packages/cli/src/services/FileCommandLoader.test.ts:12",
+          "packages/cli/src/services/FileCommandLoader.test.ts:13",
           "packages/cli/src/services/FileCommandLoader.ts:12",
           "packages/cli/src/services/McpPromptLoader.ts:10",
           "packages/cli/src/services/SkillCommandLoader.ts:7",
@@ -174,7 +173,7 @@
           "packages/cli/src/ui/components/messages/ShellToolMessage.test.tsx:14",
           "packages/cli/src/ui/components/messages/ShellToolMessage.tsx:29",
           "packages/cli/src/ui/components/messages/ToolConfirmationMessage.test.tsx:12",
-          "packages/cli/src/ui/components/messages/ToolConfirmationMessage.tsx:14",
+          "packages/cli/src/ui/components/messages/ToolConfirmationMessage.tsx:15",
           "packages/cli/src/ui/components/messages/ToolMessage.tsx:24",
           "packages/cli/src/ui/components/messages/ToolMessageFocusHint.test.tsx:18",
           "packages/cli/src/ui/components/messages/ToolShared.tsx:19",
@@ -212,6 +211,7 @@
           "packages/cli/src/utils/activityLogger.ts:18",
           "packages/cli/src/utils/autoMemory.ts:10",
           "packages/cli/src/utils/devtoolsService.ts:7",
+          "packages/cli/src/utils/sandbox.test.ts:17",
           "packages/cli/src/utils/sessionCleanup.integration.test.ts:12",
           "packages/cli/src/utils/sessionCleanup.test.ts:13",
           "packages/cli/src/utils/sessionCleanup.ts:15",
@@ -222,7 +222,7 @@
           "packages/cli/src/utils/terminalTheme.ts:15",
           "packages/cli/src/validateNonInterActiveAuth.ts:12",
           "packages/core/src/agents/registry_acknowledgement.test.ts:13",
-          "packages/core/src/config/config.ts:751",
+          "packages/core/src/config/config.ts:757",
           "packages/core/src/context/contextCompressionService.ts:6",
           "packages/core/src/context/toolDistillationService.ts:12",
           "packages/core/src/policy/policy-updater.test.ts:16",
@@ -237,28 +237,32 @@
           "packages/core/src/tools/shell_proactive.test.ts:19",
           "packages/core/src/utils/atCommandUtils.test.ts:12",
           "packages/core/src/utils/atCommandUtils.ts:10",
-          "packages/core/src/utils/tool-utils.test.ts:9",
-          "packages/sdk/src/shell.ts:11"
+          "packages/core/src/utils/tool-utils.test.ts:16",
+          "packages/sdk/src/shell.ts:11",
+          "tools/caretaker-agent/cloudrun/pr-generator/workflow/config.py:17"
         ],
         "expected": [
-          "packages/core/src/config/config.ts:751"
+          "packages/core/src/config/config.ts:757",
+          "tools/caretaker-agent/cloudrun/pr-generator/workflow/config.py:17"
         ]
       },
       "with_keel": {
-        "tp": 1,
+        "tp": 2,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "packages/core/src/config/config.ts:751"
+          "packages/core/src/config/config.ts:757",
+          "tools/caretaker-agent/cloudrun/pr-generator/workflow/config.py:17"
         ],
         "expected": [
-          "packages/core/src/config/config.ts:751"
+          "packages/core/src/config/config.ts:757",
+          "tools/caretaker-agent/cloudrun/pr-generator/workflow/config.py:17"
         ]
       },
-      "keel_reference_count": 0
+      "keel_reference_count": 500
     },
     {
       "symbol": "AuthType",
@@ -296,7 +300,7 @@
           "packages/core/src/core/contentGenerator.ts:63"
         ]
       },
-      "keel_reference_count": 0
+      "keel_reference_count": 500
     },
     {
       "symbol": "createContentGenerator",
@@ -330,47 +334,63 @@
           "packages/core/src/core/contentGenerator.ts:210"
         ]
       },
-      "keel_reference_count": 41
+      "keel_reference_count": 44
     },
     {
       "symbol": "ToolRegistry",
       "language": "TypeScript",
-      "note": "Tool registry (core + scripts interface)",
+      "note": "Tool registry (core class + scripts interface + test mock fields)",
       "without_keel": {
         "tp": 2,
-        "fp": 2,
-        "fn": 0,
-        "precision": 0.5,
-        "recall": 1.0,
-        "f1": 0.6666666666666666,
+        "fp": 3,
+        "fn": 5,
+        "precision": 0.4,
+        "recall": 0.2857142857142857,
+        "f1": 0.3333333333333333,
         "predicted": [
           "packages/a2a-server/src/utils/testing_utils.ts:25",
-          "packages/core/src/tools/tool-registry.ts:231",
+          "packages/core/src/tools/tool-registry.ts:247",
           "packages/sdk/src/session.ts:20",
+          "scripts/utils/eval-coverage.ts:10",
           "scripts/utils/tool-registry.ts:29"
         ],
         "expected": [
-          "packages/core/src/tools/tool-registry.ts:231",
+          "packages/core/src/config/config.test.ts:1527",
+          "packages/core/src/config/config.test.ts:1550",
+          "packages/core/src/config/config.test.ts:1570",
+          "packages/core/src/config/config.test.ts:1613",
+          "packages/core/src/config/config.test.ts:1633",
+          "packages/core/src/tools/tool-registry.ts:247",
           "scripts/utils/tool-registry.ts:29"
         ]
       },
       "with_keel": {
-        "tp": 2,
+        "tp": 7,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "packages/core/src/tools/tool-registry.ts:231",
+          "packages/core/src/config/config.test.ts:1527",
+          "packages/core/src/config/config.test.ts:1550",
+          "packages/core/src/config/config.test.ts:1570",
+          "packages/core/src/config/config.test.ts:1613",
+          "packages/core/src/config/config.test.ts:1633",
+          "packages/core/src/tools/tool-registry.ts:247",
           "scripts/utils/tool-registry.ts:29"
         ],
         "expected": [
-          "packages/core/src/tools/tool-registry.ts:231",
+          "packages/core/src/config/config.test.ts:1527",
+          "packages/core/src/config/config.test.ts:1550",
+          "packages/core/src/config/config.test.ts:1570",
+          "packages/core/src/config/config.test.ts:1613",
+          "packages/core/src/config/config.test.ts:1633",
+          "packages/core/src/tools/tool-registry.ts:247",
           "scripts/utils/tool-registry.ts:29"
         ]
       },
-      "keel_reference_count": 0
+      "keel_reference_count": 130
     },
     {
       "symbol": "ReadFileTool",
@@ -384,10 +404,10 @@
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "packages/core/src/tools/read-file.ts:226"
+          "packages/core/src/tools/read-file.ts:244"
         ],
         "expected": [
-          "packages/core/src/tools/read-file.ts:226"
+          "packages/core/src/tools/read-file.ts:244"
         ]
       },
       "with_keel": {
@@ -398,13 +418,13 @@
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "packages/core/src/tools/read-file.ts:226"
+          "packages/core/src/tools/read-file.ts:244"
         ],
         "expected": [
-          "packages/core/src/tools/read-file.ts:226"
+          "packages/core/src/tools/read-file.ts:244"
         ]
       },
-      "keel_reference_count": 0
+      "keel_reference_count": 15
     },
     {
       "symbol": "ShellTool",
@@ -418,10 +438,10 @@
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "packages/core/src/tools/shell.ts:1090"
+          "packages/core/src/tools/shell.ts:1190"
         ],
         "expected": [
-          "packages/core/src/tools/shell.ts:1090"
+          "packages/core/src/tools/shell.ts:1190"
         ]
       },
       "with_keel": {
@@ -432,13 +452,13 @@
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "packages/core/src/tools/shell.ts:1090"
+          "packages/core/src/tools/shell.ts:1190"
         ],
         "expected": [
-          "packages/core/src/tools/shell.ts:1090"
+          "packages/core/src/tools/shell.ts:1190"
         ]
       },
-      "keel_reference_count": 0
+      "keel_reference_count": 42
     },
     {
       "symbol": "WriteFileTool",
@@ -452,10 +472,10 @@
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "packages/core/src/tools/write-file.ts:586"
+          "packages/core/src/tools/write-file.ts:594"
         ],
         "expected": [
-          "packages/core/src/tools/write-file.ts:586"
+          "packages/core/src/tools/write-file.ts:594"
         ]
       },
       "with_keel": {
@@ -466,13 +486,13 @@
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "packages/core/src/tools/write-file.ts:586"
+          "packages/core/src/tools/write-file.ts:594"
         ],
         "expected": [
-          "packages/core/src/tools/write-file.ts:586"
+          "packages/core/src/tools/write-file.ts:594"
         ]
       },
-      "keel_reference_count": 0
+      "keel_reference_count": 14
     },
     {
       "symbol": "EditTool",
@@ -486,10 +506,10 @@
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "packages/core/src/tools/edit.ts:1091"
+          "packages/core/src/tools/edit.ts:1111"
         ],
         "expected": [
-          "packages/core/src/tools/edit.ts:1091"
+          "packages/core/src/tools/edit.ts:1111"
         ]
       },
       "with_keel": {
@@ -500,13 +520,13 @@
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "packages/core/src/tools/edit.ts:1091"
+          "packages/core/src/tools/edit.ts:1111"
         ],
         "expected": [
-          "packages/core/src/tools/edit.ts:1091"
+          "packages/core/src/tools/edit.ts:1111"
         ]
       },
-      "keel_reference_count": 0
+      "keel_reference_count": 18
     },
     {
       "symbol": "GrepTool",
@@ -520,10 +540,10 @@
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "packages/core/src/tools/grep.ts:687"
+          "packages/core/src/tools/grep.ts:688"
         ],
         "expected": [
-          "packages/core/src/tools/grep.ts:687"
+          "packages/core/src/tools/grep.ts:688"
         ]
       },
       "with_keel": {
@@ -534,13 +554,13 @@
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "packages/core/src/tools/grep.ts:687"
+          "packages/core/src/tools/grep.ts:688"
         ],
         "expected": [
-          "packages/core/src/tools/grep.ts:687"
+          "packages/core/src/tools/grep.ts:688"
         ]
       },
-      "keel_reference_count": 0
+      "keel_reference_count": 14
     }
   ]
 }

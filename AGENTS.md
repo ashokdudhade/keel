@@ -2,8 +2,8 @@
 
 Keel is a deterministic, local-first code-intelligence engine (Rust) for AI coding agents.
 It indexes a repo with Tree-sitter into on-disk SQLite and answers structural queries
-by symbol name — no LLMs, embeddings, or cloud. Released: 1.3.1 (`keel/Cargo.toml`);
-unreleased 1.4.0 work below is implemented but uncommitted — verify with `git status`.
+by symbol name — no LLMs, embeddings, or cloud. Released: 1.4.1 (`keel/Cargo.toml`,
+tag `v1.4.1`); session work below is implemented but uncommitted — verify with `git status`.
 
 ## Repo layout
 
@@ -12,7 +12,7 @@ unreleased 1.4.0 work below is implemented but uncommitted — verify with `git 
 | `keel/` | The Rust crate (binary + library in one package). All engine work happens here. |
 | `keel/src/` | `lib.rs`, `main.rs`, `facade.rs` (`Index`), `cli/`, `db/`, `graph/`, `index/`, `languages/`, `daemon.rs`, `mcp/`, `api/`, `usage.rs` (Insights telemetry) |
 | `keel/tests/` | `integration.rs`, `common_path.rs`, `languages.rs`, `service.rs` + inline unit tests |
-| `benchmarks/` | `accuracy/` fixture + `gold.json`; `realworld/` gold files + `repos.json` |
+| `benchmarks/` | `accuracy/` + `impact/` + `references/` fixtures + `gold.json`; `realworld/` gold files + `repos.json` |
 | `scripts/` | Benchmark runners, `keel-mcp.sh`, `mcp-trust-smoke.py`, `test-install.sh` |
 | `reports/` | Generated benchmark HTML/JSON + bake-off notes (outputs, not sources) |
 | `website/` | Marketing site (React + Vite + TS); GitHub Pages builds `website/dist` |
@@ -39,15 +39,19 @@ unreleased 1.4.0 work below is implemented but uncommitted — verify with `git 
   Plugins must be `Sync` (Rayon workers). TS/JS register via `register()` fns
   (multiple plugins per file family); others are single structs.
 - **Indexing:** `index/worker.rs` collects files with the `ignore` crate
-  (respects `.gitignore` even without `.git`, sorted for determinism), hashes
+  (respects `.gitignore` even without `.git`, plus `.keelignore`, sorted
+  for determinism), hashes
   (SHA-256) + parses in parallel with Rayon, then `index/mod.rs` persists in one
   transaction. Incremental: unchanged hashes skipped, missing files deleted,
-  per-file failures counted in `IndexStats.errors` without aborting.
-- **Storage:** `rusqlite` bundled SQLite, `PRAGMA user_version = 3`
-  (`db/schema.rs` migrates v0/v1/v2 → v3 idempotently in one transaction).
+  per-file failures counted in `IndexStats.errors` without aborting; files
+  that parse with syntax errors still index but warn per file and count in
+  `IndexStats.syntax_errors` (`LanguagePlugin::has_syntax_errors`).
+- **Storage:** `rusqlite` bundled SQLite, `PRAGMA user_version = 5`
+  (`db/schema.rs` migrates v0/v1/v2/v3/v4 → v5 idempotently in one transaction;
+  v5 adds `file_id` indexes only — no content rebuild).
   Tables: `files`, `symbols` (+`module_path`), `"references"` (+`kind`,
-  +`container`), `imports`, `impls`, `meta` (writer stamps).
-  `INDEX_FORMAT_VERSION` (=1) tracks content semantics separately from schema:
+  +`container`, +`qualifier`), `imports`, `impls`, `meta` (writer stamps).
+  `INDEX_FORMAT_VERSION` (=2) tracks content semantics separately from schema:
   the indexer auto-rebuilds stale content; reads via facade/HTTP refuse with
   `KeelError::StaleIndex` when bypassing auto-index. `meta` also holds
   `keel_version` + `last_indexed` for the Insights portal.
@@ -67,15 +71,21 @@ unreleased 1.4.0 work below is implemented but uncommitted — verify with `git 
   (`src/mcp/mod.rs` → `crate::mcp`); TS/JS path-based (`src/auth/service`),
   relative imports (`./x`) normalized to the same ids; Python dotted packages,
   relative (`.util`) normalized; Go package names, `package main` path-qualified,
-  import paths matched by final segment. `implementations` is Rust-trait-only.
+  import paths matched by final segment. `implementations` covers Rust traits,
+  TS interfaces/`extends` (declarations and class expressions),
+  Python/JS base classes, and explicit Go `var _ I = T{}` assertions
+  (structural Go matches are not inferred).
 - **Daemon:** `daemon.rs` — global control plane on `127.0.0.1:7646`
   (`KEEL_DAEMON_PORT`, state in `~/.keel/daemon/` aka `KEEL_HOME`, registry
   `projects.json`). `keel start` indexes into `<project>/.keel/index.db` and
   spawns `keel watch <root>` (logs to `.keel/watch.log`); `stop`/`status` manage it.
 - **MCP:** `mcp/mod.rs` — stdio JSON-RPC 2.0, accepts NDJSON (Cursor 2025-11+)
-  and Content-Length framing; stdout is protocol-only, logs to stderr. Seven
+  and Content-Length framing; stdout is protocol-only, logs to stderr. Ten
   tools: `definition`, `references`, `callers`, `implementations`,
-  `dependencies`, `impact` (+`index`). `definition`/`references`/`callers`/`impact`
+  `dependencies`, `dependents`, `impact`, `outline`, `search`, `unused`
+  (+`index`). The eight hit tools take `limit` and `preview`
+  (source line per hit).
+  `definition`/`references`/`callers`/`impact`/`implementations`
   accept optional `module` or qualified `name` (`crate::mcp::serve`); when both
   are passed, `module` wins and `name` is stripped to bare symbol.
 - **Index resolution** (`cli/commands.rs::resolve_index_db`): 1. `KEEL_INDEX_DB`
@@ -83,20 +93,41 @@ unreleased 1.4.0 work below is implemented but uncommitted — verify with `git 
   (project containing cwd, else sole registered index; never guess among many)
   → 4. `cwd/.keel/index.db`. `KEEL_MCP_DEBUG=1` prints the choice on stderr.
 - **HTTP:** `api/mod.rs` via `keel serve` on `127.0.0.1:7645`:
-  `GET /health`, `GET /symbol/{name}`, `GET /insights` (embedded dashboard),
-  `GET /api/insights` (JSON). `keel insights [--port N]` auto-starts a
+  `GET /health`, `GET /symbol/{name}[?limit=N]`, `GET /outline/{path}[?limit=N]`,
+  `GET /search/{pattern}[?limit=N]`, `GET /impact/{name}[?module=M]`,
+  `GET /dependents/{target}[?limit=N]`, `GET /insights` (embedded dashboard),
+  `GET /api/insights` (JSON).
+  `keel insights [--port N]` auto-starts a
   background `serve` (free-port fallback, reuse via `.keel/insights.port`,
   adopts a hand-started serve for the same project, alias `insight`,
   `KEEL_NO_BROWSER=1` skips browser). CLI output is `path:line:col` (1-based),
-  tab-separated, deterministic; all four hit commands share
-  `path:line:col⇥kind⇥name` via `cli::commands::format_{symbol,reference}_hit`.
+  tab-separated, deterministic; all eight hit commands
+  (definition/references/callers/implementations/impact/search/outline/unused) share
+  hit rows via `cli::commands::format_{symbol,reference,impl}_hit`
+  (`path:line:col⇥kind⇥name`; implementations print `⇥type`)
+  (`implementations`/`dependencies`/`dependents` print module-oriented rows).
+  `--preview` adds the source line per hit (indented row; `preview` field in
+  JSON/`--json`, absent when off) via `cli::commands::PreviewCache`.
 - **Insights telemetry:** `usage.rs` appends one JSON object per query to
   `.keel/usage.jsonl` (5 MiB rotation, `KEEL_NO_USAGE_LOG=1` opt-out).
-  Emission sites: 6 CLI branches, 6 MCP arms, 1 HTTP aggregate; in-memory DBs
-  skip. Reference kinds: Call/Macro/Method/Type/Path/**Value** (bare
-  identifiers in args/annotations/bases; Python+TS+JS capture these).
+  Emission sites: 9 CLI branches, 9 MCP arms, 5 HTTP routes
+  (`/symbol` aggregate, `/outline`, `/search`, `/impact`, `/dependents`);
+  in-memory DBs skip. Reference kinds: Call/Macro/Method/Type/Path/**Value** (bare
+  identifiers in call args, receivers, return/throw/yield, operators,
+  conditions, loop iterables, assignment RHS, subscripts, template/JSX/f-string
+  interpolation, Rust format-string holes, struct-literal keys (Go/Rust),
+  TS/JS defaults/field initializers/arrow bodies, Rust static/const
+  initializers, decorator/derive lists, Rust macro args, member reads
+  with receiver qualifiers — all seven grammars. Still excluded by
+  design: imports, bindings/writes, labels,
+  dict/object-literal keys, other string contents, `macro_rules!`
+  templates). Path refs store their qualifier
+  (`mcp` in `mcp::serve`); Method refs store receiver text (`db` in
+  `db.get()`) — all five languages — so module-scoped callers can break
+  import-tier ties; undecided ties stay dropped with an honest note.
+  Schema v5, index format 2 (migrations via `schema::initialize`).
 - **Onboarding commands:** `keel init` (index now + MCP config print; no daemon needed),
-  `keel doctor` (version/daemon/project/index checks), `keel daemon-stop`,
+  `keel doctor` (version/daemon/project/MCP/index checks; flags corrupt DBs as unreadable), `keel daemon-stop`,
   `--version`. `keel index/watch <path>` write to `<path>/.keel/`; daemon pids
   are validated before signaling (`valid_pid`).
 - **Errors:** `thiserror::KeelError` in library, `anyhow` at `main.rs` boundary.
@@ -116,7 +147,10 @@ cargo install --path ./keel                 # contributor install from source
   `DEVELOPER_DIR=/Library/Developer/CommandLineTools cargo build --release`.
 - MCP smoke: `keel index . && KEEL_BIN=<path> python3 scripts/mcp-trust-smoke.py`
   (CI's `mcp-trust-smoke` job does exactly this).
-- Benchmarks: `scripts/accuracy-benchmark.sh`, `scripts/realworld-accuracy-benchmark.sh`.
+- Benchmarks: `scripts/accuracy-benchmark.sh`, `scripts/realworld-accuracy-benchmark.sh`,
+  `scripts/impact-benchmark.sh` (transitive impact recall, 5 languages, no grep baseline),
+  `scripts/references-benchmark.sh` (module-scoped references vs whole-word grep).
+  All three core gates hold F1 1.0 (impact 52 queries, accuracy 20, references 12).
 - Website: `cd website && npm ci && npm run build` (Node 20).
 - Reset a project index: `rm -rf .keel && keel start` (or `keel index .`).
 

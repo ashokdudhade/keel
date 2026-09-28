@@ -1,0 +1,1047 @@
+{
+  "summary": {
+    "keel": {
+      "tp": 80,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "queries": 52
+  },
+  "rows": [
+    {
+      "symbol": "alpha",
+      "language": "Python",
+      "module": "py.src.a",
+      "keel": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/src/b.py:3",
+          "py/src/c.py:3",
+          "py/src/d.py:4"
+        ],
+        "expected": [
+          "py/src/b.py:3",
+          "py/src/c.py:3",
+          "py/src/d.py:4"
+        ]
+      }
+    },
+    {
+      "symbol": "beta",
+      "language": "Python",
+      "module": "py.src.b",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/src/c.py:3"
+        ],
+        "expected": [
+          "py/src/c.py:3"
+        ]
+      }
+    },
+    {
+      "symbol": "lonely",
+      "language": "Python",
+      "module": "py.src.b",
+      "keel": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [],
+        "expected": []
+      }
+    },
+    {
+      "symbol": "alpha",
+      "language": "TypeScript",
+      "module": "ts/src/a",
+      "keel": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/b.ts:3",
+          "ts/src/c.ts:3",
+          "ts/src/d.ts:4"
+        ],
+        "expected": [
+          "ts/src/b.ts:3",
+          "ts/src/c.ts:3",
+          "ts/src/d.ts:4"
+        ]
+      }
+    },
+    {
+      "symbol": "beta",
+      "language": "TypeScript",
+      "module": "ts/src/b",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/c.ts:3"
+        ],
+        "expected": [
+          "ts/src/c.ts:3"
+        ]
+      }
+    },
+    {
+      "symbol": "lonely",
+      "language": "TypeScript",
+      "module": "ts/src/b",
+      "keel": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [],
+        "expected": []
+      }
+    },
+    {
+      "symbol": "alpha",
+      "language": "JavaScript",
+      "module": "js/src/a",
+      "keel": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/b.js:3",
+          "js/src/c.js:3",
+          "js/src/d.js:4"
+        ],
+        "expected": [
+          "js/src/b.js:3",
+          "js/src/c.js:3",
+          "js/src/d.js:4"
+        ]
+      }
+    },
+    {
+      "symbol": "beta",
+      "language": "JavaScript",
+      "module": "js/src/b",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/c.js:3"
+        ],
+        "expected": [
+          "js/src/c.js:3"
+        ]
+      }
+    },
+    {
+      "symbol": "lonely",
+      "language": "JavaScript",
+      "module": "js/src/b",
+      "keel": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [],
+        "expected": []
+      }
+    },
+    {
+      "symbol": "alpha",
+      "language": "Rust",
+      "module": "crate::a",
+      "keel": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rs/src/b.rs:3",
+          "rs/src/c.rs:3",
+          "rs/src/d.rs:6"
+        ],
+        "expected": [
+          "rs/src/b.rs:3",
+          "rs/src/c.rs:3",
+          "rs/src/d.rs:6"
+        ]
+      }
+    },
+    {
+      "symbol": "beta",
+      "language": "Rust",
+      "module": "crate::b",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rs/src/c.rs:3"
+        ],
+        "expected": [
+          "rs/src/c.rs:3"
+        ]
+      }
+    },
+    {
+      "symbol": "lonely",
+      "language": "Rust",
+      "module": "crate::b",
+      "keel": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [],
+        "expected": []
+      }
+    },
+    {
+      "symbol": "Alpha",
+      "language": "Go",
+      "module": "a",
+      "keel": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/b.go:5",
+          "go/c.go:5",
+          "go/d.go:7"
+        ],
+        "expected": [
+          "go/b.go:5",
+          "go/c.go:5",
+          "go/d.go:7"
+        ]
+      }
+    },
+    {
+      "symbol": "Beta",
+      "language": "Go",
+      "module": "b",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/c.go:5"
+        ],
+        "expected": [
+          "go/c.go:5"
+        ]
+      }
+    },
+    {
+      "symbol": "Lonely",
+      "language": "Go",
+      "module": "b",
+      "keel": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [],
+        "expected": []
+      }
+    },
+    {
+      "symbol": "alpha",
+      "language": "multi",
+      "module": null,
+      "keel": {
+        "tp": 12,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/b.js:3",
+          "js/src/c.js:3",
+          "js/src/d.js:4",
+          "py/src/b.py:3",
+          "py/src/c.py:3",
+          "py/src/d.py:4",
+          "rs/src/b.rs:3",
+          "rs/src/c.rs:3",
+          "rs/src/d.rs:6",
+          "ts/src/b.ts:3",
+          "ts/src/c.ts:3",
+          "ts/src/d.ts:4"
+        ],
+        "expected": [
+          "js/src/b.js:3",
+          "js/src/c.js:3",
+          "js/src/d.js:4",
+          "py/src/b.py:3",
+          "py/src/c.py:3",
+          "py/src/d.py:4",
+          "rs/src/b.rs:3",
+          "rs/src/c.rs:3",
+          "rs/src/d.rs:6",
+          "ts/src/b.ts:3",
+          "ts/src/c.ts:3",
+          "ts/src/d.ts:4"
+        ]
+      }
+    },
+    {
+      "symbol": "lonely",
+      "language": "multi",
+      "module": null,
+      "keel": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [],
+        "expected": []
+      }
+    },
+    {
+      "symbol": "Widget",
+      "language": "JavaScript",
+      "module": "js/src/widget",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/app.jsx:3"
+        ],
+        "expected": [
+          "js/src/app.jsx:3"
+        ]
+      }
+    },
+    {
+      "symbol": "guard",
+      "language": "Python",
+      "module": "py.src.f",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/src/f.py:6"
+        ],
+        "expected": [
+          "py/src/f.py:6"
+        ]
+      }
+    },
+    {
+      "symbol": "Logged",
+      "language": "TypeScript",
+      "module": "ts/src/e",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/e.ts:6"
+        ],
+        "expected": [
+          "ts/src/e.ts:6"
+        ]
+      }
+    },
+    {
+      "symbol": "Widget",
+      "language": "Go",
+      "module": "e",
+      "keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/e.go:12",
+          "go/e.go:7"
+        ],
+        "expected": [
+          "go/e.go:12",
+          "go/e.go:7"
+        ]
+      }
+    },
+    {
+      "symbol": "Base",
+      "language": "JavaScript",
+      "module": "js/src/shapes",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/shapes.js:3"
+        ],
+        "expected": [
+          "js/src/shapes.js:3"
+        ]
+      }
+    },
+    {
+      "symbol": "Shape",
+      "language": "TypeScript",
+      "module": "ts/src/f",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/f.ts:5"
+        ],
+        "expected": [
+          "ts/src/f.ts:5"
+        ]
+      }
+    },
+    {
+      "symbol": "AppError",
+      "language": "Python",
+      "module": "py.src.g",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/src/g.py:5"
+        ],
+        "expected": [
+          "py/src/g.py:5"
+        ]
+      }
+    },
+    {
+      "symbol": "Token",
+      "language": "TypeScript",
+      "module": "ts/src/g",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/g.ts:3"
+        ],
+        "expected": [
+          "ts/src/g.ts:3"
+        ]
+      }
+    },
+    {
+      "symbol": "LIMIT",
+      "language": "TypeScript",
+      "module": "ts/src/h",
+      "keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/i.ts:3",
+          "ts/src/i.ts:7"
+        ],
+        "expected": [
+          "ts/src/i.ts:3",
+          "ts/src/i.ts:7"
+        ]
+      }
+    },
+    {
+      "symbol": "LIMIT",
+      "language": "JavaScript",
+      "module": "js/src/limit",
+      "keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/uses.js:3",
+          "js/src/uses.js:7"
+        ],
+        "expected": [
+          "js/src/uses.js:3",
+          "js/src/uses.js:7"
+        ]
+      }
+    },
+    {
+      "symbol": "LIMIT",
+      "language": "Python",
+      "module": "py.src.h",
+      "keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/src/i.py:3",
+          "py/src/i.py:6"
+        ],
+        "expected": [
+          "py/src/i.py:3",
+          "py/src/i.py:6"
+        ]
+      }
+    },
+    {
+      "symbol": "LIMIT",
+      "language": "Rust",
+      "module": "crate::h",
+      "keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rs/src/i.rs:3",
+          "rs/src/i.rs:7"
+        ],
+        "expected": [
+          "rs/src/i.rs:3",
+          "rs/src/i.rs:7"
+        ]
+      }
+    },
+    {
+      "symbol": "Config",
+      "language": "Rust",
+      "module": "crate::j",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rs/src/k.rs:3"
+        ],
+        "expected": [
+          "rs/src/k.rs:3"
+        ]
+      }
+    },
+    {
+      "symbol": "LIMIT",
+      "language": "Go",
+      "module": "h",
+      "keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/i.go:5",
+          "go/i.go:9"
+        ],
+        "expected": [
+          "go/i.go:5",
+          "go/i.go:9"
+        ]
+      }
+    },
+    {
+      "symbol": "Mode",
+      "language": "Go",
+      "module": "j",
+      "keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/k.go:14",
+          "go/k.go:5"
+        ],
+        "expected": [
+          "go/k.go:14",
+          "go/k.go:5"
+        ]
+      }
+    },
+    {
+      "symbol": "port",
+      "language": "TypeScript",
+      "module": "ts/src/j",
+      "keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/k.ts:3",
+          "ts/src/k.ts:7"
+        ],
+        "expected": [
+          "ts/src/k.ts:3",
+          "ts/src/k.ts:7"
+        ]
+      }
+    },
+    {
+      "symbol": "port",
+      "language": "JavaScript",
+      "module": "js/src/j",
+      "keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/k.js:3",
+          "js/src/k.js:7"
+        ],
+        "expected": [
+          "js/src/k.js:3",
+          "js/src/k.js:7"
+        ]
+      }
+    },
+    {
+      "symbol": "port",
+      "language": "Python",
+      "module": "py.src.j",
+      "keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/src/k.py:4",
+          "py/src/k.py:8"
+        ],
+        "expected": [
+          "py/src/k.py:4",
+          "py/src/k.py:8"
+        ]
+      }
+    },
+    {
+      "symbol": "port",
+      "language": "Rust",
+      "module": "crate::l",
+      "keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rs/src/m.rs:3",
+          "rs/src/m.rs:7"
+        ],
+        "expected": [
+          "rs/src/m.rs:3",
+          "rs/src/m.rs:7"
+        ]
+      }
+    },
+    {
+      "symbol": "Port",
+      "language": "Go",
+      "module": "l",
+      "keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/m.go:5",
+          "go/m.go:9"
+        ],
+        "expected": [
+          "go/m.go:5",
+          "go/m.go:9"
+        ]
+      }
+    },
+    {
+      "symbol": "describe",
+      "language": "Python",
+      "module": "py.src.l",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/src/n.py:6"
+        ],
+        "expected": [
+          "py/src/n.py:6"
+        ]
+      }
+    },
+    {
+      "symbol": "describe",
+      "language": "Python",
+      "module": "py.src.m",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/src/o.py:6"
+        ],
+        "expected": [
+          "py/src/o.py:6"
+        ]
+      }
+    },
+    {
+      "symbol": "greeting",
+      "language": "JavaScript",
+      "module": "js/src/greeting",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/card.jsx:3"
+        ],
+        "expected": [
+          "js/src/card.jsx:3"
+        ]
+      }
+    },
+    {
+      "symbol": "Notify",
+      "language": "Go",
+      "module": "n",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/o.go:5"
+        ],
+        "expected": [
+          "go/o.go:5"
+        ]
+      }
+    },
+    {
+      "symbol": "SEED",
+      "language": "Rust",
+      "module": "crate::n",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rs/src/o.rs:3"
+        ],
+        "expected": [
+          "rs/src/o.rs:3"
+        ]
+      }
+    },
+    {
+      "symbol": "Entity",
+      "language": "TypeScript",
+      "module": "ts/src/l",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/m.ts:3"
+        ],
+        "expected": [
+          "ts/src/m.ts:3"
+        ]
+      }
+    },
+    {
+      "symbol": "format",
+      "language": "TypeScript",
+      "module": "ts/src/n",
+      "keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/o.ts:3",
+          "ts/src/p.ts:3"
+        ],
+        "expected": [
+          "ts/src/o.ts:3",
+          "ts/src/p.ts:3"
+        ]
+      }
+    },
+    {
+      "symbol": "VERSION",
+      "language": "Rust",
+      "module": "crate::p",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rs/src/q.rs:3"
+        ],
+        "expected": [
+          "rs/src/q.rs:3"
+        ]
+      }
+    },
+    {
+      "symbol": "Host",
+      "language": "Go",
+      "module": "p",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/q.go:5"
+        ],
+        "expected": [
+          "go/q.go:5"
+        ]
+      }
+    },
+    {
+      "symbol": "host",
+      "language": "Rust",
+      "module": "crate::r",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rs/src/s.rs:3"
+        ],
+        "expected": [
+          "rs/src/s.rs:3"
+        ]
+      }
+    },
+    {
+      "symbol": "FALLBACK",
+      "language": "TypeScript",
+      "module": "ts/src/q",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/r.ts:3"
+        ],
+        "expected": [
+          "ts/src/r.ts:3"
+        ]
+      }
+    },
+    {
+      "symbol": "BASE",
+      "language": "Rust",
+      "module": "crate::t",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rs/src/u.rs:3"
+        ],
+        "expected": [
+          "rs/src/u.rs:3"
+        ]
+      }
+    },
+    {
+      "symbol": "timeout",
+      "language": "Python",
+      "module": "py.src.p",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/src/q.py:3"
+        ],
+        "expected": [
+          "py/src/q.py:3"
+        ]
+      }
+    },
+    {
+      "symbol": "lazy",
+      "language": "TypeScript",
+      "module": "ts/src/s",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/t.ts:1"
+        ],
+        "expected": [
+          "ts/src/t.ts:1"
+        ]
+      }
+    },
+    {
+      "symbol": "serve",
+      "language": "Python",
+      "module": "py.src.r",
+      "keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/src/s.py:5"
+        ],
+        "expected": [
+          "py/src/s.py:5"
+        ]
+      }
+    }
+  ]
+}

@@ -4,11 +4,13 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use keel::api::{DependencyDto, ImplDto, ReferenceDto, SymbolDto};
 use keel::cli::{commands, Cli, Commands};
+use std::path::Path;
 
 /// Record one CLI query for the Insights portal (best-effort, local only).
 fn log_cli_query<T>(
     tool: &str,
     target: &str,
+    module: Option<&str>,
     qr: &keel::QueryResult<T>,
     start: std::time::Instant,
 ) {
@@ -18,7 +20,7 @@ fn log_cli_query<T>(
         keel::usage::Surface::Cli,
         tool,
         target,
-        None,
+        module,
         &summary,
         start.elapsed().as_millis() as u64,
     );
@@ -32,10 +34,20 @@ fn main() -> Result<()> {
         Commands::Index { path } => {
             let stats = commands::run_index(&path)
                 .with_context(|| format!("indexing {}", path.display()))?;
-            println!(
-                "Indexed {} file(s) (skipped {}, removed {}, errors {}).",
-                stats.indexed, stats.skipped, stats.removed, stats.errors
-            );
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "indexed": stats.indexed,
+                        "skipped": stats.skipped,
+                        "removed": stats.removed,
+                        "errors": stats.errors,
+                        "syntax_errors": stats.syntax_errors,
+                    })
+                );
+            } else {
+                commands::print_index_stats(&stats);
+            }
         }
         Commands::Watch { path } => {
             commands::run_watch(&path)
@@ -52,65 +64,125 @@ fn main() -> Result<()> {
             commands::run_stop().context("unregistering project")?;
         }
         Commands::Status => {
-            commands::run_status().context("daemon status")?;
+            if json {
+                println!(
+                    "{}",
+                    commands::status_json(Path::new(".")).context("daemon status")?
+                );
+            } else {
+                commands::run_status().context("daemon status")?;
+            }
         }
         Commands::DaemonStop => {
             commands::run_daemon_stop().context("stopping keel daemon")?;
         }
         Commands::Doctor { path } => {
-            commands::run_doctor(&path)
-                .with_context(|| format!("diagnosing {}", path.display()))?;
+            if json {
+                println!(
+                    "{}",
+                    commands::doctor_checks_json(&path)
+                        .with_context(|| format!("diagnosing {}", path.display()))?
+                );
+            } else {
+                commands::run_doctor(&path)
+                    .with_context(|| format!("diagnosing {}", path.display()))?;
+            }
         }
         Commands::Init { path } => {
             commands::run_init(&path)
                 .with_context(|| format!("initializing {}", path.display()))?;
         }
-        Commands::Definition { name } => {
+        Commands::Definition {
+            name,
+            module,
+            limit,
+            preview,
+        } => {
             let start = std::time::Instant::now();
-            let qr =
-                commands::run_definition_meta(&name, auto_index).context("querying definition")?;
-            log_cli_query("definition", &name, &qr, start);
+            let qr = commands::run_definition_meta(&name, module.as_deref(), auto_index)
+                .context("querying definition")?
+                .truncated(keel::graph::query_result::resolve_limit(limit));
+            log_cli_query("definition", &name, module.as_deref(), &qr, start);
+            let mut previews = commands::preview_cache(preview);
             if json {
-                let out = qr.map_results(|s| SymbolDto::from(&s));
+                let out = match previews.as_mut() {
+                    Some(cache) => qr.map_results(|s| {
+                        let mut d = SymbolDto::from(&s);
+                        d.preview = cache.line(&s.file, s.start_line);
+                        d
+                    }),
+                    None => qr.map_results(|s| SymbolDto::from(&s)),
+                };
                 println!("{}", serde_json::to_string_pretty(&out)?);
-            } else {
-                if qr.results.is_empty() {
-                    eprintln!("No definition found for {name}");
-                    for n in commands::extra_miss_notes(&qr.notes) {
-                        eprintln!("{n}");
-                    }
+            } else if qr.results.is_empty() {
+                eprintln!("No definition found for {name}");
+                for n in commands::extra_miss_notes(&qr.notes) {
+                    eprintln!("{n}");
                 }
+            } else {
                 for s in qr.results {
-                    println!("{}", commands::format_symbol_hit(&s));
+                    commands::print_symbol_hit(&s, &mut previews);
+                }
+                for n in &qr.notes {
+                    eprintln!("{n}");
                 }
             }
         }
-        Commands::References { name } => {
+        Commands::References {
+            name,
+            module,
+            limit,
+            preview,
+        } => {
             let start = std::time::Instant::now();
-            let qr =
-                commands::run_references_meta(&name, auto_index).context("querying references")?;
-            log_cli_query("references", &name, &qr, start);
+            let qr = commands::run_references_meta(&name, module.as_deref(), limit, auto_index)
+                .context("querying references")?;
+            log_cli_query("references", &name, module.as_deref(), &qr, start);
+            let mut previews = commands::preview_cache(preview);
             if json {
-                let out = qr.map_results(|r| ReferenceDto::from(&r));
+                let out = match previews.as_mut() {
+                    Some(cache) => qr.map_results(|r| {
+                        let mut d = ReferenceDto::from(&r);
+                        d.preview = cache.line(&r.file, r.start_line);
+                        d
+                    }),
+                    None => qr.map_results(|r| ReferenceDto::from(&r)),
+                };
                 println!("{}", serde_json::to_string_pretty(&out)?);
-            } else {
-                if qr.results.is_empty() {
-                    eprintln!("No references found for {name}");
-                    for n in commands::extra_miss_notes(&qr.notes) {
-                        eprintln!("{n}");
-                    }
+            } else if qr.results.is_empty() {
+                eprintln!("No references found for {name}");
+                for n in commands::extra_miss_notes(&qr.notes) {
+                    eprintln!("{n}");
                 }
+            } else {
                 for r in qr.results {
-                    println!("{}", commands::format_reference_hit(&r));
+                    commands::print_reference_hit(&r, &mut previews);
+                }
+                for n in &qr.notes {
+                    eprintln!("{n}");
                 }
             }
         }
-        Commands::Callers { name } => {
+        Commands::Callers {
+            name,
+            module,
+            limit,
+            preview,
+        } => {
             let start = std::time::Instant::now();
-            let qr = commands::run_callers_meta(&name, auto_index).context("querying callers")?;
-            log_cli_query("callers", &name, &qr, start);
+            let qr = commands::run_callers_meta(&name, module.as_deref(), limit, auto_index)
+                .context("querying callers")?;
+            log_cli_query("callers", &name, module.as_deref(), &qr, start);
+            let mut previews = commands::preview_cache(preview);
             if json {
-                let out = qr.map_results(|r| ReferenceDto::from(&r));
+                let out = match previews.as_mut() {
+                    Some(cache) => qr.map_results(|r| {
+                        let mut d = ReferenceDto::from(&r);
+                        d.preview = cache.line(&r.file, r.start_line);
+                        d
+                    }),
+                    None => qr.map_results(|r| ReferenceDto::from(&r)),
+                };
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else if qr.results.is_empty() {
                 eprintln!("No callers found for {name}");
@@ -119,17 +191,34 @@ fn main() -> Result<()> {
                 }
             } else {
                 for r in qr.results {
-                    println!("{}", commands::format_reference_hit(&r));
+                    commands::print_reference_hit(&r, &mut previews);
+                }
+                for n in &qr.notes {
+                    eprintln!("{n}");
                 }
             }
         }
-        Commands::Implementations { name } => {
+        Commands::Implementations {
+            name,
+            module,
+            limit,
+            preview,
+        } => {
             let start = std::time::Instant::now();
-            let qr = commands::run_implementations_meta(&name, auto_index)
-                .context("querying implementations")?;
-            log_cli_query("implementations", &name, &qr, start);
+            let qr = commands::run_implementations_meta(&name, module.as_deref(), auto_index)
+                .context("querying implementations")?
+                .truncated(keel::graph::query_result::resolve_limit(limit));
+            log_cli_query("implementations", &name, module.as_deref(), &qr, start);
+            let mut previews = commands::preview_cache(preview);
             if json {
-                let out = qr.map_results(|i| ImplDto::from(&i));
+                let out = match previews.as_mut() {
+                    Some(cache) => qr.map_results(|i| {
+                        let mut d = ImplDto::from(&i);
+                        d.preview = cache.line(&i.file, i.start_line);
+                        d
+                    }),
+                    None => qr.map_results(|i| ImplDto::from(&i)),
+                };
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else if qr.results.is_empty() {
                 eprintln!("No implementations found for {name}");
@@ -138,21 +227,19 @@ fn main() -> Result<()> {
                 }
             } else {
                 for i in qr.results {
-                    println!(
-                        "{}:{}:{}\t{}",
-                        i.file.display(),
-                        i.start_line,
-                        i.start_col,
-                        i.type_name
-                    );
+                    commands::print_impl_hit(&i, &mut previews);
+                }
+                for n in &qr.notes {
+                    eprintln!("{n}");
                 }
             }
         }
-        Commands::Dependencies { name } => {
+        Commands::Dependencies { name, limit } => {
             let start = std::time::Instant::now();
             let qr = commands::run_dependencies_meta(&name, auto_index)
-                .context("querying dependencies")?;
-            log_cli_query("dependencies", &name, &qr, start);
+                .context("querying dependencies")?
+                .truncated(keel::graph::query_result::resolve_limit(limit));
+            log_cli_query("dependencies", &name, None, &qr, start);
             if json {
                 let out = qr.map_results(|d| DependencyDto::from(&d));
                 println!("{}", serde_json::to_string_pretty(&out)?);
@@ -168,23 +255,181 @@ fn main() -> Result<()> {
                         None => println!("{}\texternal", d.module_path),
                     }
                 }
+                for n in &qr.notes {
+                    eprintln!("{n}");
+                }
             }
         }
-        Commands::Impact { name } => {
+        Commands::Dependents { name, limit } => {
             let start = std::time::Instant::now();
-            let qr = commands::run_impact_meta(&name, auto_index).context("querying impact")?;
-            log_cli_query("impact", &name, &qr, start);
+            let qr = commands::run_dependents_meta(&name, auto_index)
+                .context("querying dependents")?
+                .truncated(keel::graph::query_result::resolve_limit(limit));
+            log_cli_query("dependents", &name, None, &qr, start);
             if json {
-                let out = qr.map_results(|s| SymbolDto::from(&s));
+                let out = qr.map_results(|d| DependencyDto::from(&d));
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else if qr.results.is_empty() {
-                eprintln!("No impact found for {name}");
+                eprintln!("No dependents found for {name}");
+                for n in commands::extra_miss_notes(&qr.notes) {
+                    eprintln!("{n}");
+                }
+            } else {
+                for d in qr.results {
+                    match &d.file {
+                        Some(file) => println!("{}\t{}", d.module_path, file.display()),
+                        None => println!("{}\texternal", d.module_path),
+                    }
+                }
+                for n in &qr.notes {
+                    eprintln!("{n}");
+                }
+            }
+        }
+        Commands::Impact {
+            name,
+            module,
+            limit,
+            preview,
+        } => {
+            let start = std::time::Instant::now();
+            let qr = commands::run_impact_meta(&name, module.as_deref(), limit, auto_index)
+                .context("querying impact")?;
+            log_cli_query("impact", &name, module.as_deref(), &qr, start);
+            let mut previews = commands::preview_cache(preview);
+            if json {
+                let out = match previews.as_mut() {
+                    Some(cache) => qr.map_results(|s| {
+                        let mut d = SymbolDto::from(&s);
+                        d.preview = cache.line(&s.file, s.start_line);
+                        d
+                    }),
+                    None => qr.map_results(|s| SymbolDto::from(&s)),
+                };
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if qr.results.is_empty() {
+                if commands::has_file_scope_note(&qr.notes) {
+                    eprintln!("No impacted symbols for {name}");
+                } else {
+                    eprintln!("No impact found for {name}");
+                }
                 for n in commands::extra_miss_notes(&qr.notes) {
                     eprintln!("{n}");
                 }
             } else {
                 for s in qr.results {
-                    println!("{}", commands::format_symbol_hit(&s));
+                    commands::print_symbol_hit(&s, &mut previews);
+                }
+                for n in &qr.notes {
+                    eprintln!("{n}");
+                }
+            }
+        }
+        Commands::Search {
+            pattern,
+            limit,
+            preview,
+        } => {
+            let start = std::time::Instant::now();
+            let qr =
+                commands::run_search_meta(&pattern, limit, auto_index).context("searching")?;
+            log_cli_query("search", &pattern, None, &qr, start);
+            let mut previews = commands::preview_cache(preview);
+            if json {
+                let out = match previews.as_mut() {
+                    Some(cache) => qr.map_results(|s| {
+                        let mut d = SymbolDto::from(&s);
+                        d.preview = cache.line(&s.file, s.start_line);
+                        d
+                    }),
+                    None => qr.map_results(|s| SymbolDto::from(&s)),
+                };
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if qr.results.is_empty() {
+                eprintln!("No symbols matching `{pattern}`");
+                for n in commands::extra_miss_notes(&qr.notes) {
+                    eprintln!("{n}");
+                }
+            } else {
+                for s in qr.results {
+                    commands::print_symbol_hit(&s, &mut previews);
+                }
+                for n in &qr.notes {
+                    eprintln!("{n}");
+                }
+            }
+        }
+        Commands::Outline {
+            path,
+            limit,
+            preview,
+        } => {
+            let start = std::time::Instant::now();
+            let file = path.to_string_lossy().into_owned();
+            let qr = commands::run_outline_meta(&file, auto_index)
+                .context("querying outline")?
+                .truncated(keel::graph::query_result::resolve_limit(limit));
+            log_cli_query("outline", &file, None, &qr, start);
+            let mut previews = commands::preview_cache(preview);
+            if json {
+                let out = match previews.as_mut() {
+                    Some(cache) => qr.map_results(|s| {
+                        let mut d = SymbolDto::from(&s);
+                        d.preview = cache.line(&s.file, s.start_line);
+                        d
+                    }),
+                    None => qr.map_results(|s| SymbolDto::from(&s)),
+                };
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if qr.results.is_empty() {
+                eprintln!("No symbols found in {file}");
+                for n in commands::extra_miss_notes(&qr.notes) {
+                    eprintln!("{n}");
+                }
+            } else {
+                for s in qr.results {
+                    commands::print_symbol_hit(&s, &mut previews);
+                }
+                for n in &qr.notes {
+                    eprintln!("{n}");
+                }
+            }
+        }
+        Commands::Unused {
+            path,
+            limit,
+            preview,
+            transitive,
+        } => {
+            let start = std::time::Instant::now();
+            let target = path.as_ref().map(|p| p.to_string_lossy().into_owned());
+            let scope = target.as_deref().unwrap_or("project");
+            let qr = commands::run_unused_meta_opts(target.as_deref(), transitive, auto_index)
+                .context("querying unused")?
+                .truncated(keel::graph::query_result::resolve_limit(limit));
+            log_cli_query("unused", scope, None, &qr, start);
+            let mut previews = commands::preview_cache(preview);
+            if json {
+                let out = match previews.as_mut() {
+                    Some(cache) => qr.map_results(|s| {
+                        let mut d = SymbolDto::from(&s);
+                        d.preview = cache.line(&s.file, s.start_line);
+                        d
+                    }),
+                    None => qr.map_results(|s| SymbolDto::from(&s)),
+                };
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if qr.results.is_empty() {
+                eprintln!("No unreferenced functions found in {scope}");
+                for n in commands::extra_miss_notes(&qr.notes) {
+                    eprintln!("{n}");
+                }
+            } else {
+                for s in qr.results {
+                    commands::print_symbol_hit(&s, &mut previews);
+                }
+                for n in &qr.notes {
+                    eprintln!("{n}");
                 }
             }
         }
@@ -194,6 +439,9 @@ fn main() -> Result<()> {
         Commands::Insights { port } => {
             commands::run_insights(port, auto_index, json)
                 .context("opening Insights dashboard")?;
+        }
+        Commands::InsightsStop => {
+            commands::run_insights_stop().context("stopping Insights server")?;
         }
         Commands::Mcp => {
             commands::run_mcp(auto_index).context("serving MCP")?;

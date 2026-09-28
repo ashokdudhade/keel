@@ -1,0 +1,577 @@
+{
+  "summary": {
+    "without_keel": {
+      "tp": 15,
+      "fp": 158,
+      "fn": 0,
+      "precision": 0.08670520231213873,
+      "recall": 1.0,
+      "f1": 0.1595744680851064
+    },
+    "with_keel": {
+      "tp": 15,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "queries": 12
+  },
+  "rows": [
+    {
+      "symbol": "helper",
+      "language": "Python",
+      "without_keel": {
+        "tp": 1,
+        "fp": 30,
+        "fn": 0,
+        "precision": 0.03225806451612903,
+        "recall": 1.0,
+        "f1": 0.0625,
+        "predicted": [
+          "go/h.go:5",
+          "js/src/a.js:1",
+          "js/src/a.js:2",
+          "js/src/a.js:3",
+          "js/src/a.js:5",
+          "js/src/m.js:1",
+          "js/src/n.js:1",
+          "js/src/n.js:5",
+          "py/src/a.py:1",
+          "py/src/a.py:3",
+          "py/src/a.py:4",
+          "py/src/a.py:7",
+          "py/src/m.py:1",
+          "py/src/n.py:1",
+          "py/src/n.py:5",
+          "rs/src/a.rs:1",
+          "rs/src/a.rs:3",
+          "rs/src/a.rs:4",
+          "rs/src/a.rs:7",
+          "rs/src/m.rs:1",
+          "rs/src/n.rs:1",
+          "rs/src/n.rs:6",
+          "ts/src/a.ts:1",
+          "ts/src/a.ts:3",
+          "ts/src/a.ts:4",
+          "ts/src/a.ts:7",
+          "ts/src/m.ts:1",
+          "ts/src/n.ts:1",
+          "ts/src/n.ts:6",
+          "ts/src/o.ts:4",
+          "ts/src/p.ts:4"
+        ],
+        "expected": [
+          "py/src/a.py:7"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/src/a.py:7"
+        ],
+        "expected": [
+          "py/src/a.py:7"
+        ]
+      }
+    },
+    {
+      "symbol": "count",
+      "language": "Python",
+      "without_keel": {
+        "tp": 2,
+        "fp": 5,
+        "fn": 0,
+        "precision": 0.2857142857142857,
+        "recall": 1.0,
+        "f1": 0.4444444444444445,
+        "predicted": [
+          "py/src/c.py:1",
+          "py/src/d.py:1",
+          "py/src/d.py:12",
+          "py/src/d.py:4",
+          "py/src/d.py:5",
+          "py/src/d.py:8",
+          "py/src/d.py:9"
+        ],
+        "expected": [
+          "py/src/d.py:12",
+          "py/src/d.py:5"
+        ]
+      },
+      "with_keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/src/d.py:12",
+          "py/src/d.py:5"
+        ],
+        "expected": [
+          "py/src/d.py:12",
+          "py/src/d.py:5"
+        ]
+      }
+    },
+    {
+      "symbol": "helper",
+      "language": "Rust",
+      "without_keel": {
+        "tp": 1,
+        "fp": 30,
+        "fn": 0,
+        "precision": 0.03225806451612903,
+        "recall": 1.0,
+        "f1": 0.0625,
+        "predicted": [
+          "go/h.go:5",
+          "js/src/a.js:1",
+          "js/src/a.js:2",
+          "js/src/a.js:3",
+          "js/src/a.js:5",
+          "js/src/m.js:1",
+          "js/src/n.js:1",
+          "js/src/n.js:5",
+          "py/src/a.py:1",
+          "py/src/a.py:3",
+          "py/src/a.py:4",
+          "py/src/a.py:7",
+          "py/src/m.py:1",
+          "py/src/n.py:1",
+          "py/src/n.py:5",
+          "rs/src/a.rs:1",
+          "rs/src/a.rs:3",
+          "rs/src/a.rs:4",
+          "rs/src/a.rs:7",
+          "rs/src/m.rs:1",
+          "rs/src/n.rs:1",
+          "rs/src/n.rs:6",
+          "ts/src/a.ts:1",
+          "ts/src/a.ts:3",
+          "ts/src/a.ts:4",
+          "ts/src/a.ts:7",
+          "ts/src/m.ts:1",
+          "ts/src/n.ts:1",
+          "ts/src/n.ts:6",
+          "ts/src/o.ts:4",
+          "ts/src/p.ts:4"
+        ],
+        "expected": [
+          "rs/src/a.rs:7"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rs/src/a.rs:7"
+        ],
+        "expected": [
+          "rs/src/a.rs:7"
+        ]
+      }
+    },
+    {
+      "symbol": "port",
+      "language": "Rust",
+      "without_keel": {
+        "tp": 1,
+        "fp": 8,
+        "fn": 0,
+        "precision": 0.1111111111111111,
+        "recall": 1.0,
+        "f1": 0.19999999999999998,
+        "predicted": [
+          "js/src/e.js:2",
+          "js/src/f.js:2",
+          "js/src/f.js:4",
+          "rs/src/e.rs:4",
+          "rs/src/f.rs:3",
+          "rs/src/f.rs:5",
+          "ts/src/e.ts:2",
+          "ts/src/f.ts:2",
+          "ts/src/f.ts:4"
+        ],
+        "expected": [
+          "rs/src/f.rs:5"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rs/src/f.rs:5"
+        ],
+        "expected": [
+          "rs/src/f.rs:5"
+        ]
+      }
+    },
+    {
+      "symbol": "helper",
+      "language": "TypeScript",
+      "without_keel": {
+        "tp": 3,
+        "fp": 28,
+        "fn": 0,
+        "precision": 0.0967741935483871,
+        "recall": 1.0,
+        "f1": 0.17647058823529413,
+        "predicted": [
+          "go/h.go:5",
+          "js/src/a.js:1",
+          "js/src/a.js:2",
+          "js/src/a.js:3",
+          "js/src/a.js:5",
+          "js/src/m.js:1",
+          "js/src/n.js:1",
+          "js/src/n.js:5",
+          "py/src/a.py:1",
+          "py/src/a.py:3",
+          "py/src/a.py:4",
+          "py/src/a.py:7",
+          "py/src/m.py:1",
+          "py/src/n.py:1",
+          "py/src/n.py:5",
+          "rs/src/a.rs:1",
+          "rs/src/a.rs:3",
+          "rs/src/a.rs:4",
+          "rs/src/a.rs:7",
+          "rs/src/m.rs:1",
+          "rs/src/n.rs:1",
+          "rs/src/n.rs:6",
+          "ts/src/a.ts:1",
+          "ts/src/a.ts:3",
+          "ts/src/a.ts:4",
+          "ts/src/a.ts:7",
+          "ts/src/m.ts:1",
+          "ts/src/n.ts:1",
+          "ts/src/n.ts:6",
+          "ts/src/o.ts:4",
+          "ts/src/p.ts:4"
+        ],
+        "expected": [
+          "ts/src/a.ts:7",
+          "ts/src/o.ts:4",
+          "ts/src/p.ts:4"
+        ]
+      },
+      "with_keel": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/a.ts:7",
+          "ts/src/o.ts:4",
+          "ts/src/p.ts:4"
+        ],
+        "expected": [
+          "ts/src/a.ts:7",
+          "ts/src/o.ts:4",
+          "ts/src/p.ts:4"
+        ]
+      }
+    },
+    {
+      "symbol": "port",
+      "language": "TypeScript",
+      "without_keel": {
+        "tp": 1,
+        "fp": 8,
+        "fn": 0,
+        "precision": 0.1111111111111111,
+        "recall": 1.0,
+        "f1": 0.19999999999999998,
+        "predicted": [
+          "js/src/e.js:2",
+          "js/src/f.js:2",
+          "js/src/f.js:4",
+          "rs/src/e.rs:4",
+          "rs/src/f.rs:3",
+          "rs/src/f.rs:5",
+          "ts/src/e.ts:2",
+          "ts/src/f.ts:2",
+          "ts/src/f.ts:4"
+        ],
+        "expected": [
+          "ts/src/f.ts:4"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/f.ts:4"
+        ],
+        "expected": [
+          "ts/src/f.ts:4"
+        ]
+      }
+    },
+    {
+      "symbol": "helper",
+      "language": "JavaScript",
+      "without_keel": {
+        "tp": 1,
+        "fp": 30,
+        "fn": 0,
+        "precision": 0.03225806451612903,
+        "recall": 1.0,
+        "f1": 0.0625,
+        "predicted": [
+          "go/h.go:5",
+          "js/src/a.js:1",
+          "js/src/a.js:2",
+          "js/src/a.js:3",
+          "js/src/a.js:5",
+          "js/src/m.js:1",
+          "js/src/n.js:1",
+          "js/src/n.js:5",
+          "py/src/a.py:1",
+          "py/src/a.py:3",
+          "py/src/a.py:4",
+          "py/src/a.py:7",
+          "py/src/m.py:1",
+          "py/src/n.py:1",
+          "py/src/n.py:5",
+          "rs/src/a.rs:1",
+          "rs/src/a.rs:3",
+          "rs/src/a.rs:4",
+          "rs/src/a.rs:7",
+          "rs/src/m.rs:1",
+          "rs/src/n.rs:1",
+          "rs/src/n.rs:6",
+          "ts/src/a.ts:1",
+          "ts/src/a.ts:3",
+          "ts/src/a.ts:4",
+          "ts/src/a.ts:7",
+          "ts/src/m.ts:1",
+          "ts/src/n.ts:1",
+          "ts/src/n.ts:6",
+          "ts/src/o.ts:4",
+          "ts/src/p.ts:4"
+        ],
+        "expected": [
+          "js/src/a.js:5"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/a.js:5"
+        ],
+        "expected": [
+          "js/src/a.js:5"
+        ]
+      }
+    },
+    {
+      "symbol": "port",
+      "language": "JavaScript",
+      "without_keel": {
+        "tp": 1,
+        "fp": 8,
+        "fn": 0,
+        "precision": 0.1111111111111111,
+        "recall": 1.0,
+        "f1": 0.19999999999999998,
+        "predicted": [
+          "js/src/e.js:2",
+          "js/src/f.js:2",
+          "js/src/f.js:4",
+          "rs/src/e.rs:4",
+          "rs/src/f.rs:3",
+          "rs/src/f.rs:5",
+          "ts/src/e.ts:2",
+          "ts/src/f.ts:2",
+          "ts/src/f.ts:4"
+        ],
+        "expected": [
+          "js/src/f.js:4"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/f.js:4"
+        ],
+        "expected": [
+          "js/src/f.js:4"
+        ]
+      }
+    },
+    {
+      "symbol": "Helper",
+      "language": "Go",
+      "without_keel": {
+        "tp": 1,
+        "fp": 5,
+        "fn": 0,
+        "precision": 0.16666666666666666,
+        "recall": 1.0,
+        "f1": 0.2857142857142857,
+        "predicted": [
+          "go/a.go:5",
+          "go/a.go:6",
+          "go/a.go:9",
+          "go/m.go:3",
+          "go/n.go:3",
+          "go/n.go:8"
+        ],
+        "expected": [
+          "go/a.go:9"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/a.go:9"
+        ],
+        "expected": [
+          "go/a.go:9"
+        ]
+      }
+    },
+    {
+      "symbol": "Port",
+      "language": "Go",
+      "without_keel": {
+        "tp": 1,
+        "fp": 2,
+        "fn": 0,
+        "precision": 0.3333333333333333,
+        "recall": 1.0,
+        "f1": 0.5,
+        "predicted": [
+          "go/e.go:4",
+          "go/f.go:5",
+          "go/f.go:7"
+        ],
+        "expected": [
+          "go/f.go:7"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/f.go:7"
+        ],
+        "expected": [
+          "go/f.go:7"
+        ]
+      }
+    },
+    {
+      "symbol": "double",
+      "language": "Python",
+      "without_keel": {
+        "tp": 1,
+        "fp": 2,
+        "fn": 0,
+        "precision": 0.3333333333333333,
+        "recall": 1.0,
+        "f1": 0.5,
+        "predicted": [
+          "py/src/u.py:1",
+          "py/src/v.py:3",
+          "py/src/v.py:5"
+        ],
+        "expected": [
+          "py/src/v.py:5"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/src/v.py:5"
+        ],
+        "expected": [
+          "py/src/v.py:5"
+        ]
+      }
+    },
+    {
+      "symbol": "Aid",
+      "language": "Go",
+      "without_keel": {
+        "tp": 1,
+        "fp": 2,
+        "fn": 0,
+        "precision": 0.3333333333333333,
+        "recall": 1.0,
+        "f1": 0.5,
+        "predicted": [
+          "go/g.go:3",
+          "go/h.go:5",
+          "go/h.go:7"
+        ],
+        "expected": [
+          "go/h.go:7"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/h.go:7"
+        ],
+        "expected": [
+          "go/h.go:7"
+        ]
+      }
+    }
+  ]
+}

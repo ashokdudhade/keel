@@ -11,6 +11,10 @@ OUT_DIR="$ROOT/reports"
 OUT_HTML="$OUT_DIR/gemini-cli-accuracy-benchmark.html"
 OUT_JSON="$OUT_DIR/gemini-cli-accuracy-benchmark.json"
 SSH_URL="git@github.com:google-gemini/gemini-cli.git"
+HTTPS_URL="https://github.com/google-gemini/gemini-cli.git"
+# Pin the upstream revision for reproducible gold lines, e.g.
+# KEEL_BENCH_REF=v0.5.0. Default tracks the default branch (gold may drift).
+REF="${KEEL_BENCH_REF:-}"
 
 KEEL_BIN="${KEEL_BIN:-}"
 if [ -z "$KEEL_BIN" ]; then
@@ -32,8 +36,15 @@ fi
 mkdir -p "$CACHE" "$OUT_DIR"
 
 if [ ! -d "$REPO_DIR/.git" ]; then
-  echo "Cloning $SSH_URL …"
-  git clone --depth 1 "$SSH_URL" "$REPO_DIR"
+  if [ -n "$REF" ]; then
+    echo "Cloning $HTTPS_URL @ $REF …"
+    git clone --depth 1 --branch "$REF" "$HTTPS_URL" "$REPO_DIR" \
+      || git clone --depth 1 --branch "$REF" "$SSH_URL" "$REPO_DIR"
+  else
+    echo "Cloning $HTTPS_URL …"
+    git clone --depth 1 "$HTTPS_URL" "$REPO_DIR" \
+      || git clone --depth 1 "$SSH_URL" "$REPO_DIR"
+  fi
 else
   echo "Using existing clone at $REPO_DIR"
 fi

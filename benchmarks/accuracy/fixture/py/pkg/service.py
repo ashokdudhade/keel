@@ -7,3 +7,6 @@ def create_order():
 
 # decoy that looks like a definition to naive scanners
 text = "def create_order():"
+
+class PyConfig:
+    port = 8080

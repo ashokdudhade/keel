@@ -20,6 +20,8 @@ jobs:
           workspaces: keel
       - name: Test
         run: cargo test
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
       - name: Build release binary
         run: cargo build --release
 
@@ -40,3 +42,27 @@ jobs:
         env:
           KEEL_BIN: ${{ github.workspace }}/keel/target/release/keel
         run: python3 scripts/mcp-trust-smoke.py
+
+  benchmarks:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: keel
+      - name: Build release binary
+        run: cargo build --release --manifest-path keel/Cargo.toml
+      - name: Impact benchmark (F1 1.0 gate)
+        env:
+          KEEL_BIN: ${{ github.workspace }}/keel/target/release/keel
+        run: bash scripts/impact-benchmark.sh
+      - name: Accuracy benchmark (F1 1.0 gate)
+        env:
+          KEEL_BIN: ${{ github.workspace }}/keel/target/release/keel
+        run: bash scripts/accuracy-benchmark.sh
+      - name: References benchmark (F1 1.0 gate)
+        env:
+          KEEL_BIN: ${{ github.workspace }}/keel/target/release/keel
+        run: bash scripts/references-benchmark.sh

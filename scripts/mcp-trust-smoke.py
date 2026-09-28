@@ -153,6 +153,69 @@ def main() -> None:
                 "arguments": {"name": "stores_paths_relative_to_root"},
             },
         },
+        {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {
+                "name": "outline",
+                "arguments": {"path": "keel/src/lib.rs"},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "search",
+                "arguments": {"pattern": "serve"},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "search",
+                "arguments": {"pattern": "serve", "limit": 1},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {
+                "name": "dependents",
+                "arguments": {"name": "crate::mcp"},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "tools/call",
+            "params": {
+                "name": "definition",
+                "arguments": {"name": "serve", "module": "crate::mcp", "preview": True},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "tools/call",
+            "params": {
+                "name": "implementations",
+                "arguments": {"name": "LanguagePlugin", "preview": True},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "tools/call",
+            "params": {
+                "name": "unused",
+                "arguments": {"path": "keel/src/mcp", "limit": 5, "transitive": True},
+            },
+        },
     ]
 
     responses, stderr = mcp_call(bin_path, msgs)
@@ -168,7 +231,11 @@ def main() -> None:
         "callers",
         "implementations",
         "dependencies",
+        "dependents",
         "impact",
+        "outline",
+        "search",
+        "unused",
         "index",
     ):
         if required not in names:
@@ -178,6 +245,8 @@ def main() -> None:
         failures.append("definition tool description missing confidence guidance")
     if "module" not in definition.get("inputSchema", {}).get("properties", {}):
         failures.append("definition missing module argument")
+    if "preview" not in definition.get("inputSchema", {}).get("properties", {}):
+        failures.append("definition missing preview argument")
     if not definition.get("annotations", {}).get("readOnlyHint"):
         failures.append("definition missing readOnlyHint annotation")
 
@@ -233,6 +302,67 @@ def main() -> None:
         )
     if "No impacted symbols found." not in empty_impact.get("notes", []):
         failures.append(f"empty impact missing honest note: {empty_impact.get('notes')}")
+
+    outline = payload_from(by_id[9])
+    if not outline.get("results"):
+        failures.append(f"outline keel/src/lib.rs empty: {outline}")
+    if outline.get("confidence") != "high":
+        failures.append(f"outline confidence want high got {outline.get('confidence')}")
+    outline_pos = [(r.get("start_line"), r.get("start_col")) for r in outline.get("results", [])]
+    if outline_pos != sorted(outline_pos):
+        failures.append(f"outline not in source order: {outline_pos}")
+
+    search = payload_from(by_id[10])
+    search_names = [r.get("name") for r in search.get("results", [])]
+    if "serve" not in search_names:
+        failures.append(f"search serve missing exact hit: {search}")
+    elif search_names[0] != "serve":
+        failures.append(f"search exact hit not ranked first: {search_names}")
+    search_limited = payload_from(by_id[11])
+    if len(search_limited.get("results", [])) != 1:
+        failures.append(f"search limit=1 want 1 hit got {search_limited}")
+    if not any("first 1 matches" in n for n in search_limited.get("notes", [])):
+        failures.append(f"search limit=1 missing truncation note: {search_limited}")
+
+    dependents = payload_from(by_id[12])
+    dep_modules = [r.get("module_path") for r in dependents.get("results", [])]
+    if "crate::cli::commands" not in dep_modules:
+        failures.append(f"dependents crate::mcp missing cli::commands: {dependents}")
+    if dependents.get("confidence") != "high":
+        failures.append(
+            f"dependents confidence want high got {dependents.get('confidence')}"
+        )
+
+    previewed = payload_from(by_id[13])
+    if len(previewed.get("results", [])) != 1:
+        failures.append(f"preview definition want 1 hit got {previewed}")
+    for r in previewed.get("results", []):
+        if not r.get("preview"):
+            failures.append(f"preview=true missing preview text: {r}")
+    for r in mod_arg.get("results", []):
+        if "preview" in r:
+            failures.append(f"preview must be absent when off: {r}")
+
+    impl_tool = next(t for t in tools if t["name"] == "implementations")
+    if "preview" not in impl_tool.get("inputSchema", {}).get("properties", {}):
+        failures.append("implementations missing preview argument")
+    impl_previewed = payload_from(by_id[14])
+    if not impl_previewed.get("results"):
+        failures.append(f"preview implementations want hits got {impl_previewed}")
+    for r in impl_previewed.get("results", []):
+        if not r.get("preview"):
+            failures.append(f"implementations preview=true missing text: {r}")
+
+    unused_tool = next(t for t in tools if t["name"] == "unused")
+    if "preview" not in unused_tool.get("inputSchema", {}).get("properties", {}):
+        failures.append("unused missing preview argument")
+    unused = payload_from(by_id[15])
+    if not isinstance(unused.get("results"), list):
+        failures.append(f"unused want results list got {unused}")
+    if not unused.get("notes"):
+        failures.append(f"unused want honesty notes got {unused}")
+    if unused.get("results") and unused.get("confidence") != "low":
+        failures.append(f"unused candidates want low confidence got {unused}")
 
     print("stderr:", stderr.strip()[:500])
     if failures:

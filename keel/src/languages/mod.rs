@@ -10,6 +10,7 @@ pub mod typescript;
 use crate::error::Result;
 use crate::graph::types::{Import, ImplRecord, Reference, Symbol};
 use std::path::{Path, PathBuf};
+use tree_sitter::Node;
 
 /// Path-based module identity: extension stripped, `/` separators.
 ///
@@ -68,6 +69,42 @@ pub fn file_path_key(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+/// Whether a JS/TS declaration node sits at module top level: a direct
+/// child of `program`, possibly through `export_statement` /
+/// `ambient_declaration` wrappers (`export const x`, `declare const x`).
+/// Plain variables gate on this — function bodies are full of locals that
+/// must not become module symbols — while bound arrow functions stay
+/// ungated (existing lookup behavior).
+pub(crate) fn is_top_level_js_declaration(node: Node) -> bool {
+    let mut current = node;
+    loop {
+        let Some(parent) = current.parent() else {
+            return false;
+        };
+        match parent.kind() {
+            "program" => return true,
+            "export_statement" | "ambient_declaration" => current = parent,
+            _ => return false,
+        }
+    }
+}
+
+/// Module identity for a file that defines no symbols (a top-level-only
+/// script or barrel), derived with the same function the extractor uses
+/// so the identity matches symbol modules exactly. Rust uses its
+/// top-scope `crate::` identity; Go has no path-derived identity (the
+/// package clause lives in source) and yields `None`.
+pub(crate) fn path_module_fallback(path: &Path) -> Option<String> {
+    match path.extension().and_then(|s| s.to_str()) {
+        Some("py" | "pyi") => Some(python::python_module_identity(path)),
+        Some("js" | "mjs" | "cjs" | "jsx" | "ts" | "mts" | "cts" | "tsx") => {
+            Some(path_module_identity(path))
+        }
+        Some("rs") => Some(rust::rust_file_module_identity(path)),
+        _ => None,
+    }
+}
+
 /// A language-specific extractor. Must be `Sync` so plugins can be shared across
 /// Rayon worker threads during parallel indexing.
 pub trait LanguagePlugin: Sync {
@@ -93,6 +130,17 @@ pub trait LanguagePlugin: Sync {
     fn extract_impls(&self, path: &Path, source_code: &str) -> Result<Vec<ImplRecord>> {
         let _ = (path, source_code);
         Ok(vec![])
+    }
+
+    /// Whether `source_code` parses with syntax errors. Tree-sitter still
+    /// produces a (partial) tree, so extraction continues — but the indexer
+    /// warns per file and bumps the `syntax_errors` count on
+    /// [`crate::index::IndexStats`], so agents know results for that file may
+    /// be incomplete. Defaults to `false` so third-party plugins keep working
+    /// unmodified.
+    fn has_syntax_errors(&self, source_code: &str) -> bool {
+        let _ = source_code;
+        false
     }
 }
 

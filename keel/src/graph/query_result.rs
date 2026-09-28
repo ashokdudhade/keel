@@ -44,6 +44,23 @@ impl Serialize for ResolutionTier {
     }
 }
 
+/// Default cap for unbounded hit lists (`references`, `callers`, `impact`).
+///
+/// Hot names (`clone`, `to_string`) can otherwise return tens of thousands
+/// of hits and blow agent context windows. Small result sets are unaffected;
+/// capped responses always carry an explanatory note, so completeness is
+/// never silently lost.
+pub const DEFAULT_RESULT_LIMIT: usize = 500;
+
+/// Upper bound for explicit `--limit`/`limit` overrides (still bounded:
+/// million-hit payloads help nobody; narrow with `module` instead).
+pub const MAX_RESULT_LIMIT: usize = 100_000;
+
+/// Resolve an optional caller limit to an effective cap.
+pub fn resolve_limit(limit: Option<usize>) -> usize {
+    limit.unwrap_or(DEFAULT_RESULT_LIMIT).clamp(1, MAX_RESULT_LIMIT)
+}
+
 /// Structured query response with backward-compatible `results` plus metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct QueryResult<T> {
@@ -75,6 +92,21 @@ impl<T> QueryResult<T> {
             resolution_tier: self.resolution_tier,
             notes: self.notes,
         }
+    }
+
+    /// Cap `results` at `limit` hits (head of the deterministic order),
+    /// appending a truncation note when anything is dropped. No-op when the
+    /// list already fits. Confidence/tier summaries are kept as computed
+    /// over the full set (conservative: never over-claimed by truncation).
+    pub fn truncated(mut self, limit: usize) -> Self {
+        let total = self.results.len();
+        if total > limit {
+            self.results.truncate(limit);
+            self.notes.push(format!(
+                "Showing first {limit} of {total} matches; narrow with module or raise the limit."
+            ));
+        }
+        self
     }
 
     pub fn from_tiers(
@@ -144,6 +176,31 @@ mod tests {
     #[test]
     fn high_when_all_tier_one_or_two() {
         assert_eq!(confidence_from_tiers(&[1, 2], false), Confidence::High);
+    }
+
+    #[test]
+    fn truncated_caps_with_note_and_leaves_small_lists_alone() {
+        let full: QueryResult<u8> =
+            QueryResult::from_tiers(vec![1, 2, 3], &[1, 1, 1], false, Vec::new());
+        let capped = full.truncated(2);
+        assert_eq!(capped.results, vec![1, 2]);
+        assert_eq!(capped.notes, vec!["Showing first 2 of 3 matches; narrow with module or raise the limit."]);
+        // Summaries stay as computed (conservative under truncation).
+        assert_eq!(capped.confidence, Confidence::High);
+
+        let small: QueryResult<u8> =
+            QueryResult::from_tiers(vec![1], &[1], false, Vec::new());
+        let kept = small.truncated(2);
+        assert_eq!(kept.results, vec![1]);
+        assert!(kept.notes.is_empty());
+    }
+
+    #[test]
+    fn resolve_limit_defaults_and_clamps() {
+        assert_eq!(resolve_limit(None), DEFAULT_RESULT_LIMIT);
+        assert_eq!(resolve_limit(Some(0)), 1);
+        assert_eq!(resolve_limit(Some(10)), 10);
+        assert_eq!(resolve_limit(Some(usize::MAX)), MAX_RESULT_LIMIT);
     }
 
     #[test]

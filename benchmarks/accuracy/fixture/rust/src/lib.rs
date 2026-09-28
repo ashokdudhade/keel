@@ -7,3 +7,13 @@ pub fn run() {
     // call site — not a definition
     create_order();
 }
+
+macro_rules! say {
+    ($x:expr) => {
+        $x
+    };
+}
+
+pub struct Cfg {
+    pub port: u16,
+}

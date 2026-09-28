@@ -28,10 +28,13 @@
     line-height: 1.5;
   }
   .wrap { max-width: 1080px; margin: 0 auto; }
-  header { margin-bottom: 20px; }
+  header { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
   header h1 { font-size: 22px; margin: 0 0 4px 0; font-weight: 650; }
   header .sub { color: var(--muted); font-size: 13px; }
   header .sub code { color: var(--text); }
+  .btn { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--blue); }
+  .btn:disabled { opacity: 0.5; cursor: default; }
   .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
   .card {
     background: var(--card);
@@ -68,6 +71,8 @@
   .muted { color: var(--muted); }
   .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: baseline; }
+  .search-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .search-row input { flex: 1; background: #0c1014; border: 1px solid var(--border); border-radius: 8px; color: #e6e9ee; padding: 8px 12px; font-size: 13px; font-family: inherit; }
   footer { margin-top: 16px; color: var(--muted); font-size: 12px; }
   @media (max-width: 800px) { .span3, .span4, .span6, .span8 { grid-column: span 12; } }
 </style>
@@ -75,8 +80,11 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>Keel Insights</h1>
-    <div class="sub" id="subtitle">loading…</div>
+    <div>
+      <h1>Keel Insights</h1>
+      <div class="sub" id="subtitle">loading…</div>
+    </div>
+    <button id="export" class="btn" type="button">Export JSON</button>
   </header>
   <div id="banner"></div>
   <div class="grid">
@@ -89,6 +97,13 @@
     <div class="card span4"><h2>By tool</h2><div id="bytool"></div></div>
     <div class="card span4"><h2>Top targets</h2><div id="top"></div></div>
     <div class="card span8"><h2>Recent queries</h2><div id="recent"></div></div>
+    <div class="card span12"><h2>Search symbols</h2>
+      <div class="search-row">
+        <input id="q" type="text" placeholder="substring, e.g. serve — Enter to search" autocomplete="off" spellcheck="false">
+        <button id="go" class="btn" type="button">Search</button>
+      </div>
+      <div id="results"><span class="muted">results appear here</span></div>
+    </div>
   </div>
   <footer>Local only — data never leaves this machine. Auto-refreshes every 30s. <span id="updated"></span></footer>
 </div>
@@ -208,15 +223,61 @@ function render(d) {
     : `<span class="muted">no queries yet</span>`;
   document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString() + ".";
 }
+async function okJson(r) {
+  const d = await r.json().catch(() => null);
+  if (!r.ok) throw new Error("HTTP " + r.status + (d && d.error ? ": " + d.error : ""));
+  return d;
+}
 async function load() {
   try {
     const r = await fetch("/api/insights", { cache: "no-store" });
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    render(await r.json());
+    render(await okJson(r));
   } catch (e) {
     document.getElementById("subtitle").textContent = "failed to load /api/insights: " + e;
   }
 }
+async function exportJson() {
+  const btn = document.getElementById("export");
+  try {
+    btn.disabled = true;
+    const r = await fetch("/api/insights", { cache: "no-store" });
+    const blob = new Blob([JSON.stringify(await okJson(r), null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "keel-insights-" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) {
+    document.getElementById("subtitle").textContent = "export failed: " + e;
+  } finally {
+    btn.disabled = false;
+  }
+}
+document.getElementById("export").addEventListener("click", exportJson);
+async function search() {
+  const box = document.getElementById("results");
+  const q = document.getElementById("q").value.trim();
+  if (!q) { box.innerHTML = `<span class="muted">type a substring first</span>`; return; }
+  box.innerHTML = `<span class="muted">searching…</span>`;
+  try {
+    const r = await fetch("/search/" + encodeURIComponent(q) + "?limit=20", { cache: "no-store" });
+    const d = await okJson(r);
+    const pill = `<span class="pill ${d.confidence === "high" ? "pill-green" : d.confidence === "medium" ? "pill-amber" : "pill-red"}">${esc(d.confidence)}</span>`;
+    const notes = (d.notes || []).map(n => `<div class="muted" style="font-size:12px">${esc(n)}</div>`).join("");
+    const rows = (d.results || []).map(s =>
+      `<tr><td class="mono">${esc(s.name)}</td><td>${esc(s.kind)}</td>` +
+      `<td class="mono">${esc(s.file)}:${s.start_line}:${s.start_col}</td></tr>`
+    ).join("");
+    box.innerHTML = `<div style="margin-bottom:6px">${pill} <span class="muted">${d.results.length} result${d.results.length === 1 ? "" : "s"}</span></div>${notes}` +
+      (rows ? `<table><tr><th>name</th><th>kind</th><th>location</th></tr>${rows}</table>` : "");
+  } catch (e) {
+    box.innerHTML = `<span class="fail">search failed: ${esc(e)}</span>`;
+  }
+}
+document.getElementById("go").addEventListener("click", search);
+document.getElementById("q").addEventListener("keydown", e => { if (e.key === "Enter") search(); });
 load();
 setInterval(load, 30000);
 </script>

@@ -36,6 +36,11 @@ pub enum KeelError {
     #[error("watch error: {0}")]
     Watch(String),
 
+    /// The global daemon, an Insights server, or a managed background
+    /// process failed (client, protocol, pidfile, or spawn/stop errors).
+    #[error("daemon error: {0}")]
+    Daemon(String),
+
     /// The JSON HTTP API server failed.
     #[error("API server error: {0}")]
     Api(String),
@@ -46,7 +51,7 @@ pub enum KeelError {
 
     /// The on-disk schema is newer than this build understands.
     #[error(
-        "database schema version {found} is newer than supported version {supported}"
+        "database schema version {found} is newer than supported version {supported}; upgrade keel to open this index"
     )]
     UnsupportedSchema {
         /// `PRAGMA user_version` found in the database.

@@ -2,15 +2,15 @@
   "title": "Keel real-world accuracy benchmark",
   "summary": {
     "without_keel": {
-      "tp": 15,
-      "fp": 4,
-      "fn": 6,
-      "precision": 0.7894736842105263,
-      "recall": 0.7142857142857143,
-      "f1": 0.7500000000000001
+      "tp": 19,
+      "fp": 0,
+      "fn": 9,
+      "precision": 1.0,
+      "recall": 0.6785714285714286,
+      "f1": 0.8085106382978724
     },
     "with_keel": {
-      "tp": 21,
+      "tp": 28,
       "fp": 0,
       "fn": 0,
       "precision": 1.0,
@@ -43,15 +43,15 @@
     "JavaScript": {
       "queries": 3,
       "without_keel": {
-        "tp": 3,
-        "fp": 4,
-        "fn": 0,
-        "precision": 0.42857142857142855,
-        "recall": 1.0,
-        "f1": 0.6
+        "tp": 7,
+        "fp": 0,
+        "fn": 1,
+        "precision": 1.0,
+        "recall": 0.875,
+        "f1": 0.9333333333333333
       },
       "with_keel": {
-        "tp": 3,
+        "tp": 8,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
@@ -83,13 +83,13 @@
       "without_keel": {
         "tp": 3,
         "fp": 0,
-        "fn": 2,
+        "fn": 4,
         "precision": 1.0,
-        "recall": 0.6,
-        "f1": 0.7499999999999999
+        "recall": 0.42857142857142855,
+        "f1": 0.6
       },
       "with_keel": {
-        "tp": 5,
+        "tp": 7,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
@@ -119,40 +119,40 @@
   },
   "index_stats": {
     "BurntSushi-walkdir": {
-      "seconds": 0.021,
-      "stdout": "Indexed 0 file(s) (skipped 9, removed 0, errors 0).",
+      "seconds": 0.015,
+      "stdout": "Indexed 0 file(s) (skipped 9, removed 0, errors 0, syntax errors 0).",
       "language": "Rust",
       "url": "https://github.com/BurntSushi/walkdir.git",
       "ref": "2.5.0",
       "description": "Popular Rust recursive directory walker"
     },
     "colinhacks-zod": {
-      "seconds": 0.024,
-      "stdout": "Indexed 0 file(s) (skipped 167, removed 0, errors 0).",
+      "seconds": 0.021,
+      "stdout": "Indexed 0 file(s) (skipped 167, removed 0, errors 0, syntax errors 0).",
       "language": "TypeScript",
       "url": "https://github.com/colinhacks/zod.git",
       "ref": "v3.23.8",
       "description": "Popular TypeScript schema validation library"
     },
     "expressjs-express": {
-      "seconds": 0.026,
-      "stdout": "Indexed 0 file(s) (skipped 152, removed 0, errors 0).",
+      "seconds": 0.019,
+      "stdout": "Indexed 0 file(s) (skipped 152, removed 0, errors 0, syntax errors 0).",
       "language": "JavaScript",
       "url": "https://github.com/expressjs/express.git",
       "ref": "4.21.2",
       "description": "Popular Node.js web framework"
     },
     "pallets-flask": {
-      "seconds": 0.026,
-      "stdout": "Indexed 0 file(s) (skipped 83, removed 0, errors 0).",
+      "seconds": 0.019,
+      "stdout": "Indexed 0 file(s) (skipped 83, removed 0, errors 0, syntax errors 0).",
       "language": "Python",
       "url": "https://github.com/pallets/flask.git",
       "ref": "3.1.0",
       "description": "Popular Python web microframework"
     },
     "spf13-cobra": {
-      "seconds": 0.021,
-      "stdout": "Indexed 0 file(s) (skipped 36, removed 0, errors 0).",
+      "seconds": 0.016,
+      "stdout": "Indexed 0 file(s) (skipped 36, removed 0, errors 0, syntax errors 0).",
       "language": "Go",
       "url": "https://github.com/spf13/cobra.git",
       "ref": "v1.8.1",
@@ -241,33 +241,39 @@
       "repo": "BurntSushi-walkdir",
       "language": "Rust",
       "symbol": "follow_links",
-      "note": "Builder method",
+      "note": "Builder method + options field + example CLI field",
       "without_keel": {
         "tp": 1,
         "fp": 0,
-        "fn": 0,
+        "fn": 2,
         "precision": 1.0,
-        "recall": 1.0,
-        "f1": 1.0,
+        "recall": 0.3333333333333333,
+        "f1": 0.5,
         "predicted": [
           "src/lib.rs:346"
         ],
         "expected": [
-          "src/lib.rs:346"
+          "src/lib.rs:240",
+          "src/lib.rs:346",
+          "walkdir-list/main.rs:158"
         ]
       },
       "with_keel": {
-        "tp": 1,
+        "tp": 3,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "src/lib.rs:346"
+          "src/lib.rs:240",
+          "src/lib.rs:346",
+          "walkdir-list/main.rs:158"
         ],
         "expected": [
-          "src/lib.rs:346"
+          "src/lib.rs:240",
+          "src/lib.rs:346",
+          "walkdir-list/main.rs:158"
         ]
       }
     },
@@ -454,35 +460,44 @@
       "repo": "expressjs-express",
       "language": "JavaScript",
       "symbol": "Route",
-      "note": "Router Route constructor",
+      "note": "Constructor + require aliases + test member alias",
       "without_keel": {
-        "tp": 1,
-        "fp": 2,
-        "fn": 0,
-        "precision": 0.3333333333333333,
-        "recall": 1.0,
-        "f1": 0.5,
+        "tp": 3,
+        "fp": 0,
+        "fn": 1,
+        "precision": 1.0,
+        "recall": 0.75,
+        "f1": 0.8571428571428571,
         "predicted": [
           "lib/express.js:19",
           "lib/router/index.js:16",
           "lib/router/route.js:43"
         ],
         "expected": [
-          "lib/router/route.js:43"
+          "lib/express.js:19",
+          "lib/router/index.js:16",
+          "lib/router/route.js:43",
+          "test/Route.js:6"
         ]
       },
       "with_keel": {
-        "tp": 1,
+        "tp": 4,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "lib/router/route.js:43"
+          "lib/express.js:19",
+          "lib/router/index.js:16",
+          "lib/router/route.js:43",
+          "test/Route.js:6"
         ],
         "expected": [
-          "lib/router/route.js:43"
+          "lib/express.js:19",
+          "lib/router/index.js:16",
+          "lib/router/route.js:43",
+          "test/Route.js:6"
         ]
       }
     },
@@ -490,35 +505,41 @@
       "repo": "expressjs-express",
       "language": "JavaScript",
       "symbol": "Layer",
-      "note": "Router Layer constructor",
+      "note": "Constructor + require aliases",
       "without_keel": {
-        "tp": 1,
-        "fp": 2,
-        "fn": 0,
-        "precision": 0.3333333333333333,
-        "recall": 1.0,
-        "f1": 0.5,
-        "predicted": [
-          "lib/router/index.js:17",
-          "lib/router/layer.js:33",
-          "lib/router/route.js:18"
-        ],
-        "expected": [
-          "lib/router/layer.js:33"
-        ]
-      },
-      "with_keel": {
-        "tp": 1,
+        "tp": 3,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
-          "lib/router/layer.js:33"
+          "lib/router/index.js:17",
+          "lib/router/layer.js:33",
+          "lib/router/route.js:18"
         ],
         "expected": [
-          "lib/router/layer.js:33"
+          "lib/router/index.js:17",
+          "lib/router/layer.js:33",
+          "lib/router/route.js:18"
+        ]
+      },
+      "with_keel": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "lib/router/index.js:17",
+          "lib/router/layer.js:33",
+          "lib/router/route.js:18"
+        ],
+        "expected": [
+          "lib/router/index.js:17",
+          "lib/router/layer.js:33",
+          "lib/router/route.js:18"
         ]
       }
     },

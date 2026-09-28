@@ -1,0 +1,149 @@
+{
+ "description": "Reference-finding accuracy: Keel module-scoped references vs whole-word grep. Traps for grep: definition lines, import lines, comments, string contents, cross-module same-name shadows, and write-only sites.",
+ "queries": [
+  {
+   "language": "Python",
+   "module": "py.src.m",
+   "symbol": "helper",
+   "uses": [
+    {
+     "file": "py/src/a.py",
+     "line": 7
+    }
+   ]
+  },
+  {
+   "language": "Python",
+   "module": "py.src.c",
+   "symbol": "count",
+   "uses": [
+    {
+     "file": "py/src/d.py",
+     "line": 5
+    },
+    {
+     "file": "py/src/d.py",
+     "line": 12
+    }
+   ]
+  },
+  {
+   "language": "Rust",
+   "module": "crate::m",
+   "symbol": "helper",
+   "uses": [
+    {
+     "file": "rs/src/a.rs",
+     "line": 7
+    }
+   ]
+  },
+  {
+   "language": "Rust",
+   "module": "crate::e",
+   "symbol": "port",
+   "uses": [
+    {
+     "file": "rs/src/f.rs",
+     "line": 5
+    }
+   ]
+  },
+  {
+   "language": "TypeScript",
+   "module": "ts/src/m",
+   "symbol": "helper",
+   "uses": [
+    {
+     "file": "ts/src/a.ts",
+     "line": 7
+    },
+    {
+     "file": "ts/src/o.ts",
+     "line": 4
+    },
+    {
+     "file": "ts/src/p.ts",
+     "line": 4
+    }
+   ]
+  },
+  {
+   "language": "TypeScript",
+   "module": "ts/src/e",
+   "symbol": "port",
+   "uses": [
+    {
+     "file": "ts/src/f.ts",
+     "line": 4
+    }
+   ]
+  },
+  {
+   "language": "JavaScript",
+   "module": "js/src/m",
+   "symbol": "helper",
+   "uses": [
+    {
+     "file": "js/src/a.js",
+     "line": 5
+    }
+   ]
+  },
+  {
+   "language": "JavaScript",
+   "module": "js/src/e",
+   "symbol": "port",
+   "uses": [
+    {
+     "file": "js/src/f.js",
+     "line": 4
+    }
+   ]
+  },
+  {
+   "language": "Go",
+   "module": "m",
+   "symbol": "Helper",
+   "uses": [
+    {
+     "file": "go/a.go",
+     "line": 9
+    }
+   ]
+  },
+  {
+   "language": "Go",
+   "module": "e",
+   "symbol": "Port",
+   "uses": [
+    {
+     "file": "go/f.go",
+     "line": 7
+    }
+   ]
+  },
+  {
+   "language": "Python",
+   "symbol": "double",
+   "module": "py.src.u",
+   "uses": [
+    {
+     "file": "py/src/v.py",
+     "line": 5
+    }
+   ]
+  },
+  {
+   "language": "Go",
+   "symbol": "Aid",
+   "module": "g",
+   "uses": [
+    {
+     "file": "go/h.go",
+     "line": 7
+    }
+   ]
+  }
+ ]
+}

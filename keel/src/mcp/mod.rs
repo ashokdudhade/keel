@@ -7,6 +7,7 @@
 //! Logs must go to stderr only — stdout is reserved for JSON-RPC.
 
 use crate::api::{DependencyDto, ImplDto, ReferenceDto, SymbolDto};
+use crate::cli::commands::PreviewCache;
 use crate::db::schema;
 use crate::error::{Result, KeelError};
 use crate::facade;
@@ -414,7 +415,7 @@ fn initialize_result(msg: &Value) -> Value {
 }
 
 fn tools_list_result() -> Value {
-    let trust = " Returns JSON with results, confidence (high|medium|low), resolution_tier (0=n/a empty miss), and notes. If confidence is low or notes warn of ambiguity, disambiguate with module / a qualified name (e.g. crate::mcp::serve) or fall back to Grep. Empty results with “No matching symbols found” means a confident miss — try another name, not Grep-for-noise first. Non-empty impact is always a candidate blast radius (medium/low) — verify before edits.";
+    let trust = " Returns JSON with results, confidence (high|medium|low), resolution_tier (1=strongest evidence, 3=weakest, mixed, or 0 when nothing resolved), and notes. If confidence is low or notes warn of ambiguity, disambiguate with module / a qualified name (e.g. crate::mcp::serve) or fall back to Grep. Empty results with “No matching symbols found” means a confident miss — try another name, not Grep-for-noise first. Non-empty impact is always a candidate blast radius (medium/low) — verify before edits.";
     json!({
         "tools": [
             tool_def(
@@ -422,39 +423,39 @@ fn tools_list_result() -> Value {
                 &format!(
                     "Find definition location(s) for a symbol. Prefer exact names. Optional module disambiguates overloads.{trust}"
                 ),
-                query_schema(),
+                with_preview(capped_query_schema()),
                 true,
             ),
             tool_def(
                 "references",
                 &format!(
-                    "Find reference sites for a symbol name. Optional module narrows the defining symbol when names collide.{trust}"
+                    "Find reference sites for a symbol name, including uses through import aliases. Optional module narrows the defining symbol when names collide.{trust}"
                 ),
-                query_schema(),
+                with_preview(capped_query_schema()),
                 true,
             ),
             tool_def(
                 "callers",
                 &format!(
-                    "Find call/use sites of a function or symbol. Import-aware when the definition module is unique or provided.{trust}"
+                    "Find call/use sites of a function or symbol, including uses through import aliases. Import-aware when the definition module is unique or provided.{trust}"
                 ),
-                query_schema(),
+                with_preview(capped_query_schema()),
                 true,
             ),
             tool_def(
                 "implementations",
                 &format!(
-                    "Find implementations of a Rust trait name (other languages usually empty).{trust}"
+                    "Find implementations of a trait/interface/base class (Rust traits, TypeScript interfaces, Python/JavaScript bases, explicit Go assertions; structural Go matches are not inferred). Optional module narrows same-named traits.{trust}"
                 ),
-                name_schema(),
+                with_preview(capped_query_schema()),
                 true,
             ),
             tool_def(
                 "dependencies",
                 &format!(
-                    "Find modules/files a module or symbol depends on. Pass a module path (e.g. crate::mcp), file path, or symbol.{trust}"
+                    "Find modules/files a module or symbol depends on. Pass a module path (e.g. crate::mcp), directory, file path, symbol, or qualified symbol (e.g. crate::mcp::serve).{trust}"
                 ),
-                name_schema(),
+                capped_target_schema(),
                 true,
             ),
             tool_def(
@@ -462,12 +463,44 @@ fn tools_list_result() -> Value {
                 &format!(
                     "Find symbols transitively impacted by changing a name. Candidate blast radius only — check confidence/notes before editing.{trust}"
                 ),
-                query_schema(),
+                with_preview(capped_query_schema()),
+                true,
+            ),
+            tool_def(
+                "outline",
+                &format!(
+                    "List symbols defined in a file, module, or directory, in source order. Pass the indexed path (e.g. src/auth.ts), a module path (whole subtree), or a directory; absolute paths work too.{trust}"
+                ),
+                with_preview(capped_path_schema()),
+                true,
+            ),
+            tool_def(
+                "search",
+                &format!(
+                    "Search symbol names by substring (case-insensitive) when the exact name is unknown. Exact matches rank first.{trust}"
+                ),
+                with_preview(search_schema()),
+                true,
+            ),
+            tool_def(
+                "unused",
+                &format!(
+                    "Find functions/methods with no recorded references (candidate dead code). Omit path to sweep the whole project, or scope to a file, module, or directory. Candidates only — verify before deleting.{trust}"
+                ),
+                with_preview(optional_path_schema()),
+                true,
+            ),
+            tool_def(
+                "dependents",
+                &format!(
+                    "Find modules that depend on a module, file, or symbol (reverse dependencies). Pass a module path (e.g. crate::mcp), directory, file path, symbol, or qualified symbol (e.g. crate::mcp::serve).{trust}"
+                ),
+                capped_target_schema(),
                 true,
             ),
             tool_def(
                 "index",
-                "Index a repository path into the Keel database (writes the local index).",
+                "Index a repository path into its own .keel/index.db (writes the local index; paths outside the server project are safe).",
                 json!({
                     "type": "object",
                     "properties": {
@@ -500,16 +533,73 @@ fn tool_def(name: &str, description: &str, input_schema: Value, read_only: bool)
     tool
 }
 
-fn name_schema() -> Value {
+fn path_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Indexed file path (e.g. src/auth.ts; absolute paths work too), module path (e.g. crate::mcp, whole subtree), or directory (e.g. src/graph)"
+            }
+        },
+        "required": ["path"]
+    })
+}
+
+/// `path_schema` plus an optional cap: subtree outlines can run hot.
+fn capped_path_schema() -> Value {
+    let mut schema = path_schema();
+    schema["properties"]["limit"] = json!({
+        "type": "integer",
+        "description": "Maximum matches to return (1-100000, default 500). Capped responses carry a note with the true total."
+    });
+    schema
+}
+
+/// `capped_path_schema` with `path` optional (`unused` sweeps the whole
+/// project when no target is given), plus the transitive dead-code pass.
+fn optional_path_schema() -> Value {
+    let mut schema = capped_path_schema();
+    schema["required"] = json!([]);
+    schema["properties"]["path"]["description"] = json!(
+        "Indexed file path (e.g. src/auth.ts; absolute paths work too), module path (whole subtree), or directory. Omit to sweep the whole project."
+    );
+    schema["properties"]["transitive"] = json!({
+        "type": "boolean",
+        "description": "Also flag functions referenced only from other candidate-dead functions."
+    });
+    schema
+}
+
+/// Target schema for `dependencies`/`dependents`: unlike plain symbol
+/// queries, these also accept module paths and file paths.
+fn target_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
             "name": {
                 "type": "string",
-                "description": "Symbol or module name (case-sensitive). Qualified forms like crate::mcp::serve are accepted where applicable."
+                "description": "Module path (e.g. crate::mcp), directory (e.g. src/graph), indexed file path (e.g. src/auth.ts), symbol, or qualified symbol (e.g. crate::mcp::serve). Parent modules and directories cover their whole subtree."
             }
         },
         "required": ["name"]
+    })
+}
+
+fn search_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "pattern": {
+                "type": "string",
+                "description": "Substring to match against symbol names (case-insensitive)"
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum matches to return (1-200, default 50)"
+            }
+        },
+        "required": ["pattern"]
     })
 }
 
@@ -530,12 +620,59 @@ fn query_schema() -> Value {
     })
 }
 
+/// `target_schema` plus an optional cap for hit lists that can run hot
+/// (`dependencies`, `dependents`).
+fn capped_target_schema() -> Value {
+    let mut schema = target_schema();
+    schema["properties"]["limit"] = json!({
+        "type": "integer",
+        "description": "Maximum matches to return (1-100000, default 500). Capped responses carry a note with the true total."
+    });
+    schema
+}
+
+/// `query_schema` plus an optional cap for hit lists that can run hot
+/// (`references`, `callers`, `impact`, `implementations`).
+fn capped_query_schema() -> Value {
+    let mut schema = query_schema();
+    schema["properties"]["limit"] = json!({
+        "type": "integer",
+        "description": "Maximum matches to return (1-100000, default 500). Capped responses carry a note with the true total."
+    });
+    schema
+}
+
+/// Add the `preview` flag to a hit-list tool schema: when true, each hit
+/// carries its source line as a `preview` field (truncated at 200 chars).
+fn with_preview(mut schema: Value) -> Value {
+    schema["properties"]["preview"] = json!({
+        "type": "boolean",
+        "description": "Include the source line of each hit as a `preview` field (truncated at 200 characters; stale rows carry none)."
+    });
+    schema
+}
+
+fn optional_preview_arg(arguments: &Value) -> bool {
+    arguments
+        .get("preview")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
 fn optional_module_arg(arguments: &Value) -> Option<String> {
     arguments
         .get("module")
         .and_then(|v| v.as_str())
         .map(str::to_owned)
         .filter(|s| !s.is_empty())
+}
+
+fn optional_limit_arg(arguments: &Value) -> Option<usize> {
+    // No zero-filter: `resolve_limit` clamps 0 → 1, matching `search`.
+    arguments
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .and_then(|n| usize::try_from(n).ok())
 }
 
 fn call_tool(
@@ -552,14 +689,26 @@ fn call_tool(
 
     let is_query = matches!(
         name,
-        "definition" | "references" | "callers" | "implementations" | "dependencies" | "impact"
+        "definition"
+            | "references"
+            | "callers"
+            | "implementations"
+            | "dependencies"
+            | "dependents"
+            | "impact"
+            | "outline"
+            | "search"
     );
     if auto_index && is_query {
         let stats = index::index_repository(root, conn)?;
         if stats.indexed + stats.removed + stats.errors > 0 {
             eprintln!(
-                "keel: auto-indexed {} file(s) (skipped {}, removed {}, errors {}).",
-                stats.indexed, stats.skipped, stats.removed, stats.errors
+                "keel: auto-indexed {} file(s) (skipped {}, removed {}, errors {}, syntax errors {}).",
+                stats.indexed,
+                stats.skipped,
+                stats.removed,
+                stats.errors,
+                stats.syntax_errors
             );
         }
     }
@@ -568,42 +717,95 @@ fn call_tool(
         "definition" => {
             let symbol = require_string_arg(&arguments, "name")?;
             let module = optional_module_arg(&arguments);
+            let limit = optional_limit_arg(&arguments);
+            let mut previews = optional_preview_arg(&arguments)
+                .then(|| PreviewCache::new(root.to_path_buf()));
             let start = std::time::Instant::now();
             let qr = facade::definition_with_meta_opts(conn, &symbol, module.as_deref())?
-                .map_results(|s| SymbolDto::from(&s));
+                .truncated(crate::graph::query_result::resolve_limit(limit))
+                .map_results(|s| {
+                    let mut d = SymbolDto::from(&s);
+                    if let Some(cache) = previews.as_mut() {
+                        d.preview = cache.line(&s.file, s.start_line);
+                    }
+                    d
+                });
             log_tool_query(conn, name, &symbol, module.as_deref(), &qr, start);
             json_text(qr)?
         }
         "references" => {
             let symbol = require_string_arg(&arguments, "name")?;
             let module = optional_module_arg(&arguments);
+            let limit = optional_limit_arg(&arguments);
+            let mut previews = optional_preview_arg(&arguments)
+                .then(|| PreviewCache::new(root.to_path_buf()));
             let start = std::time::Instant::now();
             let qr = facade::references_with_meta_opts(conn, &symbol, module.as_deref())?
-                .map_results(|r| ReferenceDto::from(&r));
+                .truncated(crate::graph::query_result::resolve_limit(limit))
+                .map_results(|r| {
+                    let mut d = ReferenceDto::from(&r);
+                    if let Some(cache) = previews.as_mut() {
+                        d.preview = cache.line(&r.file, r.start_line);
+                    }
+                    d
+                });
             log_tool_query(conn, name, &symbol, module.as_deref(), &qr, start);
             json_text(qr)?
         }
         "callers" => {
             let symbol = require_string_arg(&arguments, "name")?;
             let module = optional_module_arg(&arguments);
+            let limit = optional_limit_arg(&arguments);
+            let mut previews = optional_preview_arg(&arguments)
+                .then(|| PreviewCache::new(root.to_path_buf()));
             let start = std::time::Instant::now();
             let qr = facade::callers_with_meta_opts(conn, &symbol, module.as_deref())?
-                .map_results(|r| ReferenceDto::from(&r));
+                .truncated(crate::graph::query_result::resolve_limit(limit))
+                .map_results(|r| {
+                    let mut d = ReferenceDto::from(&r);
+                    if let Some(cache) = previews.as_mut() {
+                        d.preview = cache.line(&r.file, r.start_line);
+                    }
+                    d
+                });
             log_tool_query(conn, name, &symbol, module.as_deref(), &qr, start);
             json_text(qr)?
         }
         "implementations" => {
             let symbol = require_string_arg(&arguments, "name")?;
+            let module = optional_module_arg(&arguments);
+            let limit = optional_limit_arg(&arguments);
+            let mut previews = optional_preview_arg(&arguments)
+                .then(|| PreviewCache::new(root.to_path_buf()));
             let start = std::time::Instant::now();
-            let qr = facade::implementations_with_meta(conn, &symbol)?
-                .map_results(|i| ImplDto::from(&i));
-            log_tool_query(conn, name, &symbol, None, &qr, start);
+            let qr = facade::implementations_with_meta_opts(conn, &symbol, module.as_deref())?
+                .truncated(crate::graph::query_result::resolve_limit(limit))
+                .map_results(|i| {
+                    let mut d = ImplDto::from(&i);
+                    if let Some(cache) = previews.as_mut() {
+                        d.preview = cache.line(&i.file, i.start_line);
+                    }
+                    d
+                });
+            log_tool_query(conn, name, &symbol, module.as_deref(), &qr, start);
             json_text(qr)?
         }
         "dependencies" => {
             let symbol = require_string_arg(&arguments, "name")?;
+            let limit = optional_limit_arg(&arguments);
             let start = std::time::Instant::now();
             let qr = facade::dependencies_with_meta(conn, &symbol)?
+                .truncated(crate::graph::query_result::resolve_limit(limit))
+                .map_results(|d| DependencyDto::from(&d));
+            log_tool_query(conn, name, &symbol, None, &qr, start);
+            json_text(qr)?
+        }
+        "dependents" => {
+            let symbol = require_string_arg(&arguments, "name")?;
+            let limit = optional_limit_arg(&arguments);
+            let start = std::time::Instant::now();
+            let qr = facade::dependents_with_meta(conn, &symbol)?
+                .truncated(crate::graph::query_result::resolve_limit(limit))
                 .map_results(|d| DependencyDto::from(&d));
             log_tool_query(conn, name, &symbol, None, &qr, start);
             json_text(qr)?
@@ -611,15 +813,104 @@ fn call_tool(
         "impact" => {
             let symbol = require_string_arg(&arguments, "name")?;
             let module = optional_module_arg(&arguments);
+            let limit = optional_limit_arg(&arguments);
+            let mut previews = optional_preview_arg(&arguments)
+                .then(|| PreviewCache::new(root.to_path_buf()));
             let start = std::time::Instant::now();
             let qr = facade::impact_with_meta_opts(conn, &symbol, module.as_deref())?
-                .map_results(|s| SymbolDto::from(&s));
+                .truncated(crate::graph::query_result::resolve_limit(limit))
+                .map_results(|s| {
+                    let mut d = SymbolDto::from(&s);
+                    if let Some(cache) = previews.as_mut() {
+                        d.preview = cache.line(&s.file, s.start_line);
+                    }
+                    d
+                });
             log_tool_query(conn, name, &symbol, module.as_deref(), &qr, start);
+            json_text(qr)?
+        }
+        "outline" => {
+            let path = require_string_arg(&arguments, "path")?;
+            let limit = optional_limit_arg(&arguments);
+            let mut previews = optional_preview_arg(&arguments)
+                .then(|| PreviewCache::new(root.to_path_buf()));
+            let start = std::time::Instant::now();
+            let qr = facade::outline_with_meta(conn, &path)?
+                .truncated(crate::graph::query_result::resolve_limit(limit))
+                .map_results(|s| {
+                    let mut d = SymbolDto::from(&s);
+                    if let Some(cache) = previews.as_mut() {
+                        d.preview = cache.line(&s.file, s.start_line);
+                    }
+                    d
+                });
+            log_tool_query(conn, name, &path, None, &qr, start);
+            json_text(qr)?
+        }
+        "search" => {
+            let pattern = require_string_arg(&arguments, "pattern")?;
+            let limit = arguments
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(50);
+            let mut previews = optional_preview_arg(&arguments)
+                .then(|| PreviewCache::new(root.to_path_buf()));
+            let start = std::time::Instant::now();
+            let qr = facade::search_with_meta(conn, &pattern, limit)?.map_results(|s| {
+                let mut d = SymbolDto::from(&s);
+                if let Some(cache) = previews.as_mut() {
+                    d.preview = cache.line(&s.file, s.start_line);
+                }
+                d
+            });
+            log_tool_query(conn, name, &pattern, None, &qr, start);
+            json_text(qr)?
+        }
+        "unused" => {
+            let path = arguments
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+                .filter(|s| !s.is_empty());
+            let limit = optional_limit_arg(&arguments);
+            let transitive = arguments
+                .get("transitive")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let mut previews = optional_preview_arg(&arguments)
+                .then(|| PreviewCache::new(root.to_path_buf()));
+            let start = std::time::Instant::now();
+            let qr = facade::unused_with_meta_opts(conn, path.as_deref(), transitive)?
+                .truncated(crate::graph::query_result::resolve_limit(limit))
+                .map_results(|s| {
+                    let mut d = SymbolDto::from(&s);
+                    if let Some(cache) = previews.as_mut() {
+                        d.preview = cache.line(&s.file, s.start_line);
+                    }
+                    d
+                });
+            log_tool_query(conn, name, path.as_deref().unwrap_or("project"), None, &qr, start);
             json_text(qr)?
         }
         "index" => {
             let path = require_string_arg(&arguments, "path")?;
-            let stats = index::index_repository(Path::new(&path), conn)?;
+            // The target's own `<path>/.keel/index.db` — never the server
+            // connection: reconciling another root into this DB would wipe
+            // this project's rows (and answer with foreign paths).
+            // Sources are chained into the message: JSON-RPC errors only
+            // carry `Display`, which would otherwise hide the reason.
+            let root = Path::new(&path);
+            let stats = crate::cli::commands::run_index(root).map_err(|e| {
+                let mut msg = format!("cannot index {}: {e}", root.display());
+                let mut next = std::error::Error::source(&e);
+                while let Some(source) = next {
+                    msg.push_str(": ");
+                    msg.push_str(&source.to_string());
+                    next = std::error::Error::source(source);
+                }
+                KeelError::Mcp(msg)
+            })?;
             json_text(IndexStatsDto::from(&stats))?
         }
         other => {
@@ -652,11 +943,19 @@ fn log_tool_query<T>(
 }
 
 fn require_string_arg(arguments: &Value, key: &str) -> Result<String> {
-    arguments
+    let value = arguments
         .get(key)
         .and_then(|v| v.as_str())
         .map(str::to_owned)
-        .ok_or_else(|| KeelError::Mcp(format!("missing required argument: {key}")))
+        .ok_or_else(|| KeelError::Mcp(format!("missing required argument: {key}")))?;
+    // Empty required args are caller bugs, not misses: fail loudly like the
+    // CLI (clap exit 2) and HTTP (400) instead of querying for ``.
+    if value.is_empty() {
+        return Err(KeelError::Mcp(format!(
+            "argument `{key}` must not be empty"
+        )));
+    }
+    Ok(value)
 }
 
 fn json_text<T: Serialize>(value: T) -> Result<Value> {
@@ -679,6 +978,7 @@ struct IndexStatsDto {
     skipped: usize,
     removed: usize,
     errors: usize,
+    syntax_errors: usize,
 }
 
 impl From<&IndexStats> for IndexStatsDto {
@@ -688,6 +988,7 @@ impl From<&IndexStats> for IndexStatsDto {
             skipped: s.skipped,
             removed: s.removed,
             errors: s.errors,
+            syntax_errors: s.syntax_errors,
         }
     }
 }
@@ -832,7 +1133,10 @@ mod tests {
             "callers",
             "implementations",
             "dependencies",
+            "dependents",
             "impact",
+            "outline",
+            "search",
             "index",
         ] {
             assert!(
@@ -857,6 +1161,60 @@ mod tests {
             definition["annotations"]["readOnlyHint"],
             true,
             "definition should be readOnly for agent approval UX"
+        );
+        assert!(
+            desc.contains("1=strongest"),
+            "trust envelope should teach tier ordering, got: {desc}"
+        );
+        for tool_name in ["dependencies", "dependents"] {
+            let tool = tools
+                .iter()
+                .find(|t| t["name"] == tool_name)
+                .unwrap_or_else(|| panic!("{tool_name} tool"));
+            let arg = tool["inputSchema"]["properties"]["name"]["description"]
+                .as_str()
+                .unwrap_or("");
+            assert!(
+                arg.contains("file path"),
+                "{tool_name} arg should document file-path targets, got: {arg}"
+            );
+        }
+        for tool_name in [
+            "definition",
+            "references",
+            "callers",
+            "impact",
+            "dependencies",
+            "dependents",
+            "implementations",
+            "outline",
+        ] {
+            let tool = tools
+                .iter()
+                .find(|t| t["name"] == tool_name)
+                .unwrap_or_else(|| panic!("{tool_name} tool"));
+            assert!(
+                tool["inputSchema"]["properties"].get("limit").is_some(),
+                "{tool_name} should accept an optional limit"
+            );
+        }
+    }
+
+    #[test]
+    fn require_string_arg_rejects_missing_and_empty() {
+        let missing = require_string_arg(&json!({}), "name").unwrap_err();
+        assert!(
+            missing.to_string().contains("missing required argument"),
+            "got: {missing}"
+        );
+        let empty = require_string_arg(&json!({"name": ""}), "name").unwrap_err();
+        assert!(
+            empty.to_string().contains("must not be empty"),
+            "empty required args must fail loudly, got: {empty}"
+        );
+        assert_eq!(
+            require_string_arg(&json!({"name": "serve"}), "name").unwrap(),
+            "serve"
         );
     }
 
@@ -894,5 +1252,566 @@ mod tests {
         });
         let resp = handle_message(&mut conn, &msg).expect("notification");
         assert!(resp.is_none());
+    }
+
+    #[test]
+    fn tools_call_index_rejects_missing_dirs() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        let missing =
+            std::env::temp_dir().join("keel-mcp-index-missing-9f3b2a1c");
+        let _ = std::fs::remove_dir_all(&missing);
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {"name": "index", "arguments": {"path": missing.to_string_lossy()}}
+        });
+        let resp = handle_message(&mut conn, &msg)
+            .expect("index call")
+            .expect("index must return a response");
+        let message = resp["error"]["message"].as_str().unwrap_or("");
+        assert!(message.contains("no such directory"), "got: {resp}");
+        assert!(!missing.exists(), "typo'd path must not be created");
+    }
+
+    #[test]
+    fn tools_call_index_writes_target_db_not_server_db() {
+        use crate::db::queries;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("solo.rs"), "fn solo() {}\n").unwrap();
+
+        // Server connection serves some other project (in-memory here).
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {"name": "index", "arguments": {"path": root.to_string_lossy()}}
+        });
+        let resp = handle_message(&mut conn, &msg)
+            .expect("index call")
+            .expect("index must return a response");
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text payload");
+        let payload: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(payload["indexed"], 1);
+
+        // Target got its own index…
+        let target_db = root.join(".keel").join("index.db");
+        assert!(target_db.is_file());
+        let target_conn = Connection::open(&target_db).unwrap();
+        assert_eq!(queries::find_definition(&target_conn, "solo").unwrap().len(), 1);
+        // …while the server connection stayed empty.
+        assert!(queries::find_definition(&conn, "solo").unwrap().is_empty());
+    }
+
+    #[test]
+    fn tools_call_outline_lists_file_symbols_in_order() {
+        use crate::db::queries;
+        use crate::graph::types::{FileNode, Symbol, SymbolKind};
+        use std::path::PathBuf;
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        let file_id = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/lib.rs"),
+                content_hash: "h".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            file_id,
+            &[
+                Symbol {
+                    name: "B".into(),
+                    kind: SymbolKind::Function,
+                    file: PathBuf::new(),
+                    start_line: 9,
+                    start_col: 1,
+                    module_path: "crate".into(),
+                },
+                Symbol {
+                    name: "A".into(),
+                    kind: SymbolKind::Struct,
+                    file: PathBuf::new(),
+                    start_line: 1,
+                    start_col: 1,
+                    module_path: "crate".into(),
+                },
+            ],
+        )
+        .unwrap();
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {"name": "outline", "arguments": {"path": "src/lib.rs"}}
+        });
+        let resp = handle_message(&mut conn, &msg)
+            .expect("outline call")
+            .expect("outline must return a response");
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text payload");
+        let payload: Value = serde_json::from_str(text).unwrap();
+        let names: Vec<&str> = payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["A", "B"]);
+        assert_eq!(payload["confidence"], "high");
+    }
+
+    #[test]
+    fn tools_call_outline_honors_limit() {
+        use crate::db::queries;
+        use crate::graph::types::{FileNode, Symbol, SymbolKind};
+        use std::path::PathBuf;
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        let file_id = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/lib.rs"),
+                content_hash: "h".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            file_id,
+            &[
+                Symbol {
+                    name: "A".into(),
+                    kind: SymbolKind::Function,
+                    file: PathBuf::new(),
+                    start_line: 1,
+                    start_col: 1,
+                    module_path: "crate".into(),
+                },
+                Symbol {
+                    name: "B".into(),
+                    kind: SymbolKind::Function,
+                    file: PathBuf::new(),
+                    start_line: 9,
+                    start_col: 1,
+                    module_path: "crate".into(),
+                },
+            ],
+        )
+        .unwrap();
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {"name": "outline", "arguments": {"path": "src/lib.rs", "limit": 1}}
+        });
+        let resp = handle_message(&mut conn, &msg)
+            .expect("outline call")
+            .expect("outline must return a response");
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text payload");
+        let payload: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            payload["results"].as_array().unwrap().len(),
+            1,
+            "limit 1 must cap two symbols, got: {payload}"
+        );
+        assert_eq!(payload["results"][0]["name"], "A");
+        let notes = payload["notes"].as_array().unwrap();
+        assert!(
+            notes.iter().any(|n| n
+                .as_str()
+                .unwrap_or("")
+                .contains("Showing first 1 of 2 matches")),
+            "capped response must carry the true total, got: {payload}"
+        );
+    }
+
+    #[test]
+    fn tools_call_dependents_lists_importing_modules() {
+        use crate::db::queries;
+        use crate::graph::types::{FileNode, Import, Symbol, SymbolKind};
+        use std::path::PathBuf;
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        let b = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/b.rs"),
+                content_hash: "hb".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            b,
+            &[Symbol {
+                name: "f".into(),
+                kind: SymbolKind::Function,
+                file: PathBuf::new(),
+                start_line: 1,
+                start_col: 1,
+                module_path: "crate::b".into(),
+            }],
+        )
+        .unwrap();
+        let a = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/a.rs"),
+                content_hash: "ha".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            a,
+            &[Symbol {
+                name: "g".into(),
+                kind: SymbolKind::Function,
+                file: PathBuf::new(),
+                start_line: 1,
+                start_col: 1,
+                module_path: "crate::a".into(),
+            }],
+        )
+        .unwrap();
+        queries::insert_imports(
+            &conn,
+            a,
+            &[Import {
+                module_path: "crate::b".into(),
+                alias: None,
+                file: PathBuf::new(),
+            }],
+        )
+        .unwrap();
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {"name": "dependents", "arguments": {"name": "crate::b"}}
+        });
+        let resp = handle_message(&mut conn, &msg)
+            .expect("dependents call")
+            .expect("dependents must return a response");
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text payload");
+        let payload: Value = serde_json::from_str(text).unwrap();
+        let modules: Vec<&str> = payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["module_path"].as_str().unwrap())
+            .collect();
+        assert_eq!(modules, vec!["crate::a"]);
+        assert_eq!(payload["confidence"], "high");
+    }
+
+    #[test]
+    fn tools_call_dependents_honors_limit() {
+        use crate::db::queries;
+        use crate::graph::types::{FileNode, Import, Symbol, SymbolKind};
+        use std::path::PathBuf;
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        let b = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/b.rs"),
+                content_hash: "hb".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            b,
+            &[Symbol {
+                name: "f".into(),
+                kind: SymbolKind::Function,
+                file: PathBuf::new(),
+                start_line: 1,
+                start_col: 1,
+                module_path: "crate::b".into(),
+            }],
+        )
+        .unwrap();
+        for (path, module) in [
+            ("src/a.rs", "crate::a"),
+            ("src/c.rs", "crate::c"),
+        ] {
+            let id = queries::insert_file(
+                &conn,
+                &FileNode {
+                    path: PathBuf::from(path),
+                    content_hash: "h".into(),
+                },
+            )
+            .unwrap();
+            queries::insert_symbols(
+                &conn,
+                id,
+                &[Symbol {
+                    name: "g".into(),
+                    kind: SymbolKind::Function,
+                    file: PathBuf::new(),
+                    start_line: 1,
+                    start_col: 1,
+                    module_path: module.into(),
+                }],
+            )
+            .unwrap();
+            queries::insert_imports(
+                &conn,
+                id,
+                &[Import {
+                    module_path: "crate::b".into(),
+                    alias: None,
+                    file: PathBuf::new(),
+                }],
+            )
+            .unwrap();
+        }
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {"name": "dependents", "arguments": {"name": "crate::b", "limit": 1}}
+        });
+        let resp = handle_message(&mut conn, &msg)
+            .expect("dependents call")
+            .expect("dependents must return a response");
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text payload");
+        let payload: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            payload["results"].as_array().unwrap().len(),
+            1,
+            "limit 1 must cap two dependents, got: {payload}"
+        );
+        let notes = payload["notes"].as_array().unwrap();
+        assert!(
+            notes.iter().any(|n| n
+                .as_str()
+                .unwrap_or("")
+                .contains("Showing first 1 of 2 matches")),
+            "capped response must carry the true total, got: {payload}"
+        );
+    }
+
+    #[test]
+    fn tools_call_search_ranks_exact_first_and_honors_limit() {
+        use crate::db::queries;
+        use crate::graph::types::{FileNode, Symbol, SymbolKind};
+        use std::path::PathBuf;
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        let file_id = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/lib.rs"),
+                content_hash: "h".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            file_id,
+            &[
+                Symbol {
+                    name: "reorder_buffer".into(),
+                    kind: SymbolKind::Function,
+                    file: PathBuf::new(),
+                    start_line: 9,
+                    start_col: 1,
+                    module_path: "crate".into(),
+                },
+                Symbol {
+                    name: "order".into(),
+                    kind: SymbolKind::Struct,
+                    file: PathBuf::new(),
+                    start_line: 1,
+                    start_col: 1,
+                    module_path: "crate".into(),
+                },
+            ],
+        )
+        .unwrap();
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {"name": "search", "arguments": {"pattern": "order"}}
+        });
+        let resp = handle_message(&mut conn, &msg)
+            .expect("search call")
+            .expect("search must return a response");
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text payload");
+        let payload: Value = serde_json::from_str(text).unwrap();
+        let names: Vec<&str> = payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["order", "reorder_buffer"]);
+
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {"name": "search", "arguments": {"pattern": "order", "limit": 1}}
+        });
+        let resp = handle_message(&mut conn, &msg)
+            .expect("search call")
+            .expect("search must return a response");
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text payload");
+        let payload: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(payload["results"].as_array().unwrap().len(), 1);
+        assert!(
+            payload["notes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|n| n.as_str().unwrap_or("").contains("first 1 matches")),
+            "got {:?}",
+            payload["notes"]
+        );
+    }
+
+    #[test]
+    fn tools_list_advertises_preview_on_hit_tools_only() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": 40,
+            "method": "tools/list"
+        });
+        let resp = handle_message(&mut conn, &msg)
+            .expect("tools/list")
+            .expect("tools/list must return a response");
+        let tools = resp["result"]["tools"].as_array().expect("tools array");
+        let has_preview = |tool_name: &str| -> bool {
+            tools
+                .iter()
+                .find(|t| t["name"] == tool_name)
+                .unwrap_or_else(|| panic!("{tool_name} tool"))["inputSchema"]["properties"]
+                .get("preview")
+                .is_some()
+        };
+        for tool_name in [
+            "definition",
+            "references",
+            "callers",
+            "implementations",
+            "impact",
+            "outline",
+            "search",
+            "unused",
+        ] {
+            assert!(has_preview(tool_name), "{tool_name} should accept preview");
+        }
+        for tool_name in ["dependencies", "dependents", "index"] {
+            assert!(
+                !has_preview(tool_name),
+                "{tool_name} must not advertise preview"
+            );
+        }
+    }
+
+    #[test]
+    fn tools_call_definition_preview_reads_project_sources() {
+        use crate::db::queries;
+        use crate::graph::types::{FileNode, Symbol, SymbolKind};
+        use std::path::PathBuf;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub struct Solo;\n").unwrap();
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        let file_id = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/lib.rs"),
+                content_hash: "h".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            file_id,
+            &[Symbol {
+                name: "Solo".into(),
+                kind: SymbolKind::Struct,
+                file: PathBuf::new(),
+                start_line: 1,
+                start_col: 12,
+                module_path: "crate".into(),
+            }],
+        )
+        .unwrap();
+
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": 41,
+            "method": "tools/call",
+            "params": {"name": "definition", "arguments": {"name": "Solo", "preview": true}}
+        });
+        let resp = handle_message_with(&mut conn, &msg, false, root)
+            .expect("definition call")
+            .expect("definition must return a response");
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text payload");
+        let payload: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            payload["results"][0]["preview"].as_str(),
+            Some("pub struct Solo;"),
+            "got: {payload}"
+        );
+
+        // Without the flag the field stays out.
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "tools/call",
+            "params": {"name": "definition", "arguments": {"name": "Solo"}}
+        });
+        let resp = handle_message_with(&mut conn, &msg, false, root)
+            .expect("definition call")
+            .expect("definition must return a response");
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text payload");
+        let payload: Value = serde_json::from_str(text).unwrap();
+        assert!(
+            payload["results"][0].get("preview").is_none(),
+            "got: {payload}"
+        );
     }
 }

@@ -179,6 +179,218 @@ fn cli_binary_indexes_and_queries() {
 }
 
 #[test]
+fn cli_preview_shows_source_lines_in_text_and_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("main.rs"), "fn create_order() {}\nfn run() { create_order(); }\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let text = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["definition", "create_order", "--preview"])
+        .output()
+        .unwrap();
+    assert!(text.status.success());
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    let rows: Vec<&str> = stdout.lines().collect();
+    assert_eq!(rows.len(), 2, "got: {stdout}");
+    assert!(rows[1].starts_with("    fn create_order"), "got: {stdout}");
+
+    let refs = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["references", "create_order", "--preview"])
+        .output()
+        .unwrap();
+    assert!(refs.status.success());
+    let ref_out = String::from_utf8(refs.stdout).unwrap();
+    assert!(
+        ref_out.contains("\n    fn run()"),
+        "reference preview missing in: {ref_out}"
+    );
+
+    let js = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["--json", "definition", "create_order", "--preview"])
+        .output()
+        .unwrap();
+    assert!(js.status.success());
+    let payload: serde_json::Value = serde_json::from_slice(&js.stdout).unwrap();
+    assert_eq!(
+        payload["results"][0]["preview"].as_str(),
+        Some("fn create_order() {}"),
+        "got: {payload}"
+    );
+
+    // Without --preview the field stays out (additive JSON).
+    let plain = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["--json", "definition", "create_order"])
+        .output()
+        .unwrap();
+    assert!(plain.status.success());
+    let payload: serde_json::Value = serde_json::from_slice(&plain.stdout).unwrap();
+    assert!(
+        payload["results"][0].get("preview").is_none(),
+        "got: {payload}"
+    );
+}
+
+#[test]
+fn cli_implementations_preview_shows_source_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("main.rs"),
+        "trait Greeter {}\nstruct Bot;\nimpl Greeter for Bot {}\n",
+    )
+    .unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let text = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["implementations", "Greeter", "--preview"])
+        .output()
+        .unwrap();
+    assert!(text.status.success());
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    assert!(
+        stdout.contains("\n    impl Greeter for Bot {}"),
+        "impl preview missing in: {stdout}"
+    );
+
+    let js = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["--json", "implementations", "Greeter", "--preview"])
+        .output()
+        .unwrap();
+    assert!(js.status.success());
+    let payload: serde_json::Value = serde_json::from_slice(&js.stdout).unwrap();
+    assert_eq!(
+        payload["results"][0]["preview"].as_str(),
+        Some("impl Greeter for Bot {}"),
+        "got: {payload}"
+    );
+
+    // Without --preview the field stays out (additive JSON).
+    let plain = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["--json", "implementations", "Greeter"])
+        .output()
+        .unwrap();
+    assert!(plain.status.success());
+    let payload: serde_json::Value = serde_json::from_slice(&plain.stdout).unwrap();
+    assert!(
+        payload["results"][0].get("preview").is_none(),
+        "got: {payload}"
+    );
+}
+
+#[test]
+fn cli_unused_sweep_flags_uncalled_functions() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("main.rs"),
+        "fn live() {}\nfn dead() {}\nfn main() { live(); }\n",
+    )
+    .unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let text = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["unused"])
+        .output()
+        .unwrap();
+    assert!(text.status.success());
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    assert!(
+        stdout.contains("\tfunction\tdead\n"),
+        "dead missing in: {stdout}"
+    );
+    assert!(
+        !stdout.contains("\tlive\n") && !stdout.contains("\tmain\n"),
+        "live/main leaked in: {stdout}"
+    );
+
+    let js = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["--json", "unused", "--preview"])
+        .output()
+        .unwrap();
+    assert!(js.status.success());
+    let payload: serde_json::Value = serde_json::from_slice(&js.stdout).unwrap();
+    assert_eq!(payload["confidence"].as_str(), Some("low"));
+    assert_eq!(
+        payload["results"][0]["preview"].as_str(),
+        Some("fn dead() {}"),
+        "got: {payload}"
+    );
+}
+
+#[test]
+fn cli_definition_module_flag_disambiguates_collisions() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/a.rs"), "pub fn serve() {}\n").unwrap();
+    std::fs::write(root.join("src/b.rs"), "pub fn serve() {}\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let both = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["definition", "serve"])
+        .output()
+        .unwrap();
+    assert!(both.status.success());
+    let both_out = String::from_utf8(both.stdout).unwrap();
+    assert_eq!(both_out.lines().count(), 2, "got: {both_out}");
+
+    let one = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["definition", "serve", "--module", "crate::a"])
+        .output()
+        .unwrap();
+    assert!(one.status.success());
+    let one_out = String::from_utf8(one.stdout).unwrap();
+    assert!(
+        one_out.contains("src/a.rs") && !one_out.contains("src/b.rs"),
+        "got: {one_out}"
+    );
+}
+
+#[test]
 fn find_implementations_returns_trait_impls_excludes_inherent() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -377,6 +589,412 @@ fn cli_impact_prints_transitive_callers() {
 }
 
 #[test]
+fn cli_references_limit_caps_hits_with_stderr_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "fn target() {}\nfn u1() { target(); }\nfn u2() { target(); }\nfn u3() { target(); }\n",
+    )
+    .unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["references", "target", "--limit", "2"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "references failed: {:?}", out);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(stdout.lines().count(), 2, "got: {stdout}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("Showing first 2 of 3 matches"),
+        "truncation must be visible in text mode, got: {stderr}"
+    );
+}
+
+#[test]
+fn cli_dependents_limit_caps_hits_with_stderr_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("a.py"), "def core():\n    pass\n").unwrap();
+    for name in ["x.py", "y.py", "z.py"] {
+        fs::write(root.join(name), "import a\n\na.core()\n").unwrap();
+    }
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["dependents", "a", "--limit", "2"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "dependents failed: {:?}", out);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(stdout.lines().count(), 2, "got: {stdout}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("Showing first 2 of 3 matches"),
+        "truncation must be visible in text mode, got: {stderr}"
+    );
+}
+
+#[test]
+fn cli_dependencies_limit_caps_hits_with_stderr_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for name in ["a.py", "b.py", "c.py"] {
+        fs::write(root.join(name), "def f():\n    pass\n").unwrap();
+    }
+    fs::write(root.join("main.py"), "import a\nimport b\nimport c\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["dependencies", "main.py", "--limit", "2"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "dependencies failed: {:?}", out);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(stdout.lines().count(), 2, "got: {stdout}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("Showing first 2 of 3 matches"),
+        "truncation must be visible in text mode, got: {stderr}"
+    );
+}
+
+#[test]
+fn cli_implementations_limit_caps_hits_with_stderr_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "trait T {}\nstruct A;\nstruct B;\nstruct C;\nimpl T for A {}\nimpl T for B {}\nimpl T for C {}\n",
+    )
+    .unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["implementations", "T", "--limit", "2"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "implementations failed: {:?}", out);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(stdout.lines().count(), 2, "got: {stdout}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("Showing first 2 of 3 matches"),
+        "truncation must be visible in text mode, got: {stderr}"
+    );
+}
+
+#[test]
+fn cli_definition_limit_caps_hits_with_stderr_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for name in ["a.py", "b.py", "c.py"] {
+        fs::write(root.join(name), "def dup():\n    pass\n").unwrap();
+    }
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["definition", "dup", "--limit", "2"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "definition failed: {:?}", out);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(stdout.lines().count(), 2, "got: {stdout}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("Showing first 2 of 3 matches"),
+        "truncation must be visible in text mode, got: {stderr}"
+    );
+}
+
+#[test]
+fn cli_outline_limit_caps_hits_with_stderr_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(
+        root.join("lib.py"),
+        "def a():\n    pass\ndef b():\n    pass\ndef c():\n    pass\n",
+    )
+    .unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let index_out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(index_out.status.success(), "index failed: {:?}", index_out);
+
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["outline", "lib.py", "--limit", "2"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "outline failed: {:?}", out);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(stdout.lines().count(), 2, "got: {stdout}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("Showing first 2 of 3 matches"),
+        "truncation must be visible in text mode, got: {stderr}"
+    );
+}
+
+#[test]
+fn cli_empty_name_rejected_with_usage_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("a.py"), "def f():\n    pass\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    for args in [&["definition", ""], &["search", ""]] {
+        let out = std::process::Command::new(sb)
+            .current_dir(root)
+            .args(*args)
+            .output()
+            .unwrap();
+        assert!(
+            !out.status.success(),
+            "{args:?} must fail, got: {out:?}"
+        );
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            stderr.contains("must not be empty"),
+            "{args:?} must name the problem, got: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn cli_index_and_init_report_syntax_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("a.py"), "def f():\n    pass\n").unwrap();
+    fs::write(root.join("bad.py"), "def broken(:\n  ???\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "index failed: {:?}", out);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("syntax errors 1"),
+        "index must report the bucket, got: {stdout}"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("index warning: bad.py"),
+        "index must name the file, got: {stderr}"
+    );
+
+    std::fs::remove_dir_all(root.join(".keel")).unwrap();
+    // Isolate the daemon probe: otherwise a live daemon (or any /health on
+    // the default port) would flip `init` into register-with-daemon mode.
+    let daemon_port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .env("KEEL_HOME", dir.path().join("keelhome"))
+        .env("KEEL_DAEMON_PORT", daemon_port.to_string())
+        .args(["init", "."])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "init failed: {:?}", out);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("syntax errors 1"),
+        "init must share the stats format, got: {stdout}"
+    );
+}
+
+#[test]
+fn cli_doctor_reports_mcp_loopback_ok() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["doctor", "."])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "doctor failed: {:?}", out);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let mcp = stdout
+        .lines()
+        .find(|l| l.starts_with("mcp:"))
+        .expect("doctor must include an mcp line");
+    assert!(
+        mcp.contains("\tok\t"),
+        "mcp loopback should pass, got: {mcp}"
+    );
+}
+
+#[test]
+fn cli_doctor_missing_index_advice_matches_daemon_state() {
+    // Fresh dir, no index: advice must be runnable — `keel init` works
+    // daemon-less, `keel start` needs the daemon. Robust to a daemon
+    // happening to run on the test machine.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["doctor", "."])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "doctor failed: {:?}", out);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let daemon_up = stdout
+        .lines()
+        .find(|l| l.starts_with("daemon:"))
+        .expect("doctor must include a daemon line")
+        .contains("\tok\t");
+    let index = stdout
+        .lines()
+        .find(|l| l.starts_with("index:"))
+        .expect("doctor must include an index line");
+    let expected = if daemon_up {
+        "run: keel start ."
+    } else {
+        "run: keel init ."
+    };
+    assert!(
+        index.contains(expected),
+        "daemon_up={daemon_up}, index line: {index}"
+    );
+    let project = stdout
+        .lines()
+        .find(|l| l.starts_with("project:"))
+        .expect("doctor must include a project line");
+    if !daemon_up {
+        assert!(
+            project.contains("keel daemon"),
+            "project advice must name the daemon first, got: {project}"
+        );
+    }
+}
+
+#[test]
+fn cli_doctor_json_reports_checks() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["doctor", ".", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "doctor --json failed: {:?}", out);
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    let checks = v["checks"].as_array().unwrap();
+    let get = |name: &str| checks.iter().find(|c| c["name"] == name).unwrap();
+    assert_eq!(get("version")["ok"], true);
+    assert_eq!(
+        get("mcp")["ok"],
+        true,
+        "mcp loopback should pass: {}",
+        get("mcp")
+    );
+}
+
+#[test]
+fn cli_index_json_reports_stats() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", ".", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "index --json failed: {:?}", out);
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(v["indexed"], 1);
+    assert_eq!(v["skipped"], 0);
+    assert_eq!(v["errors"], 0);
+}
+
+#[test]
+fn cli_status_json_reports_daemon_and_insights() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "status --json failed: {:?}", out);
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert!(v["daemon"]["daemon"].is_string());
+    // Fresh temp project: no insights server was ever started here.
+    assert_eq!(v["insights"]["state"], "stopped");
+}
+
+#[test]
 fn json_api_serves_symbol_and_health() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -431,6 +1049,67 @@ fn json_api_serves_symbol_and_health() {
     // Determinism: arrays stay ordered across repeated GETs.
     let again = http_get(port, "/symbol/AuthService");
     assert_eq!(symbol_body, again);
+}
+
+#[test]
+fn json_api_preview_param_adds_source_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub struct AuthService;\nfn create_order() {}\nfn caller() { create_order(); }\ntrait Greeter {}\nstruct Bot;\nimpl Greeter for Bot {}\n",
+    )
+    .unwrap();
+
+    let db_path: PathBuf = root.join(".keel/index.db");
+    fs::create_dir_all(root.join(".keel")).unwrap();
+    {
+        let mut conn = Connection::open(&db_path).unwrap();
+        schema::initialize(&conn).unwrap();
+        index::index_repository(root, &mut conn).unwrap();
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let serve_db = db_path.clone();
+    thread::spawn(move || {
+        let _ = api::serve(&format!("127.0.0.1:{port}"), &serve_db, false);
+    });
+
+    wait_for_port(port);
+
+    let body = http_get(port, "/symbol/create_order?preview=1");
+    let symbol: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        symbol["definition"][0]["preview"].as_str(),
+        Some("fn create_order() {}"),
+        "got: {body}"
+    );
+    assert_eq!(
+        symbol["references"][0]["preview"].as_str(),
+        Some("fn caller() { create_order(); }"),
+        "got: {body}"
+    );
+
+    // Implementation rows preview too (they are file:line hits).
+    let impls = http_get(port, "/symbol/Greeter?preview=1");
+    let greeter: serde_json::Value = serde_json::from_str(&impls).unwrap();
+    assert_eq!(
+        greeter["implementations"][0]["preview"].as_str(),
+        Some("impl Greeter for Bot {}"),
+        "got: {impls}"
+    );
+
+    // Without the param the field stays out.
+    let plain = http_get(port, "/symbol/create_order");
+    let symbol: serde_json::Value = serde_json::from_str(&plain).unwrap();
+    assert!(
+        symbol["definition"][0].get("preview").is_none(),
+        "got: {plain}"
+    );
 }
 
 fn wait_for_port(port: u16) {
@@ -631,4 +1310,31 @@ fn indexes_go_fixture_and_finds_symbol() {
     let types = queries::find_definition(&conn, "User").unwrap();
     assert_eq!(types.len(), 1);
     assert_eq!(types[0].kind, SymbolKind::Struct);
+}
+
+#[test]
+fn cli_index_caps_per_file_syntax_warnings() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for i in 0..12 {
+        std::fs::write(root.join(format!("broken{i}.py")), "def broken(:\n  pass\n").unwrap();
+    }
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    let warnings = stderr
+        .lines()
+        .filter(|l| l.contains("symbols may be incomplete"))
+        .count();
+    assert_eq!(warnings, 10, "stderr was:\n{stderr}");
+    assert!(
+        stderr.contains("... and 2 more file(s) with syntax errors"),
+        "missing summary in:\n{stderr}"
+    );
 }

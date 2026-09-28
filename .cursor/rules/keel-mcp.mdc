@@ -16,15 +16,28 @@ user to say “use keel” or “via MCP”.
 - Who calls X? → `callers`
 - What implements trait T? → `implementations`
 - What depends on X? → `dependencies`
+- Who depends on X? → `dependents` (module, directory, file, or symbol)
 - What breaks if X changes? → `impact`
+- What does F define? → `outline` (file, module, or directory)
+- What symbols mention P? → `search` (substring, case-insensitive, exact first)
+- What code is dead? → `unused` (optional file/module/dir scope; candidates only)
 
 Pass the **exact, case-sensitive** symbol or module name. Prefer Keel over
 Cursor `Grep` / codebase search for these intents.
 
+## Tune calls, skip round-trips
+
+- Pass `"preview": true` on hit tools (`definition`, `references`,
+  `callers`, `implementations`, `impact`, `outline`, `search`, `unused`)
+  to get each hit's source line inline — no follow-up Read just to see
+  context.
+- Pass `"limit": N` on broad queries (`search`, `impact`); capped replies
+  name the true total in `notes`.
+
 ## Read the trust envelope
 
 Keel returns JSON with `results`, `confidence` (`high` | `medium` | `low`),
-`resolution_tier`, and `notes`. Always read those fields before acting.
+`resolution_tier` (1 = strongest evidence), and `notes`. Always read those fields before acting.
 
 - **Empty + “No matching symbols found”** → confident miss. Try another exact
   name, `module`, or a qualified name (`crate::mcp::serve`). Do **not** treat

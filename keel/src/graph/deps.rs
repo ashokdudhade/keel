@@ -4,7 +4,7 @@ use crate::db::queries;
 use crate::error::Result;
 use crate::graph::resolve;
 use rusqlite::Connection;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// A module (and optional defining file) that a target depends on.
@@ -72,6 +72,95 @@ pub fn find_dependencies(conn: &Connection, target: &str) -> Result<Vec<Dependen
         .collect())
 }
 
+/// Find modules that depend on `target` (reverse dependencies).
+///
+/// `target` may be a module path (`crate::b`), a file path, or a symbol name.
+/// A module counts as a dependent when one of its files imports a target
+/// module (normalized like [`find_dependencies`]) or holds a reference that
+/// resolves to a target-module symbol at tier ≤ 2 — the same evidence bar as
+/// forward edges, so the tier-3 single-name fallback can't fabricate edges.
+/// The target's own modules never list themselves. Results are de-duplicated
+/// and ordered by `module_path`.
+pub fn find_dependents(conn: &Connection, target: &str) -> Result<Vec<Dependency>> {
+    let resolved = crate::graph::target::normalize_target(conn, target)?;
+    let mut target_modules = BTreeSet::new();
+    for file in &resolved.files {
+        for module in queries::module_paths_in_file(conn, file)? {
+            if !module.is_empty() {
+                target_modules.insert(module);
+            }
+        }
+    }
+    if target_modules.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut dependents: BTreeMap<String, Option<PathBuf>> = BTreeMap::new();
+    for file in queries::indexed_files(conn)? {
+        let mut evidence = false;
+        for (module_path, _) in queries::imports_for_file(conn, &file)? {
+            let dep_mod = normalize_import_module(conn, &module_path)?;
+            if target_modules.contains(&dep_mod) {
+                evidence = true;
+                break;
+            }
+        }
+        if !evidence {
+            for name in queries::reference_names_in_file(conn, &file)? {
+                let ranked = resolve::resolve_definition_ranked(conn, &name, &file)?;
+                let Some((tier, top)) = ranked.first() else {
+                    continue;
+                };
+                if *tier > 2 {
+                    continue;
+                }
+                if same_path(&top.file, &file) {
+                    continue;
+                }
+                if target_modules.contains(&top.module_path) {
+                    evidence = true;
+                    break;
+                }
+            }
+        }
+        if !evidence {
+            continue;
+        }
+        let mut modules = queries::module_paths_in_file(conn, &file)?;
+        // Top-level-only scripts and barrels define no symbols, so derive
+        // the file's own module from its path instead of dropping the
+        // evidence; the evidence file itself is the defining file.
+        let mut fallback_file: Option<PathBuf> = None;
+        if modules.is_empty() {
+            if let Some(module) = fallback_module_for_file(&file) {
+                fallback_file = Some(PathBuf::from(&file));
+                modules = vec![module];
+            }
+        }
+        for module in modules {
+            if module.is_empty() || target_modules.contains(&module) {
+                continue;
+            }
+            if dependents.contains_key(&module) {
+                continue;
+            }
+            let dep_file = match &fallback_file {
+                Some(f) => Some(f.clone()),
+                None => queries::first_file_for_module_path(conn, &module)?,
+            };
+            dependents.insert(module, dep_file);
+        }
+    }
+
+    Ok(dependents
+        .into_iter()
+        .map(|(module_path, file)| Dependency {
+            external: file.is_none(),
+            module_path,
+            file,
+        })
+        .collect())
+}
+
 /// Collect file paths belonging to `target` (module path, file path, and/or symbol name).
 fn files_for_target(conn: &Connection, target: &str) -> Result<Vec<String>> {
     Ok(crate::graph::target::normalize_target(conn, target)?.files)
@@ -98,6 +187,12 @@ fn normalize_import_module(conn: &Connection, import: &str) -> Result<String> {
 
 fn same_path(a: &Path, b: &str) -> bool {
     a == Path::new(b)
+}
+
+/// Module identity for an evidence file that defines no symbols.
+/// Shared with target resolution ([`crate::languages::path_module_fallback`]).
+fn fallback_module_for_file(file: &str) -> Option<String> {
+    crate::languages::path_module_fallback(Path::new(file))
 }
 
 #[cfg(test)]
@@ -168,6 +263,7 @@ mod tests {
                 start_col: 5,
                 kind: ReferenceKind::Call,
                 container: "crate::a::g".into(),
+                qualifier: String::new(),
             }],
         )
         .unwrap();
@@ -319,6 +415,7 @@ mod tests {
                 start_col: 5,
                 kind: ReferenceKind::Method,
                 container: "crate::u::u_main".into(),
+                qualifier: String::new(),
             }],
         )
         .unwrap();
@@ -358,6 +455,105 @@ mod tests {
             "unimported name match must not be an edge, got {paths:?}"
         );
         assert!(deps.is_empty(), "expected no deps, got {paths:?}");
+    }
+
+    #[test]
+    fn find_dependents_lists_importing_modules() {
+        let conn = setup();
+        fixture_a_depends_on_b(&conn);
+
+        let deps = find_dependents(&conn, "crate::b").unwrap();
+        let paths: Vec<&str> = deps.iter().map(|d| d.module_path.as_str()).collect();
+        assert_eq!(paths, vec!["crate::a"]);
+        assert_eq!(deps[0].file, Some(PathBuf::from("src/a.rs")));
+        assert!(!deps[0].external);
+    }
+
+    #[test]
+    fn find_dependents_by_symbol_and_file_target() {
+        let conn = setup();
+        fixture_a_depends_on_b(&conn);
+
+        for target in ["f", "src/b.rs"] {
+            let deps = find_dependents(&conn, target).unwrap();
+            let paths: Vec<&str> = deps.iter().map(|d| d.module_path.as_str()).collect();
+            assert_eq!(paths, vec!["crate::a"], "for target {target}");
+        }
+    }
+
+    #[test]
+    fn find_dependents_empty_and_never_self_lists() {
+        let conn = setup();
+        fixture_a_depends_on_b(&conn);
+
+        let deps = find_dependents(&conn, "crate::leaf").unwrap();
+        assert!(deps.is_empty(), "leaf has no dependents: {deps:?}");
+
+        // `a` imports others, but nothing imports `a`: no self-listing.
+        let deps = find_dependents(&conn, "crate::a").unwrap();
+        assert!(deps.is_empty(), "must not self-list: {deps:?}");
+    }
+
+    #[test]
+    fn find_dependents_ignores_unimported_name_matches() {
+        let conn = setup();
+        fixture_unrelated_name_match(&conn);
+
+        // `u` calls `get` without importing `crate::t`: tier-3 only, no edge.
+        let deps = find_dependents(&conn, "crate::t").unwrap();
+        assert!(deps.is_empty(), "expected no dependents, got {deps:?}");
+    }
+
+    #[test]
+    fn find_dependents_lists_symbol_less_importing_files() {
+        let conn = setup();
+        // `pkg/a.py` defines `helper`; `main.py` only imports and calls it
+        // at top level (no symbols of its own).
+        let a = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("pkg/a.py"),
+                content_hash: "ha".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            a,
+            &[Symbol {
+                name: "helper".into(),
+                kind: SymbolKind::Function,
+                file: PathBuf::new(),
+                start_line: 1,
+                start_col: 1,
+                module_path: "pkg.a".into(),
+            }],
+        )
+        .unwrap();
+        let main = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("main.py"),
+                content_hash: "hm".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_imports(
+            &conn,
+            main,
+            &[Import {
+                module_path: "pkg.a::helper".into(),
+                alias: None,
+                file: PathBuf::new(),
+            }],
+        )
+        .unwrap();
+
+        let deps = find_dependents(&conn, "pkg.a").unwrap();
+        let paths: Vec<&str> = deps.iter().map(|d| d.module_path.as_str()).collect();
+        assert_eq!(paths, vec!["main"]);
+        assert!(!deps[0].external);
+        assert_eq!(deps[0].file, Some(PathBuf::from("main.py")));
     }
 
     #[test]

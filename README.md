@@ -150,9 +150,26 @@ Add `.keel/` to the project's `.gitignore`.
 
 ### 3. Wire Cursor MCP
 
-Use an **absolute** path to the `keel` binary (`which keel`; expand `~`).
-`KEEL_INDEX_DB` is **optional**. When unset, MCP picks the best index it can
-find:
+Easiest: run `keel init` in the project — it prints a paste-ready snippet
+with the project root pinned (`cwd` + `KEEL_INDEX_DB`), so the server
+resolves this project's index no matter which cwd the client spawns it with.
+
+Manual equivalent (use an **absolute** binary path: `which keel`, expand `~`):
+
+```json
+{
+  "mcpServers": {
+    "keel": {
+      "command": "/absolute/path/to/keel",
+      "args": ["mcp"],
+      "cwd": "/absolute/path/to/project",
+      "env": { "KEEL_INDEX_DB": "/absolute/path/to/project/.keel/index.db" }
+    }
+  }
+}
+```
+
+Without the pin, MCP picks the best index it can find:
 
 1. Walk up from the process cwd for an existing `.keel/index.db` (nearest wins)
 2. Else use the daemon registry (`keel start` projects): the project that
@@ -160,28 +177,7 @@ find:
    unrelated projects)
 3. Else fall back to `cwd/.keel/index.db`
 
-Set `KEEL_INDEX_DB` only when you need to pin a specific project (for example
-several registered indexes and a client that starts with a useless cwd).
 Use `KEEL_MCP_DEBUG=1` to print the resolved db path on stderr.
-
-```bash
-which keel
-# Homebrew examples: /opt/homebrew/bin/keel  or  /usr/local/bin/keel
-# curl default:      ~/.local/bin/keel  → expand to a full path
-```
-
-Global `~/.cursor/mcp.json` or project `.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "keel": {
-      "command": "/absolute/path/to/keel",
-      "args": ["mcp"]
-    }
-  }
-}
-```
 
 Optional pin:
 
@@ -199,17 +195,29 @@ Optional pin:
 }
 ```
 
-After saving, refresh MCP in Cursor Settings. You should see **seven tools**:
+After saving, refresh MCP in Cursor Settings. You should see **eleven tools**:
 
 | Tool | Purpose |
 |------|---------|
 | `definition` | Definition(s) for a symbol; optional `module` or qualified name (`crate::mcp::serve`) |
 | `references` | Reference sites; optional `module` narrows when names collide |
 | `callers` | Call/use sites; import-aware when module is unique or provided |
-| `implementations` | Rust trait implementations for a trait name |
+| `implementations` | Implementers of a trait/interface/base (Rust, TS, Python, JS; Go explicit assertions only) |
 | `dependencies` | Modules/files a module path, file, or symbol depends on |
+| `dependents` | Modules that depend on a module, file, or symbol (reverse dependencies) |
 | `impact` | Candidate blast radius for a name (always medium/low confidence when non-empty); optional `module` |
+| `outline` | Symbols defined in a file, module, or directory, in source order |
+| `search` | Substring symbol-name search (case-insensitive); exact matches rank first; optional `limit` |
+| `unused` | Functions/methods with no recorded references (candidate dead code); optional `path` scope, `transitive` pass |
 | `index` | Index a repository path; returns indexing stats |
+
+All ten query tools accept an optional `limit` (default 500; `search`
+defaults to 50, max 200). `definition`, `references`, `callers`,
+`implementations`, and `impact` also accept an optional `module` to
+disambiguate colliding names. The eight hit tools (`definition`,
+`references`, `callers`, `implementations`, `impact`, `outline`, `search`,
+`unused`) accept an optional `preview` (`true` adds the source line of
+each hit). Capped responses name the true total in `notes`.
 
 Prefer Keel when you know a symbol or trait name; use text search for regex.
 Query responses (MCP / `keel <cmd> --json`) include `confidence`, `resolution_tier`,
@@ -219,6 +227,11 @@ mean disambiguate with `module` / a qualified name before treating hits as groun
 truth. Non-empty `impact` is a candidate list—verify before edits. After upgrades
 that change module identity, re-index with `rm -rf .keel && keel start`.
 The same `mcpServers` shape works for Claude Code and other MCP clients.
+With the Claude Code CLI, one command registers it (use the absolute binary path):
+
+```bash
+claude mcp add keel -- /absolute/path/to/keel mcp
+```
 
 ### 4. Prefer Keel automatically in chat
 
@@ -239,6 +252,7 @@ Where is AuthService defined?
 Who references create_order?
 Who calls create_order?
 What is impacted if WireFormat changes?
+What does src/mcp/mod.rs define?
 ```
 
 Or from the CLI:
@@ -264,21 +278,38 @@ keel daemon                # global daemon (curl / foreground)
 keel init [path]           # one-shot setup: index now + print MCP config (no daemon needed)
 keel start [path]          # register this project (index + watch)
 keel stop                  # unregister this project only
-keel status                # daemon + this project
-keel doctor [path]         # diagnose daemon / project / index health
+keel status                # daemon + project + insights server
+keel doctor [path]         # diagnose daemon / project / index / MCP health
 keel daemon-stop           # stop the global daemon + watchers
-keel definition <name>     # find definitions (auto-indexes)
-keel references <name>
-keel callers <name>
-keel implementations <trait>   # Rust traits today
-keel dependencies <name|module>
-keel impact <name>
+keel insights [opts]       # open dashboard (auto-starts server)
+keel insights-stop         # stop this project's dashboard server
+keel definition <name> [--module M] [--limit N]   # find definitions (auto-indexes)
+keel references <name> [--module M] [--limit N]
+keel callers <name> [--module M] [--limit N]
+keel implementations <trait> [--module M] [--limit N]   # Rust traits, TS interfaces, Py/JS bases
+keel dependencies <name|module> [--limit N]
+keel dependents <name|module|file> [--limit N]   # reverse dependencies
+keel impact <name> [--module M] [--limit N]
+keel outline <file|module|dir> [--limit N]   # symbols in source order
+keel search <pattern> [--limit N]   # substring symbol-name search
+keel unused [file|module|dir] [--limit N] [--transitive]   # candidate dead code (default: project)
 ```
+
+Hit-list flags: `--limit N` caps results (1-100000, default 500;
+`search`: 1-200, default 50) with the true total on stderr; `--json`
+carries the same `notes`. `--preview` (definition/references/callers/
+implementations/impact/search/outline/unused) prints the source line of
+each hit as an indented continuation row, or a `preview` field per hit under
+`--json` (truncated at 200 characters; missing lines preview as nothing).
 
 Index path: `<project>/.keel/index.db` (`.keel/` is added to `.gitignore`
 automatically). Daemon state: `~/.keel/daemon/` (`KEEL_HOME`).
+Indexing honors `.gitignore` plus an optional `.keelignore` (same syntax)
+for generated or checked-in code worth skipping without touching version
+control.
 
-Global flag: `--no-auto-index` skips the incremental ensure-index before queries.
+Global flags: `--no-auto-index` skips the incremental ensure-index before queries;
+`--json` switches queries, `doctor`, `status`, and `index` to machine-readable JSON.
 
 ## Without the daemon
 
@@ -293,8 +324,18 @@ keel watch [path]    # foreground re-index on file changes
 keel insights              # start server if needed, open dashboard in browser
 keel serve --port 7645     # ...or run the server in the foreground yourself
 curl http://127.0.0.1:7645/health
-curl http://127.0.0.1:7645/symbol/AuthService
+curl 'http://127.0.0.1:7645/symbol/AuthService?limit=10'
+curl 'http://127.0.0.1:7645/outline/src/lib.rs?limit=50'
+curl 'http://127.0.0.1:7645/search/serve?limit=5'
+curl 'http://127.0.0.1:7645/dependents/crate::mcp?limit=50'
+curl 'http://127.0.0.1:7645/impact/serve?module=crate::mcp&limit=20'
 ```
+
+Every list endpoint accepts `?limit=N` (defaults: 500; `search`: 50); capped
+responses carry the true total in `notes`, and `/symbol` names the capped
+list (`definition: showing first 1 of 3 matches; …`).
+`/symbol`, `/outline`, `/search`, and `/impact` also accept `?preview=1`
+to add the source line of each hit as a `preview` field.
 
 `keel insights` (alias: `keel insight`) reuses a running Keel server for
 the project when there is one — including a hand-started `keel serve` —
@@ -351,7 +392,7 @@ You should get a single JSON line back (not hang). With
 1. Confirm the resolved index is the right project (`KEEL_MCP_DEBUG=1` or set
    `KEEL_INDEX_DB` explicitly).
 2. Run `keel index .` or `keel start` again.
-3. Check `.gitignore` is not excluding the file you care about.
+3. Check `.gitignore` / `.keelignore` is not excluding the file you care about.
 4. Use the exact, case-sensitive symbol name.
 5. Rebuild: `rm -rf .keel && keel start` (daemon must be up).
 

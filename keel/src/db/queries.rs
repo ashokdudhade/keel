@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::graph::types::{
     FileNode, ImplRecord, Import, Reference, ReferenceKind, Symbol, SymbolKind,
 };
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -93,8 +93,8 @@ pub fn insert_symbols(conn: &Connection, file_id: i64, symbols: &[Symbol]) -> Re
 /// Insert all references for a file.
 pub fn insert_references(conn: &Connection, file_id: i64, references: &[Reference]) -> Result<()> {
     let mut stmt = conn.prepare(
-        r#"INSERT INTO "references" (file_id, name, start_line, start_col, kind, container)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6)"#,
+        r#"INSERT INTO "references" (file_id, name, start_line, start_col, kind, container, qualifier)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
     )?;
     for r in references {
         stmt.execute(params![
@@ -103,7 +103,8 @@ pub fn insert_references(conn: &Connection, file_id: i64, references: &[Referenc
             r.start_line as i64,
             r.start_col as i64,
             r.kind.as_db(),
-            r.container
+            r.container,
+            r.qualifier
         ])?;
     }
     Ok(())
@@ -185,6 +186,29 @@ pub fn imports_for_file(conn: &Connection, path: &str) -> Result<Vec<(String, Op
     Ok(out)
 }
 
+/// All aliased imports as `(file, module_path, alias)`, ordered
+/// deterministically. Powers alias-aware reference lookup.
+pub fn aliased_imports(conn: &Connection) -> Result<Vec<(String, String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT f.path, i.module_path, i.alias
+         FROM imports i JOIN files f ON i.file_id = f.id
+         WHERE i.alias IS NOT NULL AND i.alias != ''
+         ORDER BY f.path, i.module_path, i.alias",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 /// Distinct `module_path` values of symbols defined in the file at `path`.
 pub fn module_paths_in_file(conn: &Connection, path: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(
@@ -226,10 +250,197 @@ pub fn find_definition(conn: &Connection, name: &str) -> Result<Vec<Symbol>> {
     Ok(out)
 }
 
+/// Substring search over symbol names (case-insensitive), ordered
+/// deterministically by location. `limit` is clamped to 1..=200; returns the
+/// hits plus whether more matches exist beyond `limit`.
+pub fn search_symbols(
+    conn: &Connection,
+    pattern: &str,
+    limit: usize,
+) -> Result<(Vec<Symbol>, bool)> {
+    let limit = limit.clamp(1, 200);
+    let escaped = pattern.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    let like = format!("%{escaped}%");
+    let mut stmt = conn.prepare(
+        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path
+         FROM symbols s JOIN files f ON s.file_id = f.id
+         WHERE s.name LIKE ?1 ESCAPE '\\'
+         ORDER BY f.path, s.start_line, s.start_col
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![like, limit as i64 + 1], |row| {
+        Ok(Symbol {
+            name: row.get::<_, String>(0)?,
+            kind: SymbolKind::from_db(&row.get::<_, String>(1)?),
+            file: PathBuf::from(row.get::<_, String>(2)?),
+            start_line: row.get::<_, i64>(3)? as u32,
+            start_col: row.get::<_, i64>(4)? as u32,
+            module_path: row.get::<_, String>(5)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    let truncated = out.len() > limit;
+    out.truncate(limit);
+    Ok((out, truncated))
+}
+
+/// All indexed file paths, ordered deterministically.
+pub fn indexed_files(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT path FROM files ORDER BY path")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// All symbols defined in `file`, in source order.
+pub fn symbols_in_file(conn: &Connection, file: &str) -> Result<Vec<Symbol>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path
+         FROM symbols s JOIN files f ON s.file_id = f.id
+         WHERE f.path = ?1
+         ORDER BY s.start_line, s.start_col",
+    )?;
+    let rows = stmt.query_map(params![file], |row| {
+        Ok(Symbol {
+            name: row.get::<_, String>(0)?,
+            kind: SymbolKind::from_db(&row.get::<_, String>(1)?),
+            file: PathBuf::from(row.get::<_, String>(2)?),
+            start_line: row.get::<_, i64>(3)? as u32,
+            start_col: row.get::<_, i64>(4)? as u32,
+            module_path: row.get::<_, String>(5)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// Find function/method symbols with no recorded reference of the same
+/// name, ordered by location. `files` scopes the sweep to those indexed
+/// paths (`None` = whole project). Name-based liveness over-approximates:
+/// one same-named call site keeps every same-named definition alive, so
+/// results skew toward fewer false positives. Entry-point filtering
+/// (`main`, test files, constructors) happens in the caller.
+pub fn unreferenced_functions(
+    conn: &Connection,
+    files: Option<&[String]>,
+) -> Result<Vec<Symbol>> {
+    let mut sql = String::from(
+        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path
+         FROM symbols s JOIN files f ON s.file_id = f.id
+         WHERE s.kind = 'function'
+         AND NOT EXISTS (SELECT 1 FROM \"references\" r WHERE r.name = s.name)",
+    );
+    if let Some(wanted) = files {
+        let placeholders = vec!["?"; wanted.len()].join(", ");
+        sql.push_str(&format!(" AND f.path IN ({placeholders})"));
+    }
+    sql.push_str(" ORDER BY f.path, s.start_line, s.start_col");
+    let mut stmt = conn.prepare(&sql)?;
+    let row_to_symbol = |row: &rusqlite::Row| {
+        Ok(Symbol {
+            name: row.get::<_, String>(0)?,
+            kind: SymbolKind::from_db(&row.get::<_, String>(1)?),
+            file: PathBuf::from(row.get::<_, String>(2)?),
+            start_line: row.get::<_, i64>(3)? as u32,
+            start_col: row.get::<_, i64>(4)? as u32,
+            module_path: row.get::<_, String>(5)?,
+        })
+    };
+    let mut out = Vec::new();
+    match files {
+        Some(wanted) => {
+            let rows = stmt.query_map(params_from_iter(wanted.iter()), row_to_symbol)?;
+            for r in rows {
+                out.push(r?);
+            }
+        }
+        None => {
+            let rows = stmt.query_map([], row_to_symbol)?;
+            for r in rows {
+                out.push(r?);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// All function/method symbols, ordered by location, optionally scoped
+/// to `files` (`None` = whole project).
+pub fn all_functions(
+    conn: &Connection,
+    files: Option<&[String]>,
+) -> Result<Vec<Symbol>> {
+    let mut sql = String::from(
+        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path
+         FROM symbols s JOIN files f ON s.file_id = f.id
+         WHERE s.kind = 'function'",
+    );
+    if let Some(wanted) = files {
+        let placeholders = vec!["?"; wanted.len()].join(", ");
+        sql.push_str(&format!(" AND f.path IN ({placeholders})"));
+    }
+    sql.push_str(" ORDER BY f.path, s.start_line, s.start_col");
+    let mut stmt = conn.prepare(&sql)?;
+    let row_to_symbol = |row: &rusqlite::Row| {
+        Ok(Symbol {
+            name: row.get::<_, String>(0)?,
+            kind: SymbolKind::from_db(&row.get::<_, String>(1)?),
+            file: PathBuf::from(row.get::<_, String>(2)?),
+            start_line: row.get::<_, i64>(3)? as u32,
+            start_col: row.get::<_, i64>(4)? as u32,
+            module_path: row.get::<_, String>(5)?,
+        })
+    };
+    let mut out = Vec::new();
+    match files {
+        Some(wanted) => {
+            let rows = stmt.query_map(params_from_iter(wanted.iter()), row_to_symbol)?;
+            for r in rows {
+                out.push(r?);
+            }
+        }
+        None => {
+            let rows = stmt.query_map([], row_to_symbol)?;
+            for r in rows {
+                out.push(r?);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Every referenced `(name, container)` pair in the project. Used by the
+/// transitive `unused` pass to tell references from live code apart from
+/// references inside candidate-dead functions.
+pub fn all_reference_names_with_containers(
+    conn: &Connection,
+) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT name, container FROM \"references\"",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 /// Find all references matching `name`, ordered deterministically.
 pub fn find_references(conn: &Connection, name: &str) -> Result<Vec<Reference>> {
     let mut stmt = conn.prepare(
-        r#"SELECT r.name, f.path, r.start_line, r.start_col, r.kind, r.container
+        r#"SELECT r.name, f.path, r.start_line, r.start_col, r.kind, r.container, r.qualifier
            FROM "references" r JOIN files f ON r.file_id = f.id
            WHERE r.name = ?1
            ORDER BY f.path, r.start_line, r.start_col"#,
@@ -242,6 +453,7 @@ pub fn find_references(conn: &Connection, name: &str) -> Result<Vec<Reference>> 
             start_col: row.get::<_, i64>(3)? as u32,
             kind: ReferenceKind::from_db(&row.get::<_, String>(4)?),
             container: row.get::<_, String>(5)?,
+            qualifier: row.get::<_, String>(6)?,
         })
     })?;
     let mut out = Vec::new();
@@ -417,6 +629,7 @@ mod tests {
                 start_col: 9,
                 kind: ReferenceKind::Call,
                 container: String::new(),
+                qualifier: String::new(),
             }],
         )
         .unwrap();
@@ -460,6 +673,7 @@ mod tests {
                 start_col: 5,
                 kind: ReferenceKind::Method,
                 container: "handler".to_string(),
+                qualifier: String::new(),
             }],
         )
         .unwrap();

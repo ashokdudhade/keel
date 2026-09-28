@@ -1,0 +1,683 @@
+{
+ "description": "Gold impacted definitions for impact benchmark (path relative to fixture root, 1-based def lines). Module-narrowed queries pin per-language recall (direct + transitive + method callers); the bare queries pin documented multi-definition expansion.",
+ "queries": [
+  {
+   "language": "Python",
+   "symbol": "alpha",
+   "module": "py.src.a",
+   "impacted": [
+    {
+     "file": "py/src/b.py",
+     "line": 3
+    },
+    {
+     "file": "py/src/c.py",
+     "line": 3
+    },
+    {
+     "file": "py/src/d.py",
+     "line": 4
+    }
+   ]
+  },
+  {
+   "language": "Python",
+   "symbol": "beta",
+   "module": "py.src.b",
+   "impacted": [
+    {
+     "file": "py/src/c.py",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "Python",
+   "symbol": "lonely",
+   "module": "py.src.b",
+   "impacted": []
+  },
+  {
+   "language": "TypeScript",
+   "symbol": "alpha",
+   "module": "ts/src/a",
+   "impacted": [
+    {
+     "file": "ts/src/b.ts",
+     "line": 3
+    },
+    {
+     "file": "ts/src/c.ts",
+     "line": 3
+    },
+    {
+     "file": "ts/src/d.ts",
+     "line": 4
+    }
+   ]
+  },
+  {
+   "language": "TypeScript",
+   "symbol": "beta",
+   "module": "ts/src/b",
+   "impacted": [
+    {
+     "file": "ts/src/c.ts",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "TypeScript",
+   "symbol": "lonely",
+   "module": "ts/src/b",
+   "impacted": []
+  },
+  {
+   "language": "JavaScript",
+   "symbol": "alpha",
+   "module": "js/src/a",
+   "impacted": [
+    {
+     "file": "js/src/b.js",
+     "line": 3
+    },
+    {
+     "file": "js/src/c.js",
+     "line": 3
+    },
+    {
+     "file": "js/src/d.js",
+     "line": 4
+    }
+   ]
+  },
+  {
+   "language": "JavaScript",
+   "symbol": "beta",
+   "module": "js/src/b",
+   "impacted": [
+    {
+     "file": "js/src/c.js",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "JavaScript",
+   "symbol": "lonely",
+   "module": "js/src/b",
+   "impacted": []
+  },
+  {
+   "language": "Rust",
+   "symbol": "alpha",
+   "module": "crate::a",
+   "impacted": [
+    {
+     "file": "rs/src/b.rs",
+     "line": 3
+    },
+    {
+     "file": "rs/src/c.rs",
+     "line": 3
+    },
+    {
+     "file": "rs/src/d.rs",
+     "line": 6
+    }
+   ]
+  },
+  {
+   "language": "Rust",
+   "symbol": "beta",
+   "module": "crate::b",
+   "impacted": [
+    {
+     "file": "rs/src/c.rs",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "Rust",
+   "symbol": "lonely",
+   "module": "crate::b",
+   "impacted": []
+  },
+  {
+   "language": "Go",
+   "symbol": "Alpha",
+   "module": "a",
+   "impacted": [
+    {
+     "file": "go/b.go",
+     "line": 5
+    },
+    {
+     "file": "go/c.go",
+     "line": 5
+    },
+    {
+     "file": "go/d.go",
+     "line": 7
+    }
+   ]
+  },
+  {
+   "language": "Go",
+   "symbol": "Beta",
+   "module": "b",
+   "impacted": [
+    {
+     "file": "go/c.go",
+     "line": 5
+    }
+   ]
+  },
+  {
+   "language": "Go",
+   "symbol": "Lonely",
+   "module": "b",
+   "impacted": []
+  },
+  {
+   "language": "multi",
+   "symbol": "alpha",
+   "module": null,
+   "impacted": [
+    {
+     "file": "js/src/b.js",
+     "line": 3
+    },
+    {
+     "file": "js/src/c.js",
+     "line": 3
+    },
+    {
+     "file": "js/src/d.js",
+     "line": 4
+    },
+    {
+     "file": "py/src/b.py",
+     "line": 3
+    },
+    {
+     "file": "py/src/c.py",
+     "line": 3
+    },
+    {
+     "file": "py/src/d.py",
+     "line": 4
+    },
+    {
+     "file": "rs/src/b.rs",
+     "line": 3
+    },
+    {
+     "file": "rs/src/c.rs",
+     "line": 3
+    },
+    {
+     "file": "rs/src/d.rs",
+     "line": 6
+    },
+    {
+     "file": "ts/src/b.ts",
+     "line": 3
+    },
+    {
+     "file": "ts/src/c.ts",
+     "line": 3
+    },
+    {
+     "file": "ts/src/d.ts",
+     "line": 4
+    }
+   ]
+  },
+  {
+   "language": "multi",
+   "symbol": "lonely",
+   "module": null,
+   "impacted": []
+  },
+  {
+   "language": "JavaScript",
+   "symbol": "Widget",
+   "module": "js/src/widget",
+   "impacted": [
+    {
+     "file": "js/src/app.jsx",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "Python",
+   "symbol": "guard",
+   "module": "py.src.f",
+   "impacted": [
+    {
+     "file": "py/src/f.py",
+     "line": 6
+    }
+   ]
+  },
+  {
+   "language": "TypeScript",
+   "symbol": "Logged",
+   "module": "ts/src/e",
+   "impacted": [
+    {
+     "file": "ts/src/e.ts",
+     "line": 6
+    }
+   ]
+  },
+  {
+   "language": "Go",
+   "symbol": "Widget",
+   "module": "e",
+   "impacted": [
+    {
+     "file": "go/e.go",
+     "line": 7
+    },
+    {
+     "file": "go/e.go",
+     "line": 12
+    }
+   ]
+  },
+  {
+   "language": "JavaScript",
+   "symbol": "Base",
+   "module": "js/src/shapes",
+   "impacted": [
+    {
+     "file": "js/src/shapes.js",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "TypeScript",
+   "symbol": "Shape",
+   "module": "ts/src/f",
+   "impacted": [
+    {
+     "file": "ts/src/f.ts",
+     "line": 5
+    }
+   ]
+  },
+  {
+   "language": "Python",
+   "symbol": "AppError",
+   "module": "py.src.g",
+   "impacted": [
+    {
+     "file": "py/src/g.py",
+     "line": 5
+    }
+   ]
+  },
+  {
+   "language": "TypeScript",
+   "symbol": "Token",
+   "module": "ts/src/g",
+   "impacted": [
+    {
+     "file": "ts/src/g.ts",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "TypeScript",
+   "symbol": "LIMIT",
+   "module": "ts/src/h",
+   "impacted": [
+    {
+     "file": "ts/src/i.ts",
+     "line": 3
+    },
+    {
+     "file": "ts/src/i.ts",
+     "line": 7
+    }
+   ]
+  },
+  {
+   "language": "JavaScript",
+   "symbol": "LIMIT",
+   "module": "js/src/limit",
+   "impacted": [
+    {
+     "file": "js/src/uses.js",
+     "line": 3
+    },
+    {
+     "file": "js/src/uses.js",
+     "line": 7
+    }
+   ]
+  },
+  {
+   "language": "Python",
+   "symbol": "LIMIT",
+   "module": "py.src.h",
+   "impacted": [
+    {
+     "file": "py/src/i.py",
+     "line": 3
+    },
+    {
+     "file": "py/src/i.py",
+     "line": 6
+    }
+   ]
+  },
+  {
+   "language": "Rust",
+   "symbol": "LIMIT",
+   "module": "crate::h",
+   "impacted": [
+    {
+     "file": "rs/src/i.rs",
+     "line": 3
+    },
+    {
+     "file": "rs/src/i.rs",
+     "line": 7
+    }
+   ]
+  },
+  {
+   "language": "Rust",
+   "symbol": "Config",
+   "module": "crate::j",
+   "impacted": [
+    {
+     "file": "rs/src/k.rs",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "Go",
+   "symbol": "LIMIT",
+   "module": "h",
+   "impacted": [
+    {
+     "file": "go/i.go",
+     "line": 5
+    },
+    {
+     "file": "go/i.go",
+     "line": 9
+    }
+   ]
+  },
+  {
+   "language": "Go",
+   "symbol": "Mode",
+   "module": "j",
+   "impacted": [
+    {
+     "file": "go/k.go",
+     "line": 5
+    },
+    {
+     "file": "go/k.go",
+     "line": 14
+    }
+   ]
+  },
+  {
+   "language": "TypeScript",
+   "symbol": "port",
+   "module": "ts/src/j",
+   "impacted": [
+    {
+     "file": "ts/src/k.ts",
+     "line": 3
+    },
+    {
+     "file": "ts/src/k.ts",
+     "line": 7
+    }
+   ]
+  },
+  {
+   "language": "JavaScript",
+   "symbol": "port",
+   "module": "js/src/j",
+   "impacted": [
+    {
+     "file": "js/src/k.js",
+     "line": 3
+    },
+    {
+     "file": "js/src/k.js",
+     "line": 7
+    }
+   ]
+  },
+  {
+   "language": "Python",
+   "symbol": "port",
+   "module": "py.src.j",
+   "impacted": [
+    {
+     "file": "py/src/k.py",
+     "line": 4
+    },
+    {
+     "file": "py/src/k.py",
+     "line": 8
+    }
+   ]
+  },
+  {
+   "language": "Rust",
+   "symbol": "port",
+   "module": "crate::l",
+   "impacted": [
+    {
+     "file": "rs/src/m.rs",
+     "line": 3
+    },
+    {
+     "file": "rs/src/m.rs",
+     "line": 7
+    }
+   ]
+  },
+  {
+   "language": "Go",
+   "symbol": "Port",
+   "module": "l",
+   "impacted": [
+    {
+     "file": "go/m.go",
+     "line": 5
+    },
+    {
+     "file": "go/m.go",
+     "line": 9
+    }
+   ]
+  },
+  {
+   "language": "Python",
+   "symbol": "describe",
+   "module": "py.src.l",
+   "impacted": [
+    {
+     "file": "py/src/n.py",
+     "line": 6
+    }
+   ]
+  },
+  {
+   "language": "Python",
+   "symbol": "describe",
+   "module": "py.src.m",
+   "impacted": [
+    {
+     "file": "py/src/o.py",
+     "line": 6
+    }
+   ]
+  },
+  {
+   "language": "JavaScript",
+   "symbol": "greeting",
+   "module": "js/src/greeting",
+   "impacted": [
+    {
+     "file": "js/src/card.jsx",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "Go",
+   "symbol": "Notify",
+   "module": "n",
+   "impacted": [
+    {
+     "file": "go/o.go",
+     "line": 5
+    }
+   ]
+  },
+  {
+   "language": "Rust",
+   "symbol": "SEED",
+   "module": "crate::n",
+   "impacted": [
+    {
+     "file": "rs/src/o.rs",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "TypeScript",
+   "symbol": "Entity",
+   "module": "ts/src/l",
+   "impacted": [
+    {
+     "file": "ts/src/m.ts",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "TypeScript",
+   "symbol": "format",
+   "module": "ts/src/n",
+   "impacted": [
+    {
+     "file": "ts/src/o.ts",
+     "line": 3
+    },
+    {
+     "file": "ts/src/p.ts",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "Rust",
+   "symbol": "VERSION",
+   "module": "crate::p",
+   "impacted": [
+    {
+     "file": "rs/src/q.rs",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "Go",
+   "symbol": "Host",
+   "module": "p",
+   "impacted": [
+    {
+     "file": "go/q.go",
+     "line": 5
+    }
+   ]
+  },
+  {
+   "language": "Rust",
+   "symbol": "host",
+   "module": "crate::r",
+   "impacted": [
+    {
+     "file": "rs/src/s.rs",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "TypeScript",
+   "symbol": "FALLBACK",
+   "module": "ts/src/q",
+   "impacted": [
+    {
+     "file": "ts/src/r.ts",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "Rust",
+   "symbol": "BASE",
+   "module": "crate::t",
+   "impacted": [
+    {
+     "file": "rs/src/u.rs",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "Python",
+   "symbol": "timeout",
+   "module": "py.src.p",
+   "impacted": [
+    {
+     "file": "py/src/q.py",
+     "line": 3
+    }
+   ]
+  },
+  {
+   "language": "TypeScript",
+   "symbol": "lazy",
+   "module": "ts/src/s",
+   "impacted": [
+    {
+     "file": "ts/src/t.ts",
+     "line": 1
+    }
+   ]
+  },
+  {
+   "language": "Python",
+   "symbol": "serve",
+   "module": "py.src.r",
+   "impacted": [
+    {
+     "file": "py/src/s.py",
+     "line": 5
+    }
+   ]
+  }
+ ]
+}

@@ -201,4 +201,9 @@ html = f"""<!DOCTYPE html>
 Path(out_html).write_text(html)
 print(json.dumps(summary, indent=2))
 print(f"Wrote {out_html}")
+# CI gate: the grep baseline is informational; Keel must be perfect.
+if wk["f1"] < 1.0:
+    print(f"GATE FAILED: accuracy F1 {wk['f1']:.4f} < 1.0 (fp={wk['fp']}, fn={wk['fn']})", file=sys.stderr)
+    raise SystemExit(1)
+print(f"GATE PASSED: accuracy F1 1.0 across {summary['queries']} queries")
 PY

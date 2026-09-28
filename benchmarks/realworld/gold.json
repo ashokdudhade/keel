@@ -16,8 +16,12 @@
       "repo": "BurntSushi-walkdir",
       "language": "Rust",
       "symbol": "follow_links",
-      "note": "Builder method",
-      "definitions": [{ "file": "src/lib.rs", "line": 346 }]
+      "note": "Builder method + options field + example CLI field",
+      "definitions": [
+        { "file": "src/lib.rs", "line": 240 },
+        { "file": "src/lib.rs", "line": 346 },
+        { "file": "walkdir-list/main.rs", "line": 158 }
+      ]
     },
     {
       "repo": "BurntSushi-walkdir",
@@ -67,15 +71,24 @@
       "repo": "expressjs-express",
       "language": "JavaScript",
       "symbol": "Route",
-      "note": "Router Route constructor",
-      "definitions": [{ "file": "lib/router/route.js", "line": 43 }]
+      "note": "Constructor + require aliases + test member alias",
+      "definitions": [
+        { "file": "lib/express.js", "line": 19 },
+        { "file": "lib/router/index.js", "line": 16 },
+        { "file": "lib/router/route.js", "line": 43 },
+        { "file": "test/Route.js", "line": 6 }
+      ]
     },
     {
       "repo": "expressjs-express",
       "language": "JavaScript",
       "symbol": "Layer",
-      "note": "Router Layer constructor",
-      "definitions": [{ "file": "lib/router/layer.js", "line": 33 }]
+      "note": "Constructor + require aliases",
+      "definitions": [
+        { "file": "lib/router/index.js", "line": 17 },
+        { "file": "lib/router/layer.js", "line": 33 },
+        { "file": "lib/router/route.js", "line": 18 }
+      ]
     },
     {
       "repo": "pallets-flask",

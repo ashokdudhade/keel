@@ -1,22 +1,22 @@
 {
   "summary": {
     "without_keel": {
-      "tp": 11,
+      "tp": 18,
       "fp": 3,
-      "fn": 0,
-      "precision": 0.7857142857142857,
-      "recall": 1.0,
-      "f1": 0.88
+      "fn": 8,
+      "precision": 0.8571428571428571,
+      "recall": 0.6923076923076923,
+      "f1": 0.7659574468085107
     },
     "with_keel": {
-      "tp": 11,
+      "tp": 26,
       "fp": 0,
       "fn": 0,
       "precision": 1.0,
       "recall": 1.0,
       "f1": 1.0
     },
-    "queries": 10
+    "queries": 20
   },
   "rows": [
     {
@@ -343,6 +343,334 @@
         ],
         "expected": [
           "py/pkg/service.py:1"
+        ]
+      }
+    },
+    {
+      "symbol": "say",
+      "language": "Rust",
+      "without_keel": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "predicted": [],
+        "expected": [
+          "rust/src/lib.rs:11"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rust/src/lib.rs:11"
+        ],
+        "expected": [
+          "rust/src/lib.rs:11"
+        ]
+      }
+    },
+    {
+      "symbol": "TsConfig",
+      "language": "TypeScript",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/service.ts:12"
+        ],
+        "expected": [
+          "ts/src/service.ts:12"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/service.ts:12"
+        ],
+        "expected": [
+          "ts/src/service.ts:12"
+        ]
+      }
+    },
+    {
+      "symbol": "PyConfig",
+      "language": "Python",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/pkg/service.py:11"
+        ],
+        "expected": [
+          "py/pkg/service.py:11"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/pkg/service.py:11"
+        ],
+        "expected": [
+          "py/pkg/service.py:11"
+        ]
+      }
+    },
+    {
+      "symbol": "Cfg",
+      "language": "Rust",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rust/src/lib.rs:17"
+        ],
+        "expected": [
+          "rust/src/lib.rs:17"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "rust/src/lib.rs:17"
+        ],
+        "expected": [
+          "rust/src/lib.rs:17"
+        ]
+      }
+    },
+    {
+      "symbol": "JsConfig",
+      "language": "JavaScript",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/service.js:11"
+        ],
+        "expected": [
+          "js/src/service.js:11"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/service.js:11"
+        ],
+        "expected": [
+          "js/src/service.js:11"
+        ]
+      }
+    },
+    {
+      "symbol": "port",
+      "language": "Multi",
+      "without_keel": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 4,
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "predicted": [],
+        "expected": [
+          "js/src/service.js:12",
+          "py/pkg/service.py:12",
+          "rust/src/lib.rs:18",
+          "ts/src/service.ts:13"
+        ]
+      },
+      "with_keel": {
+        "tp": 4,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "js/src/service.js:12",
+          "py/pkg/service.py:12",
+          "rust/src/lib.rs:18",
+          "ts/src/service.ts:13"
+        ],
+        "expected": [
+          "js/src/service.js:12",
+          "py/pkg/service.py:12",
+          "rust/src/lib.rs:18",
+          "ts/src/service.ts:13"
+        ]
+      }
+    },
+    {
+      "symbol": "describe",
+      "language": "TypeScript",
+      "without_keel": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "predicted": [],
+        "expected": [
+          "ts/src/service.ts:14"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "ts/src/service.ts:14"
+        ],
+        "expected": [
+          "ts/src/service.ts:14"
+        ]
+      }
+    },
+    {
+      "symbol": "Storer",
+      "language": "Go",
+      "without_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/auth/service.go:11"
+        ],
+        "expected": [
+          "go/auth/service.go:11"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/auth/service.go:11"
+        ],
+        "expected": [
+          "go/auth/service.go:11"
+        ]
+      }
+    },
+    {
+      "symbol": "Get",
+      "language": "Go",
+      "without_keel": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "precision": 1.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "predicted": [],
+        "expected": [
+          "go/auth/service.go:12"
+        ]
+      },
+      "with_keel": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "go/auth/service.go:12"
+        ],
+        "expected": [
+          "go/auth/service.go:12"
+        ]
+      }
+    },
+    {
+      "symbol": "run",
+      "language": "Multi",
+      "without_keel": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 1,
+        "precision": 1.0,
+        "recall": 0.6666666666666666,
+        "f1": 0.8,
+        "predicted": [
+          "py/pkg/service.py:2",
+          "rust/src/lib.rs:6"
+        ],
+        "expected": [
+          "py/pkg/service.py:2",
+          "rust/src/lib.rs:6",
+          "ts/src/service.ts:2"
+        ]
+      },
+      "with_keel": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "predicted": [
+          "py/pkg/service.py:2",
+          "rust/src/lib.rs:6",
+          "ts/src/service.ts:2"
+        ],
+        "expected": [
+          "py/pkg/service.py:2",
+          "rust/src/lib.rs:6",
+          "ts/src/service.ts:2"
         ]
       }
     }

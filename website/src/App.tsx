@@ -16,13 +16,15 @@ const cursorPrompts = `Where is AuthService defined?
 Who references create_order?
 Who calls create_order?
 What is impacted if WireFormat changes?
-Where is serve defined in crate::mcp?`;
+Where is serve defined in crate::mcp?
+What does src/mcp/mod.rs define?`;
 
 const claudePrompts = `Where is LanguagePlugin defined?
 Who references read_message?
 What implements LanguagePlugin?
 What is impacted if Registry changes?
-Disambiguate serve with module crate::mcp`;
+Disambiguate serve with module crate::mcp
+What does keel/src/lib.rs define?`;
 
 const tools: { name: string; summary: string }[] = [
   {
@@ -41,7 +43,8 @@ const tools: { name: string; summary: string }[] = [
   },
   {
     name: "implementations",
-    summary: "Rust trait implementations for a trait name",
+    summary: "Implementers of a trait/interface/base (Rust, TS, Python, JS)",
+
   },
   {
     name: "dependencies",
@@ -51,6 +54,18 @@ const tools: { name: string; summary: string }[] = [
     name: "impact",
     summary:
       "Candidate blast radius (medium/low when non-empty); optional module",
+  },
+  {
+    name: "outline",
+    summary: "Symbols defined in a file, in source order",
+  },
+  {
+    name: "search",
+    summary: "Substring symbol-name search; exact matches rank first",
+  },
+  {
+    name: "dependents",
+    summary: "Modules that depend on a module, file, or symbol",
   },
   {
     name: "index",
@@ -293,7 +308,7 @@ export default function App() {
       <section className="tools" id="tools">
         <div className="wrap">
           <p className="kicker">MCP tools</p>
-          <h2 className="title">Seven tools over one index</h2>
+          <h2 className="title">Ten tools over one index</h2>
           <p className="lede">
             Prefer Keel when you know a symbol or trait name; use text search
             for regex. Responses include <span className="mono">confidence</span>{" "}
@@ -302,7 +317,8 @@ export default function App() {
             <span className="mono">module</span> or a qualified name.{" "}
             <span className="mono">impact</span> is a candidate blast radius,
             not a delete list. <span className="mono">implementations</span>{" "}
-            covers Rust traits today.
+            covers Rust traits, TypeScript interfaces, and Python/JavaScript
+            base classes.
           </p>
           <ul className="tool-list">
             {tools.map((tool) => (
@@ -445,7 +461,7 @@ cd /path/to/project && rm -rf .keel && keel start`}
             guesses among unrelated indexes), then{" "}
             <span className="mono">cwd/.keel/index.db</span>. Set the env var
             only to pin a project. Refresh MCP after saving (and after
-            upgrades); you should see all seven tools, including optional{" "}
+            upgrades); you should see all ten tools, including optional{" "}
             <span className="mono">module</span> on structural queries.
           </p>
 

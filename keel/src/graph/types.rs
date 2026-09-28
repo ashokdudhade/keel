@@ -131,6 +131,10 @@ pub struct Reference {
     pub kind: ReferenceKind,
     /// Enclosing symbol name for the reference (empty when unknown).
     pub container: String,
+    /// Qualifier prefix as written for qualified call sites: the path prefix
+    /// for `Path` refs (`mcp` in `mcp::serve`), the receiver text for `Method`
+    /// refs (`db` in `db.get()`). Empty for unqualified sites.
+    pub qualifier: String,
 }
 
 /// An `impl` block record, linking a type (and optional trait) to its location.

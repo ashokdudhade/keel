@@ -109,7 +109,7 @@ pub fn registered_project_roots() -> Vec<PathBuf> {
 
 fn save_registry(reg: &RegistryFile) -> Result<()> {
     ensure_daemon_dir()?;
-    let text = serde_json::to_string_pretty(reg).map_err(|e| KeelError::Watch(e.to_string()))?;
+    let text = serde_json::to_string_pretty(reg).map_err(|e| KeelError::Daemon(e.to_string()))?;
     fs::write(registry_path(), text).map_err(|source| KeelError::Io {
         path: registry_path(),
         source,
@@ -147,9 +147,32 @@ fn process_alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
+/// True when `pid` looks like a Keel process.
+///
+/// Guards stale pidfiles/markers against PID reuse: a recycled pid may be
+/// alive but belong to an unrelated program, which must never be signaled.
+/// Linux checks `/proc/<pid>/cmdline`; dead/unreadable means "not ours".
+/// Other platforms cannot verify cheaply and keep existing behavior.
+pub(crate) fn pid_is_keel(pid: u32) -> bool {
+    if !valid_pid(pid) {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        match std::fs::read(format!("/proc/{pid}/cmdline")) {
+            Ok(bytes) => String::from_utf8_lossy(&bytes).contains("keel"),
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}
+
 fn signal_term(pid: u32) -> Result<()> {
     if !valid_pid(pid) {
-        return Err(KeelError::Watch(format!("refusing to signal invalid pid {pid}")));
+        return Err(KeelError::Daemon(format!("refusing to signal invalid pid {pid}")));
     }
     let status = Command::new("kill")
         .args(["-TERM", &pid.to_string()])
@@ -161,7 +184,7 @@ fn signal_term(pid: u32) -> Result<()> {
             source,
         })?;
     if !status.success() {
-        return Err(KeelError::Watch(format!("kill -TERM {pid} failed")));
+        return Err(KeelError::Daemon(format!("kill -TERM {pid} failed")));
     }
     Ok(())
 }
@@ -172,8 +195,10 @@ pub fn run_daemon(port: u16) -> Result<()> {
     if daemon_pid_path().exists() {
         if let Ok(pid) = fs::read_to_string(daemon_pid_path()) {
             if let Ok(pid) = pid.trim().parse::<u32>() {
-                if process_alive(pid) && pid != std::process::id() {
-                    return Err(KeelError::Watch(format!(
+                // A live non-Keel pid is a stale pidfile after PID reuse:
+                // fall through and overwrite it instead of refusing to start.
+                if process_alive(pid) && pid_is_keel(pid) && pid != std::process::id() {
+                    return Err(KeelError::Daemon(format!(
                         "keel daemon already running (pid {pid})"
                     )));
                 }
@@ -208,7 +233,7 @@ pub fn run_daemon(port: u16) -> Result<()> {
 
     let addr = format!("127.0.0.1:{port}");
     eprintln!("keel daemon listening on http://{addr}");
-    let server = Server::http(&addr).map_err(|e| KeelError::Watch(e.to_string()))?;
+    let server = Server::http(&addr).map_err(|e| KeelError::Daemon(e.to_string()))?;
 
     for request in server.incoming_requests() {
         handle_daemon_request(request, &state);
@@ -262,7 +287,7 @@ fn dispatch(
     if *method == Method::Get && path == "/status" {
         let mut projects = Vec::new();
         {
-            let mut guard = state.lock().map_err(|e| KeelError::Watch(e.to_string()))?;
+            let mut guard = state.lock().map_err(|e| KeelError::Daemon(e.to_string()))?;
             guard.projects.retain(|_, child| matches!(child.try_wait(), Ok(None)));
             for (path, child) in &guard.projects {
                 projects.push(json!({
@@ -285,11 +310,11 @@ fn dispatch(
 
     if *method == Method::Post && path == "/watch" {
         let body: serde_json::Value =
-            serde_json::from_str(body_buf).map_err(|e| KeelError::Watch(e.to_string()))?;
+            serde_json::from_str(body_buf).map_err(|e| KeelError::Daemon(e.to_string()))?;
         let path = body
             .get("path")
             .and_then(|p| p.as_str())
-            .ok_or_else(|| KeelError::Watch("missing path".into()))?;
+            .ok_or_else(|| KeelError::Daemon("missing path".into()))?;
         let abs = fs::canonicalize(path).map_err(|source| KeelError::Io {
             path: PathBuf::from(path),
             source,
@@ -320,7 +345,7 @@ fn dispatch(
                     _ => None,
                 }
             })
-            .ok_or_else(|| KeelError::Watch("missing path query".into()))?;
+            .ok_or_else(|| KeelError::Daemon("missing path query".into()))?;
         let abs = fs::canonicalize(&path).unwrap_or_else(|_| PathBuf::from(&path));
         let key = abs.display().to_string();
         stop_project_watch(state, &key)?;
@@ -335,7 +360,7 @@ fn dispatch(
 }
 
 fn persist_state(state: &Arc<Mutex<DaemonState>>) -> Result<()> {
-    let guard = state.lock().map_err(|e| KeelError::Watch(e.to_string()))?;
+    let guard = state.lock().map_err(|e| KeelError::Daemon(e.to_string()))?;
     let reg = RegistryFile {
         projects: guard
             .projects
@@ -353,7 +378,7 @@ fn persist_state(state: &Arc<Mutex<DaemonState>>) -> Result<()> {
 fn start_project_watch(state: &Arc<Mutex<DaemonState>>, abs_root: &Path) -> Result<u32> {
     let key = abs_root.display().to_string();
     {
-        let mut guard = state.lock().map_err(|e| KeelError::Watch(e.to_string()))?;
+        let mut guard = state.lock().map_err(|e| KeelError::Daemon(e.to_string()))?;
         if let Some(child) = guard.projects.get_mut(&key) {
             if matches!(child.try_wait(), Ok(None)) {
                 return Ok(child.id());
@@ -366,12 +391,13 @@ fn start_project_watch(state: &Arc<Mutex<DaemonState>>, abs_root: &Path) -> Resu
     let stats = index::index_repository(abs_root, &mut conn)?;
     drop(conn);
     eprintln!(
-        "daemon: indexed {} — indexed={}, skipped={}, removed={}, errors={}",
+        "daemon: indexed {} — indexed={}, skipped={}, removed={}, errors={}, syntax_errors={}",
         abs_root.display(),
         stats.indexed,
         stats.skipped,
         stats.removed,
-        stats.errors
+        stats.errors,
+        stats.syntax_errors
     );
 
     let exe = std::env::current_exe().map_err(|source| KeelError::Io {
@@ -407,13 +433,13 @@ fn start_project_watch(state: &Arc<Mutex<DaemonState>>, abs_root: &Path) -> Resu
         })?;
     let pid = child.id();
 
-    let mut guard = state.lock().map_err(|e| KeelError::Watch(e.to_string()))?;
+    let mut guard = state.lock().map_err(|e| KeelError::Daemon(e.to_string()))?;
     guard.projects.insert(key, child);
     Ok(pid)
 }
 
 fn stop_project_watch(state: &Arc<Mutex<DaemonState>>, key: &str) -> Result<()> {
-    let mut guard = state.lock().map_err(|e| KeelError::Watch(e.to_string()))?;
+    let mut guard = state.lock().map_err(|e| KeelError::Daemon(e.to_string()))?;
     if let Some(mut child) = guard.projects.remove(key) {
         let pid = child.id();
         let _ = signal_term(pid);
@@ -535,7 +561,7 @@ pub fn client_start_project(path: &Path) -> Result<()> {
         if cfg!(target_os = "macos") {
             msg.push_str("\n(or: keel daemon)");
         }
-        return Err(KeelError::Watch(msg));
+        return Err(KeelError::Daemon(msg));
     }
     let abs = fs::canonicalize(path).map_err(|source| KeelError::Io {
         path: path.to_path_buf(),
@@ -544,7 +570,7 @@ pub fn client_start_project(path: &Path) -> Result<()> {
     let payload = json!({ "path": abs.display().to_string() }).to_string();
     let (code, body) = http_json("POST", "/watch", Some(&payload))?;
     if code != 200 {
-        return Err(KeelError::Watch(format!(
+        return Err(KeelError::Daemon(format!(
             "daemon rejected start ({code}): {body}"
         )));
     }
@@ -560,18 +586,26 @@ pub fn client_start_project(path: &Path) -> Result<()> {
 
 /// Stop the global daemon and its project watchers.
 pub fn client_stop_daemon() -> Result<()> {
-    let pid = fs::read_to_string(daemon_pid_path())
+    let mut pid = fs::read_to_string(daemon_pid_path())
         .ok()
         .and_then(|t| t.trim().parse::<u32>().ok());
+    // A live non-Keel pid is PID reuse after an unclean death: drop the
+    // stale pidfile instead of counting (or killing) someone else's process.
+    // A truly running daemon is still caught by reachability below.
+    if pid.is_some_and(|p| process_alive(p) && !pid_is_keel(p)) {
+        let _ = fs::remove_file(daemon_pid_path());
+        pid = None;
+    }
     let was_running = pid.map(process_alive).unwrap_or(false) || daemon_reachable();
     if !was_running {
         println!("keel daemon is not running.");
         return Ok(());
     }
     // Stop watchers first: otherwise they orphan and double-index after the
-    // next daemon start spawns fresh ones.
+    // next daemon start spawns fresh ones. Registry pids are verified for
+    // the same reuse reason (a recorded watcher may long be dead).
     for entry in load_registry().projects {
-        if process_alive(entry.pid) {
+        if process_alive(entry.pid) && pid_is_keel(entry.pid) {
             let _ = signal_term(entry.pid);
         }
     }
@@ -585,7 +619,7 @@ pub fn client_stop_daemon() -> Result<()> {
                 std::thread::sleep(Duration::from_millis(100));
             }
             if process_alive(pid) {
-                return Err(KeelError::Watch(format!(
+                return Err(KeelError::Daemon(format!(
                     "keel daemon (pid {pid}) did not stop"
                 )));
             }
@@ -593,7 +627,7 @@ pub fn client_stop_daemon() -> Result<()> {
     }
     let _ = fs::remove_file(daemon_pid_path());
     if daemon_reachable() {
-        return Err(KeelError::Watch(
+        return Err(KeelError::Daemon(
             "keel daemon port still responds; stop it manually (brew services stop keel)".into(),
         ));
     }
@@ -602,8 +636,9 @@ pub fn client_stop_daemon() -> Result<()> {
 }
 
 /// One health check result for `keel doctor`.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct DoctorCheck {
-    /// Short check name (`daemon`, `project`, `index`).
+    /// Short check name (`daemon`, `project`, `index`, `mcp`).
     pub name: &'static str,
     /// False when the user should act; `detail` says how.
     pub ok: bool,
@@ -611,7 +646,7 @@ pub struct DoctorCheck {
     pub detail: String,
 }
 
-/// Diagnose daemon, project registration, and index health for `project`.
+/// Diagnose daemon, project registration, index, and MCP health for `project`.
 pub fn doctor_checks(project: &Path) -> Vec<DoctorCheck> {
     let mut out = vec![DoctorCheck {
         name: "version",
@@ -621,7 +656,10 @@ pub fn doctor_checks(project: &Path) -> Vec<DoctorCheck> {
 
     let abs = fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
     let key = abs.display().to_string();
-    if daemon_reachable() {
+    // Captured once so follow-up advice never suggests daemon-only commands
+    // (`keel start`) when the daemon is down — `keel init` works daemon-less.
+    let daemon_up = daemon_reachable();
+    if daemon_up {
         out.push(DoctorCheck {
             name: "daemon",
             ok: true,
@@ -645,26 +683,45 @@ pub fn doctor_checks(project: &Path) -> Vec<DoctorCheck> {
         Some(e) => out.push(DoctorCheck {
             name: "project",
             ok: false,
-            detail: format!(
-                "registered but watcher pid {} is dead (run: keel start {})",
-                e.pid,
-                project.display()
-            ),
+            detail: if daemon_up {
+                format!(
+                    "registered but watcher pid {} is dead (run: keel start {})",
+                    e.pid,
+                    project.display()
+                )
+            } else {
+                format!(
+                    "registered but watcher pid {} is dead (run: keel daemon, then keel start {})",
+                    e.pid,
+                    project.display()
+                )
+            },
         }),
         None => out.push(DoctorCheck {
             name: "project",
             ok: false,
-            detail: format!("not registered (run: keel start {})", project.display()),
+            detail: if daemon_up {
+                format!("not registered (run: keel start {})", project.display())
+            } else {
+                format!(
+                    "not registered (run: keel daemon, then keel start {})",
+                    project.display()
+                )
+            },
         }),
     }
 
+    out.push(mcp_check());
+
     let db = project.join(DB_DIR).join(DB_FILE);
     if !db.is_file() {
+        // `keel start` needs the daemon; `keel init` indexes one-shot now.
+        let setup = if daemon_up { "start" } else { "init" };
         out.push(DoctorCheck {
             name: "index",
             ok: false,
             detail: format!(
-                "missing {} (run: keel start {})",
+                "missing {} (run: keel {setup} {})",
                 db.display(),
                 project.display()
             ),
@@ -673,6 +730,21 @@ pub fn doctor_checks(project: &Path) -> Vec<DoctorCheck> {
     }
     match open_doctor_db(&db) {
         Ok(conn) => {
+            // SQLite opens lazily, so a corrupt file reaches this branch
+            // and its failed queries degrade to "0 files, format v0" —
+            // validate the header first so corruption isn't misreported
+            // as a stale-but-rebuildable format.
+            if !is_sqlite_db(&db) {
+                out.push(DoctorCheck {
+                    name: "index",
+                    ok: false,
+                    detail: format!(
+                        "unreadable (not a SQLite database; delete and re-index: rm -rf {})",
+                        project.join(DB_DIR).display(),
+                    ),
+                });
+                return out;
+            }
             let files: i64 = conn
                 .query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))
                 .unwrap_or(0);
@@ -707,10 +779,133 @@ pub fn doctor_checks(project: &Path) -> Vec<DoctorCheck> {
     out
 }
 
+/// Verify the MCP server answers `tools/list` over a stdio loopback.
+///
+/// Spawns this binary as `keel mcp`, runs initialize + tools/list with a 10s
+/// timeout, and reports the tool count. `tools/list` is answered before the
+/// DB opens, so this works with no index present.
+fn mcp_check() -> DoctorCheck {
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("keel"));
+    match mcp_tools_via_stdio(&exe) {
+        Ok(tools) if !tools.is_empty() => DoctorCheck {
+            name: "mcp",
+            ok: true,
+            detail: format!("{} tools via stdio loopback", tools.len()),
+        },
+        Ok(_) => DoctorCheck {
+            name: "mcp",
+            ok: false,
+            detail: "tools/list returned no tools (reinstall keel)".into(),
+        },
+        Err(e) => DoctorCheck {
+            name: "mcp",
+            ok: false,
+            detail: format!("stdio loopback failed ({e})"),
+        },
+    }
+}
+
+/// Ask `exe mcp` for its tool list over stdio (10s timeout).
+fn mcp_tools_via_stdio(exe: &Path) -> Result<Vec<String>> {
+    use std::io::{BufRead, BufReader};
+    let mut child = Command::new(exe)
+        .arg("mcp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|source| KeelError::Io {
+            path: exe.to_path_buf(),
+            source,
+        })?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| KeelError::Mcp("mcp stdio loopback has no stdin".into()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| KeelError::Mcp("mcp stdio loopback has no stdout".into()))?;
+    let exe_owned = exe.to_path_buf();
+    let io_err = move |source: std::io::Error| KeelError::Io {
+        path: exe_owned.clone(),
+        source,
+    };
+    // The conversation runs on a worker thread so the 10s timeout below can
+    // fire even when the child never answers.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = (|| -> Result<Vec<String>> {
+            let init = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "keel-doctor", "version": "0"},
+                },
+            });
+            writeln!(stdin, "{init}").map_err(&io_err)?;
+            writeln!(stdin, "{{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}}")
+                .map_err(&io_err)?;
+            writeln!(
+                stdin,
+                "{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{{}}}}"
+            )
+            .map_err(&io_err)?;
+            stdin.flush().map_err(&io_err)?;
+            drop(stdin);
+            for line in BufReader::new(stdout).lines() {
+                let line = line.map_err(&io_err)?;
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let v: serde_json::Value =
+                    serde_json::from_str(&line).map_err(|e| KeelError::Daemon(e.to_string()))?;
+                if v.get("id") == Some(&json!(2)) {
+                    let tools = v
+                        .pointer("/result/tools")
+                        .and_then(|t| t.as_array())
+                        .ok_or_else(|| {
+                            KeelError::Mcp("tools/list response has no tools".into())
+                        })?;
+                    return Ok(tools
+                        .iter()
+                        .filter_map(|t| t.get("name")?.as_str().map(str::to_owned))
+                        .collect());
+                }
+            }
+            Err(KeelError::Mcp(
+                "mcp stdio loopback got no tools/list response".into(),
+            ))
+        })();
+        let _ = tx.send(result);
+    });
+    let result = rx.recv_timeout(Duration::from_secs(10));
+    let _ = child.kill();
+    let _ = child.wait();
+    match result {
+        Ok(r) => r,
+        Err(_) => Err(KeelError::Mcp(
+            "mcp stdio loopback timed out after 10s".into(),
+        )),
+    }
+}
+
 /// Open an index for read-only inspection without creating or migrating it.
 fn open_doctor_db(db: &Path) -> Result<Connection> {
     let conn = Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     Ok(conn)
+}
+
+/// True when `path` starts with the SQLite magic header (first 16 bytes).
+fn is_sqlite_db(path: &Path) -> bool {
+    use std::io::Read;
+    let mut magic = [0u8; 16];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut magic).map(|_| magic))
+        .is_ok_and(|m| m == *b"SQLite format 3\0")
 }
 
 /// Unregister the current project from the global daemon.
@@ -723,7 +918,7 @@ pub fn client_stop_project(path: &Path) -> Result<()> {
     let encoded = percent_encode_path(&abs.display().to_string());
     let (code, body) = http_json("DELETE", &format!("/watch?path={encoded}"), None)?;
     if code != 200 {
-        return Err(KeelError::Watch(format!(
+        return Err(KeelError::Daemon(format!(
             "daemon rejected stop ({code}): {body}"
         )));
     }
@@ -733,46 +928,127 @@ pub fn client_stop_project(path: &Path) -> Result<()> {
 
 /// Print global daemon + current project watch status.
 pub fn client_status(path: &Path) -> Result<()> {
+    let s = daemon_status(path)?;
+    match s.daemon.as_str() {
+        "stopped" => {
+            println!("daemon:\tstopped");
+            println!("hint:\t{}", s.hint.unwrap_or_default());
+            println!("index:\t{}", s.index.unwrap_or_default());
+        }
+        "running" => {
+            println!("daemon:\trunning");
+            println!("daemon_pid:\t{}", s.daemon_pid.unwrap_or(0));
+            println!("projects:\t{}", s.projects.len());
+            for p in &s.projects {
+                println!("  - {} (pid {})", p.path, p.pid);
+            }
+            println!(
+                "this_project:\t{}",
+                s.this_project.as_deref().unwrap_or("not watching")
+            );
+            println!("index:\t{}", s.index.unwrap_or_default());
+        }
+        other => {
+            println!("daemon:\t{other}");
+            if let Some(body) = s.error_body {
+                println!("{body}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A project watched by the global daemon.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct WatchedProject {
+    /// Registered project root.
+    pub path: String,
+    /// Watcher process id.
+    pub pid: u64,
+}
+
+/// Machine-readable daemon status (also backs `client_status` printing).
+///
+/// `daemon` is `stopped`, `running`, or `error (CODE)`; only the fields
+/// relevant to that state are populated.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DaemonStatus {
+    /// Daemon state: `stopped`, `running`, or `error (CODE)`.
+    pub daemon: String,
+    /// Start hint (stopped only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    /// Local index path (stopped and running).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<String>,
+    /// Daemon pid (running only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub daemon_pid: Option<u64>,
+    /// Watched projects (running only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<WatchedProject>,
+    /// `watching` or `not watching` for the queried project (running only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub this_project: Option<String>,
+    /// Raw error body (error only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_body: Option<String>,
+}
+
+/// Query the global daemon for machine-readable status.
+pub fn daemon_status(path: &Path) -> Result<DaemonStatus> {
     let index = path.join(DB_DIR).join(DB_FILE);
     if !daemon_reachable() {
-        println!("daemon:\tstopped");
-        println!("hint:\t{}", daemon_start_hint());
-        println!("index:\t{}", index.display());
-        return Ok(());
+        return Ok(DaemonStatus {
+            daemon: "stopped".into(),
+            hint: Some(daemon_start_hint().to_string()),
+            index: Some(index.display().to_string()),
+            daemon_pid: None,
+            projects: Vec::new(),
+            this_project: None,
+            error_body: None,
+        });
     }
     let (code, body) = http_json("GET", "/status", None)?;
     if code != 200 {
-        println!("daemon:\terror ({code})");
-        println!("{body}");
-        return Ok(());
+        return Ok(DaemonStatus {
+            daemon: format!("error ({code})"),
+            hint: None,
+            index: None,
+            daemon_pid: None,
+            projects: Vec::new(),
+            this_project: None,
+            error_body: Some(body),
+        });
     }
     let v: serde_json::Value =
-        serde_json::from_str(&body).map_err(|e| KeelError::Watch(e.to_string()))?;
-    println!("daemon:\trunning");
-    println!(
-        "daemon_pid:\t{}",
-        v.get("pid").and_then(|p| p.as_u64()).unwrap_or(0)
-    );
+        serde_json::from_str(&body).map_err(|e| KeelError::Daemon(e.to_string()))?;
     let abs = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let key = abs.display().to_string();
+    let mut projects = Vec::new();
     let mut watching = false;
     if let Some(arr) = v.get("projects").and_then(|p| p.as_array()) {
-        println!("projects:\t{}", arr.len());
         for p in arr {
             let ppath = p.get("path").and_then(|x| x.as_str()).unwrap_or("");
             let pid = p.get("pid").and_then(|x| x.as_u64()).unwrap_or(0);
-            println!("  - {ppath} (pid {pid})");
+            projects.push(WatchedProject {
+                path: ppath.to_string(),
+                pid,
+            });
             if ppath == key {
                 watching = true;
             }
         }
     }
-    println!(
-        "this_project:\t{}",
-        if watching { "watching" } else { "not watching" }
-    );
-    println!("index:\t{}", index.display());
-    Ok(())
+    Ok(DaemonStatus {
+        daemon: "running".into(),
+        hint: None,
+        index: Some(index.display().to_string()),
+        daemon_pid: Some(v.get("pid").and_then(|p| p.as_u64()).unwrap_or(0)),
+        projects,
+        this_project: Some(if watching { "watching" } else { "not watching" }.into()),
+        error_body: None,
+    })
 }
 
 #[cfg(test)]
@@ -790,6 +1066,25 @@ mod tests {
     }
 
     #[test]
+    fn pid_identity_accepts_self_and_rejects_recycled_pids() {
+        // The test binary's own path contains "keel" (Linux); other
+        // platforms cannot verify and accept.
+        assert!(pid_is_keel(std::process::id()));
+        assert!(!pid_is_keel(0));
+        assert!(!pid_is_keel(u32::MAX));
+        #[cfg(target_os = "linux")]
+        {
+            let mut child = std::process::Command::new("sleep")
+                .arg("30")
+                .spawn()
+                .expect("spawn sleep");
+            assert!(!pid_is_keel(child.id()));
+            child.kill().ok();
+            let _ = child.wait();
+        }
+    }
+
+    #[test]
     fn start_hint_is_platform_appropriate() {
         if cfg!(target_os = "macos") {
             assert_eq!(daemon_start_hint(), "brew services start keel");
@@ -798,5 +1093,54 @@ mod tests {
             // daemon is the documented path there.
             assert_eq!(daemon_start_hint(), "keel daemon");
         }
+    }
+
+    #[test]
+    fn sqlite_magic_distinguishes_databases_from_garbage() {
+        let dir = tempfile::tempdir().unwrap();
+        let garbage = dir.path().join("garbage.db");
+        std::fs::write(&garbage, b"CORRUPT!".repeat(100)).unwrap();
+        assert!(!is_sqlite_db(&garbage));
+        let empty = dir.path().join("empty.db");
+        std::fs::write(&empty, b"").unwrap();
+        assert!(!is_sqlite_db(&empty));
+        assert!(!is_sqlite_db(&dir.path().join("missing.db")));
+        let real = dir.path().join("real.db");
+        let conn = Connection::open(&real).unwrap();
+        conn.execute("CREATE TABLE t (x INTEGER)", [])
+            .unwrap();
+        drop(conn);
+        assert!(is_sqlite_db(&real));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn mcp_loopback_reads_tool_list() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("fake-mcp.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"id":1'*) echo '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}' ;;
+    *'"id":2'*) echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"definition"},{"name":"outline"}]}}' ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let tools = mcp_tools_via_stdio(&script).unwrap();
+        assert_eq!(tools, vec!["definition".to_string(), "outline".to_string()]);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn mcp_loopback_reports_dead_server() {
+        assert!(mcp_tools_via_stdio(Path::new("/bin/true")).is_err());
+        assert!(mcp_tools_via_stdio(Path::new("/nonexistent-keel-mcp")).is_err());
     }
 }

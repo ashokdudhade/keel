@@ -258,9 +258,8 @@ printf '  # 2. In each project\n'
 printf '  cd /path/to/your/project\n'
 printf '  keel start\n'
 printf '\n'
-printf '  # 3. Cursor MCP (~/.cursor/mcp.json) — absolute binary path:\n'
-printf '    "command": "%s/keel"\n' "$INSTALL_DIR"
-printf '    "args": ["mcp"]\n'
-printf '    # KEEL_INDEX_DB is optional (auto: cwd walk-up, then daemon registry)\n'
+printf '  # 3. Cursor MCP: in each project, `keel init` prints a paste-ready\n'
+printf '  #    snippet with the project root pinned (cwd + KEEL_INDEX_DB).\n'
+printf '  #    Binary path: %s/keel\n' "$INSTALL_DIR"
 printf '\n'
 printf '  See README Quick start for the agent rule and verification.\n'

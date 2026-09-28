@@ -77,12 +77,16 @@ keel stop                         # unregister this project
 keel status                       # daemon + this project
 keel index <path>                 # one-shot index into ./.keel/index.db
 keel watch <path>                 # foreground re-index on file changes
-keel definition <name>
-keel references <name>
-keel callers <name>
-keel implementations <trait>
-keel dependencies <name|module>
-keel impact <name>
+keel definition <name> [--module M] [--limit N] [--preview]
+keel references <name> [--module M] [--limit N] [--preview]
+keel callers <name> [--module M] [--limit N] [--preview]
+keel implementations <trait> [--module M] [--limit N] [--preview]
+keel dependencies <name|module> [--limit N]
+keel dependents <name|module|file> [--limit N]   # reverse dependencies
+keel impact <name> [--module M] [--limit N] [--preview]
+keel outline <file|module|dir> [--limit N] [--preview]
+keel search <pattern> [--limit N] [--preview]    # default 50, max 200
+keel unused [file|module|dir] [--limit N] [--preview] [--transitive]   # candidate dead code
 keel serve [--port 7645]          # JSON HTTP API on 127.0.0.1
 keel mcp                          # MCP stdio (NDJSON; Content-Length also accepted)
 ```
@@ -139,12 +143,16 @@ Stable tools:
 
 | Tool | Arguments | Description |
 |------|-----------|-------------|
-| `definition` | `{ "name", "module"? }` | Symbol definition(s); `module` or qualified `name` disambiguates |
-| `references` | `{ "name", "module"? }` | Reference sites (import-aware when module known) |
-| `callers` | `{ "name", "module"? }` | Call/use sites (import-aware when unique or provided) |
-| `implementations` | `{ "name" }` | Rust trait implementations |
-| `dependencies` | `{ "name" }` | Module/file/symbol dependencies |
-| `impact` | `{ "name", "module"? }` | Candidate blast radius (`medium`/`low` when non-empty) |
+| `definition` | `{ "name", "module"?, "limit"?, "preview"? }` | Symbol definition(s); `module` or qualified `name` disambiguates |
+| `references` | `{ "name", "module"?, "limit"?, "preview"? }` | Reference sites (import-aware when module known) |
+| `callers` | `{ "name", "module"?, "limit"?, "preview"? }` | Call/use sites (import-aware when unique or provided) |
+| `implementations` | `{ "name", "module"?, "limit"?, "preview"? }` | Trait/interface/base implementers (Rust, TS, Python, JS; Go explicit assertions only) |
+| `dependencies` | `{ "name", "limit"? }` | Module/file/symbol dependencies |
+| `dependents` | `{ "name", "limit"? }` | Reverse dependencies (modules importing the target) |
+| `impact` | `{ "name", "module"?, "limit"?, "preview"? }` | Candidate blast radius (`medium`/`low` when non-empty) |
+| `outline` | `{ "path", "limit"?, "preview"? }` | File/module/directory symbols in source order |
+| `search` | `{ "pattern", "limit"?, "preview"? }` | Substring symbol-name search (default 50, max 200) |
+| `unused` | `{ "path"?, "limit"?, "preview"?, "transitive"? }` | Candidate dead code (`low` when non-empty; default scope: project) |
 | `index` | `{ "path" }` | Index a repository; returns `IndexStats` JSON |
 
 Query payloads include `confidence`, `resolution_tier`, and `notes`. See
@@ -169,7 +177,38 @@ GET /health
 ```
 
 ```http
-GET /symbol/{name}
+GET /outline/{path}?limit=N
+```
+
+File, module, or directory symbols in source order with the
+`confidence`/`notes` trust envelope (same payload as `keel outline --json`).
+Module targets cover the whole subtree; directories concatenate files in
+path order. `limit` 1-100000, default 500.
+
+```http
+GET /search/{pattern}?limit=N
+```
+
+Substring symbol-name search (case-insensitive; exact matches rank first,
+limit 1-200 default 50) with the trust envelope.
+
+```http
+GET /impact/{name}?module=M&limit=N
+```
+
+Candidate blast radius for changing `name` (optional `module` narrows
+multi-definition names; `limit` 1-100000, default 500), with the trust
+envelope.
+
+```http
+GET /dependents/{target}?limit=N
+```
+
+Reverse dependencies for a module path, file path, symbol, or qualified
+symbol, with the trust envelope. `limit` 1-100000, default 500.
+
+```http
+GET /symbol/{name}?limit=N
 ```
 
 ```json
@@ -187,11 +226,14 @@ GET /symbol/{name}
   "references": [],
   "implementations": [],
   "dependencies": [],
-  "callers": []
+  "callers": [],
+  "notes": []
 }
 ```
 
-Arrays are ordered deterministically. File paths are JSON strings.
+Arrays are ordered deterministically. File paths are JSON strings. Each
+array is capped at `limit` (1-100000, default 500) with per-list truncation
+notes in `notes`.
 
 ```http
 GET /insights

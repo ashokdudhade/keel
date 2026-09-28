@@ -7,3 +7,7 @@ export class JsService {
 export function createOrder() {}
 
 const decoy = "export function createOrder() {}";
+
+export class JsConfig {
+  port = 8080;
+}
