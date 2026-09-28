@@ -4,7 +4,7 @@
 //! Internals remain available for the CLI and advanced use.
 
 use crate::db::{queries, schema};
-use crate::error::Result;
+use crate::error::{KeelError, Result};
 use crate::graph::deps::{self, Dependency};
 use crate::graph::impact;
 use crate::graph::query_result::QueryResult;
@@ -183,6 +183,51 @@ fn resolve_symbol_target<'a>(
     (None, name)
 }
 
+/// Refuse reads against content an older Keel wrote.
+///
+/// Normal paths (CLI/MCP/HTTP with auto-index) rebuild stale indexes before
+/// reading, so this only fires for explicit `--no-auto-index` bypasses.
+pub(crate) fn ensure_index_current(conn: &Connection) -> Result<()> {
+    let found = schema::index_format_version(conn);
+    if found != schema::INDEX_FORMAT_VERSION {
+        return Err(KeelError::StaleIndex {
+            found,
+            current: schema::INDEX_FORMAT_VERSION,
+        });
+    }
+    Ok(())
+}
+
+/// Flag queries against an index holding nothing: a confident miss there means
+/// "not indexed", not "doesn't exist". Lookup failures are swallowed.
+fn push_empty_index_note(conn: &Connection, notes: &mut Vec<String>) {
+    if let Ok(true) = queries::is_index_empty(conn) {
+        notes.push(
+            "Index is empty (no files indexed). Run `keel index` or `keel start` in the project, then retry."
+                .to_string(),
+        );
+    }
+}
+
+/// Notes for a bare confident miss: the canonical marker plus miss recovery.
+fn miss_notes(conn: &Connection, bare: &str) -> Vec<String> {
+    let mut notes = vec!["No matching symbols found.".to_string()];
+    push_empty_index_note(conn, &mut notes);
+    push_suggestion_note(conn, bare, &mut notes);
+    notes
+}
+
+/// Append "Did you mean …?" when near-matches exist. Lookup failures are
+/// swallowed: a miss stays a miss even when suggestions can't load.
+fn push_suggestion_note(conn: &Connection, bare: &str, notes: &mut Vec<String>) {
+    if let Ok(suggestions) = resolve::suggest_names(conn, bare, 3) {
+        if !suggestions.is_empty() {
+            let quoted: Vec<String> = suggestions.iter().map(|s| format!("`{s}`")).collect();
+            notes.push(format!("Did you mean {}?", quoted.join(", ")));
+        }
+    }
+}
+
 /// Definitions plus confidence metadata (shared by [`Index`] and MCP/CLI).
 pub fn definition_with_meta(conn: &Connection, name: &str) -> Result<QueryResult<Symbol>> {
     definition_with_meta_opts(conn, name, None)
@@ -194,6 +239,7 @@ pub fn definition_with_meta_opts(
     name: &str,
     module: Option<&str>,
 ) -> Result<QueryResult<Symbol>> {
+    ensure_index_current(conn)?;
     let (mod_path, bare) = resolve_symbol_target(name, module);
     let results = if let Some(m) = mod_path {
         queries::find_definition_by_qualified(conn, m, bare)?
@@ -217,6 +263,10 @@ pub fn definition_with_meta_opts(
     } else if results.is_empty() {
         if let Some(m) = mod_path {
             notes.push(format!("No definition for `{bare}` in module `{m}`."));
+            push_empty_index_note(conn, &mut notes);
+            push_suggestion_note(conn, bare, &mut notes);
+        } else {
+            notes.extend(miss_notes(conn, bare));
         }
     }
     Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
@@ -233,6 +283,7 @@ pub fn references_with_meta_opts(
     name: &str,
     module: Option<&str>,
 ) -> Result<QueryResult<Reference>> {
+    ensure_index_current(conn)?;
     let (mod_path, bare) = resolve_symbol_target(name, module);
     let defs = if let Some(m) = mod_path {
         queries::find_definition_by_qualified(conn, m, bare)?
@@ -264,6 +315,10 @@ pub fn references_with_meta_opts(
     if results.is_empty() && defs.is_empty() {
         if let Some(m) = mod_path {
             notes.push(format!("No definition for `{bare}` in module `{m}`."));
+            push_empty_index_note(conn, &mut notes);
+            push_suggestion_note(conn, bare, &mut notes);
+        } else {
+            notes.extend(miss_notes(conn, bare));
         }
     }
     Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
@@ -280,6 +335,7 @@ pub fn callers_with_meta_opts(
     name: &str,
     module: Option<&str>,
 ) -> Result<QueryResult<Reference>> {
+    ensure_index_current(conn)?;
     let (mod_path, bare) = resolve_symbol_target(name, module);
     let defs = if let Some(m) = mod_path {
         queries::find_definition_by_qualified(conn, m, bare)?
@@ -307,6 +363,10 @@ pub fn callers_with_meta_opts(
     if results.is_empty() && defs.is_empty() {
         if let Some(m) = mod_path {
             notes.push(format!("No definition for `{bare}` in module `{m}`."));
+            push_empty_index_note(conn, &mut notes);
+            push_suggestion_note(conn, bare, &mut notes);
+        } else {
+            notes.extend(miss_notes(conn, bare));
         }
     }
     Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
@@ -317,6 +377,7 @@ pub fn implementations_with_meta(
     conn: &Connection,
     trait_name: &str,
 ) -> Result<QueryResult<ImplRecord>> {
+    ensure_index_current(conn)?;
     let results = queries::find_implementations(conn, trait_name)?;
     let mut notes = Vec::new();
     if results.is_empty() {
@@ -324,6 +385,7 @@ pub fn implementations_with_meta(
             "No implementations found (Rust traits only today; other languages stay empty when unambiguous extraction is unavailable)."
                 .into(),
         );
+        push_empty_index_note(conn, &mut notes);
     }
     let tiers = if results.is_empty() {
         vec![]
@@ -338,11 +400,13 @@ pub fn dependencies_with_meta(
     conn: &Connection,
     name: &str,
 ) -> Result<QueryResult<Dependency>> {
+    ensure_index_current(conn)?;
     let resolved = target::normalize_target(conn, name)?;
     let results = deps::find_dependencies(conn, name)?;
     let mut notes = Vec::new();
     if resolved.files.is_empty() {
         notes.push(format!("No indexed files found for target `{name}`."));
+        push_empty_index_note(conn, &mut notes);
         return Ok(QueryResult::from_tiers(results, &[], false, notes));
     }
     if results.is_empty() {
@@ -367,6 +431,7 @@ pub fn impact_with_meta_opts(
     module: Option<&str>,
 ) -> Result<QueryResult<Symbol>> {
     use crate::graph::query_result::{Confidence, ResolutionTier};
+    ensure_index_current(conn)?;
 
     let (mod_path, bare) = resolve_symbol_target(name, module);
     let defs = if let Some(m) = mod_path {
@@ -380,6 +445,10 @@ pub fn impact_with_meta_opts(
     if defs.is_empty() {
         if let Some(m) = mod_path {
             notes.push(format!("No definition for `{bare}` in module `{m}`."));
+            push_empty_index_note(conn, &mut notes);
+            push_suggestion_note(conn, bare, &mut notes);
+        } else {
+            notes.extend(miss_notes(conn, bare));
         }
         return Ok(QueryResult::from_tiers(Vec::new(), &[], false, notes));
     }
@@ -393,6 +462,11 @@ pub fn impact_with_meta_opts(
         );
     }
     if results.is_empty() {
+        if notes.is_empty() {
+            // Definitions exist but nothing references them: that is a
+            // confident "nothing impacted", not a missed lookup.
+            notes.push("No impacted symbols found.".into());
+        }
         return Ok(QueryResult::from_tiers(results, &[], multi, notes));
     }
 
@@ -501,10 +575,113 @@ mod tests {
 
     #[test]
     fn missing_definition_is_honest_not_found() {
-        let index = Index::open_in_memory().unwrap();
+        // Populated index: a true miss keeps exactly the canonical marker.
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub struct Widget;\n").unwrap();
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
         let meta = index.definition_with_meta("NonexistentSymbolXYZ").unwrap();
         assert!(meta.results.is_empty());
         assert_eq!(meta.confidence, Confidence::High);
+        assert_eq!(meta.notes, vec!["No matching symbols found.".to_string()]);
+    }
+
+    #[test]
+    fn miss_on_empty_index_says_so() {
+        // An empty index must not present a bare confident miss: nothing has
+        // been indexed, so "not found" would mislead.
+        let index = Index::open_in_memory().unwrap();
+        let meta = index.definition_with_meta("Anything").unwrap();
+        assert!(meta.results.is_empty());
+        assert_eq!(meta.notes[0], "No matching symbols found.".to_string());
+        assert!(
+            meta.notes.iter().any(|n| n.starts_with("Index is empty")),
+            "expected empty-index note, got {:?}",
+            meta.notes
+        );
+    }
+
+    #[test]
+    fn stale_index_refuses_reads_until_rebuilt() {
+        use crate::db::schema;
+        use rusqlite::Connection;
+
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub struct AuthService;\n").unwrap();
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::index::index_repository(root, &mut conn).unwrap();
+        assert_eq!(
+            schema::index_format_version(&conn),
+            schema::INDEX_FORMAT_VERSION
+        );
+
+        // Simulate an older writer.
+        schema::stamp_index_format(&conn, 0).unwrap();
+        let err = definition_with_meta(&conn, "AuthService").unwrap_err();
+        assert!(
+            matches!(err, crate::error::KeelError::StaleIndex { .. }),
+            "expected StaleIndex, got {err}"
+        );
+
+        // The next index pass rebuilds transparently and reads work again.
+        let stats = crate::index::index_repository(root, &mut conn).unwrap();
+        assert_eq!(stats.indexed, 1);
+        assert_eq!(
+            schema::index_format_version(&conn),
+            schema::INDEX_FORMAT_VERSION
+        );
+        let defs = definition_with_meta(&conn, "AuthService").unwrap();
+        assert_eq!(defs.results.len(), 1);
+    }
+
+    #[test]
+    fn empty_impact_on_existing_symbol_is_honest() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub struct Lone;\n").unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        let meta = index.impact_with_meta("Lone").unwrap();
+        assert!(meta.results.is_empty());
+        assert_eq!(meta.notes, vec!["No impacted symbols found.".to_string()]);
+
+        // Nonsense names keep the canonical miss.
+        let meta = index.impact_with_meta("NonexistentSymbolXYZ123").unwrap();
+        assert_eq!(meta.notes[0], "No matching symbols found.".to_string());
+    }
+
+    #[test]
+    fn near_miss_suggests_canonical_name() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub struct AuthService;\n").unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        // Case-only miss still misses, but recovers with a suggestion.
+        let meta = index.definition_with_meta("authservice").unwrap();
+        assert!(meta.results.is_empty());
+        assert_eq!(meta.confidence, Confidence::High);
+        assert_eq!(meta.notes[0], "No matching symbols found.".to_string());
+        assert!(
+            meta.notes.iter().any(|n| n.contains("`AuthService`")),
+            "expected suggestion, got {:?}",
+            meta.notes
+        );
+
+        // True nonsense stays a clean miss.
+        let meta = index.definition_with_meta("NonexistentSymbolXYZ123").unwrap();
         assert_eq!(meta.notes, vec!["No matching symbols found.".to_string()]);
     }
 

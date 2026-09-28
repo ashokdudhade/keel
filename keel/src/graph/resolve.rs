@@ -209,6 +209,83 @@ fn module_path_prefix(module_path: &str) -> &str {
     }
 }
 
+/// Suggest up to `limit` indexed symbol names near `name` for miss recovery.
+///
+/// Ranking: case-insensitive exact match, then case-insensitive substring,
+/// then Levenshtein within a length-scaled threshold; ties break by name so
+/// output is deterministic. Returns empty for blank or single-char input.
+/// Runs on the miss path only (empty results), never on hits.
+pub fn suggest_names(
+    conn: &Connection,
+    name: &str,
+    limit: usize,
+) -> Result<Vec<String>> {
+    let candidates = queries::distinct_symbol_names(conn)?;
+    Ok(rank_candidates(name, &candidates, limit))
+}
+
+/// Pure ranking behind [`suggest_names`]: score each candidate, sort, take.
+fn rank_candidates(query: &str, candidates: &[String], limit: usize) -> Vec<String> {
+    if limit == 0 || query.chars().count() < 2 {
+        return Vec::new();
+    }
+    let query_lower = query.to_lowercase();
+    let query_len = query.chars().count();
+    // Allow roughly one typo per 3 chars, clamped so short queries stay strict
+    // and long ones don't match the whole index.
+    let max_distance = (query_len / 3).clamp(1, 3);
+    let mut scored: Vec<(u8, usize, &str)> = Vec::new();
+    for candidate in candidates {
+        let lower = candidate.to_lowercase();
+        let cand_len = candidate.chars().count();
+        if lower == query_lower {
+            scored.push((0, 0, candidate));
+        } else if lower.contains(&query_lower)
+            // Reverse direction (query contains the name) only when the name
+            // covers at least half the query: otherwise any short symbol
+            // inside a long nonsense string ("Symbol" in
+            // "NonexistentSymbolXYZ123") suggests noise.
+            || (cand_len >= 4 && cand_len * 2 >= query_len && query_lower.contains(&lower))
+        {
+            scored.push((1, 0, candidate));
+        } else {
+            let distance = levenshtein(&query_lower, &lower);
+            if distance <= max_distance {
+                scored.push((2, distance, candidate));
+            }
+        }
+    }
+    scored.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+    scored
+        .into_iter()
+        .take(limit)
+        .map(|(_, _, name)| name.to_string())
+        .collect()
+}
+
+/// Edit distance over chars (two-row DP; queries are short).
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr = vec![0; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,5 +513,89 @@ mod tests {
         let precise = find_callers(&conn, "helper", Some("crate::a")).unwrap();
         assert_eq!(precise.len(), 1);
         assert_eq!(precise[0].file, PathBuf::from("src/c.rs"));
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn rank_prefers_case_match_then_substring_then_typo() {
+        let candidates = names(&["create_order", "AuthService", "cancel_order", "zzz"]);
+        // Case-only difference wins outright.
+        assert_eq!(
+            rank_candidates("authservice", &candidates, 3),
+            vec!["AuthService".to_string()]
+        );
+        // Substring beats edit distance; ties break by name.
+        assert_eq!(
+            rank_candidates("order", &candidates, 3),
+            vec!["cancel_order".to_string(), "create_order".to_string()]
+        );
+        // Single transposition is within the length-scaled threshold.
+        assert_eq!(
+            rank_candidates("craete_order", &candidates, 3),
+            vec!["create_order".to_string()]
+        );
+    }
+
+    #[test]
+    fn rank_suggests_overqualified_prefix() {
+        let candidates = names(&["AuthService", "create_order"]);
+        // Over-qualified guess recovers the indexed prefix.
+        assert_eq!(
+            rank_candidates("AuthServiceFactory", &candidates, 3),
+            vec!["AuthService".to_string()]
+        );
+        // …but a short name inside long nonsense does not suggest.
+        assert!(rank_candidates(
+            "NonexistentSymbolXYZ123",
+            &names(&["Symbol"]),
+            3
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn rank_rejects_noise() {
+        let candidates = names(&["AuthService", "create_order", "id", "db"]);
+        // Nonsense stays a clean miss even with short symbols indexed.
+        assert!(rank_candidates("NonexistentSymbolXYZ123", &candidates, 3).is_empty());
+        // Single-char queries never suggest.
+        assert!(rank_candidates("e", &candidates, 3).is_empty());
+        assert!(suggest_names(&setup(), "e", 3).unwrap().is_empty());
+    }
+
+    #[test]
+    fn suggest_names_reads_index() {
+        let conn = setup();
+        let file = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/lib.rs"),
+                content_hash: "h".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            file,
+            &[Symbol {
+                name: "AuthService".into(),
+                kind: SymbolKind::Struct,
+                file: PathBuf::new(),
+                start_line: 1,
+                start_col: 1,
+                module_path: "crate".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            suggest_names(&conn, "authservice", 3).unwrap(),
+            vec!["AuthService".to_string()]
+        );
+        assert!(suggest_names(&conn, "NonexistentSymbolXYZ", 3)
+            .unwrap()
+            .is_empty());
     }
 }

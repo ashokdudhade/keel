@@ -7,7 +7,11 @@ use std::path::PathBuf;
 
 /// Top-level CLI parser for the `keel` binary.
 #[derive(Parser)]
-#[command(name = "keel", about = "Keel: deterministic code intelligence")]
+#[command(
+    name = "keel",
+    about = "Keel: deterministic code intelligence",
+    version
+)]
 pub struct Cli {
     /// Skip the automatic incremental index that runs before queries.
     #[arg(long, global = true)]
@@ -40,7 +44,7 @@ pub enum Commands {
         /// Name to find references for.
         name: String,
     },
-    /// Print call/use sites of a function name (name-based in v0.1).
+    /// Print call/use sites of a name (import-aware when the module is unique).
     Callers {
         /// Function name to find call/use sites for.
         name: String,
@@ -66,6 +70,20 @@ pub enum Commands {
     Stop,
     /// Show global daemon and this project's watch status.
     Status,
+    /// Stop the global daemon (use `stop` to unregister one project).
+    DaemonStop,
+    /// Diagnose daemon, project registration, and index health.
+    Doctor {
+        /// Path to the repository (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    /// Set up this project: register with the daemon and print MCP config.
+    Init {
+        /// Path to the repository (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Print implementations of a trait.
     Implementations {
         /// Trait name to find implementations for.

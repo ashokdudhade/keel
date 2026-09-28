@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Insights portal: `keel serve` exposes `/insights` (local dashboard) and
+  `/api/insights` (JSON) with index health, usage rollups, confidence mix,
+  miss recovery, and recent queries. Per-project `.keel/usage.jsonl` event
+  log (5 MiB rotation, `KEEL_NO_USAGE_LOG=1` opt-out, local only).
+- `keel init` (register + print paste-ready MCP config), `keel doctor`
+  (daemon/project/index health), `keel daemon-stop`, and `--version`.
+- Miss recovery: empty results suggest near-matches
+  (`Did you mean …?`) across CLI/MCP/JSON; case-only misses recover.
+- `dependencies` marks unindexed modules `external` (tag in CLI, field in
+  JSON/MCP) so agents can filter stdlib noise.
+- Bare-identifier references in Python/TypeScript/JavaScript: call-argument
+  values, type annotations, and (Python) class bases/decorator args, with a
+  new `value` reference kind.
+- Index content-format stamping (`meta` table, schema v3): upgrades rebuild
+  stale indexes automatically instead of serving outdated answers; reads
+  against stale content without auto-index fail with an actionable error.
+- Empty-index misses say the index is empty (with the fix) instead of a bare
+  confident miss; empty `impact` on existing symbols says "No impacted
+  symbols found."
+- `keel start` / `index` keep `.keel/` out of version control automatically.
+
+### Fixed
+
+- `keel index <path>` / `keel watch <path>` use `<path>/.keel/index.db`
+  instead of the cwd's (out-of-tree indexing no longer wipes on query).
+- Dependency edges require import or same-module evidence; unimported
+  name-only matches (e.g. `client.get` vs an unrelated `get`) no longer
+  fabricate edges. `impact` intentionally keeps the looser candidate rule.
+- `references` / `callers` human output includes the kind column, matching
+  `definition` / `impact`.
+- Daemon start hints are platform-aware (`keel daemon` outside macOS);
+  stale `callers` help text updated.
+- Invalid registry pids are never signaled (pid validation before `kill`).
+
 ## [1.3.1] — 2026-08-02
 
 ### Fixed

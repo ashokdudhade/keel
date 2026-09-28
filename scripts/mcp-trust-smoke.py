@@ -144,6 +144,15 @@ def main() -> None:
                 "arguments": {"name": "crate::mcp"},
             },
         },
+        {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {
+                "name": "impact",
+                "arguments": {"name": "stores_paths_relative_to_root"},
+            },
+        },
     ]
 
     responses, stderr = mcp_call(bin_path, msgs)
@@ -213,6 +222,17 @@ def main() -> None:
         failures.append(f"dependencies crate::mcp empty: {deps}")
     if deps.get("confidence") != "high":
         failures.append(f"deps confidence want high got {deps.get('confidence')}")
+
+    empty_impact = payload_from(by_id[8])
+    if empty_impact.get("results"):
+        failures.append(f"expected empty impact, got {empty_impact['results']}")
+    if "No matching symbols found." in empty_impact.get("notes", []):
+        failures.append(
+            "empty impact on an existing symbol must not claim no match: "
+            f"{empty_impact.get('notes')}"
+        )
+    if "No impacted symbols found." not in empty_impact.get("notes", []):
+        failures.append(f"empty impact missing honest note: {empty_impact.get('notes')}")
 
     print("stderr:", stderr.strip()[:500])
     if failures:

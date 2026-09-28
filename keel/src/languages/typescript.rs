@@ -252,11 +252,109 @@ fn walk_references(
                 emit_call_reference(func, src, file_key, module_path, scope, out)?;
             }
         }
+        // Bare identifiers in value positions: positional arguments and
+        // object-literal values. Property keys are labels, not references.
+        "arguments" => {
+            emit_argument_values(node, src, file_key, module_path, scope, out)?;
+        }
+        // Type annotations (`x: T`). Nested annotations handle their own
+        // level; call/new subtrees fall through to the normal rules below.
+        "type_annotation" => {
+            emit_type_identifiers(node, src, file_key, module_path, scope, out)?;
+        }
         _ => {}
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         walk_references(child, src, file_key, module_path, scope, out)?;
+    }
+    Ok(())
+}
+
+/// Emit direct identifier arguments and object-literal values as Value
+/// references. Receivers, property keys, and nested structures are left to
+/// the normal recursion (nested calls) or skipped (labels).
+fn emit_argument_values(
+    args: Node,
+    src: &[u8],
+    file_key: &str,
+    module_path: &str,
+    scope: &[String],
+    out: &mut Vec<Reference>,
+) -> Result<()> {
+    let mut cursor = args.walk();
+    for child in args.children(&mut cursor) {
+        if child.kind() == "identifier" {
+            push_reference(
+                node_text(child, src)?.to_string(),
+                child,
+                ReferenceKind::Value,
+                file_key,
+                module_path,
+                scope,
+                out,
+            );
+        } else if child.kind() == "object" {
+            let mut obj = child.walk();
+            for entry in child.children(&mut obj) {
+                if entry.kind() != "pair" {
+                    continue;
+                }
+                if let Some(value) = entry.child_by_field_name("value") {
+                    if value.kind() == "identifier" {
+                        push_reference(
+                            node_text(value, src)?.to_string(),
+                            value,
+                            ReferenceKind::Value,
+                            file_key,
+                            module_path,
+                            scope,
+                            out,
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Emit identifiers in a `type_annotation` subtree as Type references,
+/// skipping nested annotations (their own arm level handles them) and
+/// call/new subtrees (handled through normal recursion).
+fn emit_type_identifiers(
+    root: Node,
+    src: &[u8],
+    file_key: &str,
+    module_path: &str,
+    scope: &[String],
+    out: &mut Vec<Reference>,
+) -> Result<()> {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.id() != root.id()
+            && matches!(
+                node.kind(),
+                "type_annotation" | "call_expression" | "new_expression"
+            )
+        {
+            continue;
+        }
+        if matches!(node.kind(), "identifier" | "type_identifier") {
+            push_reference(
+                node_text(node, src)?.to_string(),
+                node,
+                ReferenceKind::Type,
+                file_key,
+                module_path,
+                scope,
+                out,
+            );
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push(child);
+        }
     }
     Ok(())
 }
@@ -536,6 +634,26 @@ function run(): void {
 
         let helper = refs.iter().find(|r| r.name == "h").expect("h call");
         assert_eq!(helper.kind, ReferenceKind::Call);
+    }
+
+    #[test]
+    fn extracts_annotation_and_argument_value_references() {
+        let plugin = TypeScriptPlugin;
+        let src = "function f(x: MyType): Ret { return x; }\n\
+             const y: MyType = make();\n\
+             run(callbackFn, { key: value });\n";
+        let refs = plugin.extract_references(test_path(), src).unwrap();
+        let has = |name: &str, kind: ReferenceKind| {
+            refs.iter().any(|r| r.name == name && r.kind == kind)
+        };
+
+        assert!(has("MyType", ReferenceKind::Type));
+        assert!(has("Ret", ReferenceKind::Type));
+        assert!(has("callbackFn", ReferenceKind::Value));
+        assert!(has("value", ReferenceKind::Value));
+        assert!(!refs.iter().any(|r| r.name == "key"));
+        // Return-statement uses are out of scope (arguments/annotations only).
+        assert!(!refs.iter().any(|r| r.name == "x"));
     }
 
     #[test]

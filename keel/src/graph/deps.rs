@@ -14,6 +14,8 @@ pub struct Dependency {
     pub module_path: String,
     /// A file that defines symbols in that module, when known.
     pub file: Option<PathBuf>,
+    /// True when no defining file is indexed (stdlib / third-party).
+    pub external: bool,
 }
 
 /// Find modules the `target` depends on.
@@ -38,9 +40,17 @@ pub fn find_dependencies(conn: &Connection, target: &str) -> Result<Vec<Dependen
 
         for name in queries::reference_names_in_file(conn, file)? {
             let ranked = resolve::resolve_definition_ranked(conn, &name, file)?;
-            let Some(top) = resolve::acceptable_top_match(&ranked) else {
+            // Dependency edges need evidence: import-backed (tier 1) or
+            // same-module (tier 2). The tier-3 single-name fallback stays
+            // available to impact (a candidate list by design), but here it
+            // fabricates edges — e.g. a `client.get()` call matching the only
+            // free function named `get` in an unrelated test file.
+            let Some((tier, top)) = ranked.first() else {
                 continue;
             };
+            if *tier > 2 {
+                continue;
+            }
             if same_path(&top.file, file) {
                 continue;
             }
@@ -54,7 +64,11 @@ pub fn find_dependencies(conn: &Connection, target: &str) -> Result<Vec<Dependen
 
     Ok(deps
         .into_iter()
-        .map(|(module_path, file)| Dependency { module_path, file })
+        .map(|(module_path, file)| Dependency {
+            external: file.is_none(),
+            module_path,
+            file,
+        })
         .collect())
 }
 
@@ -267,5 +281,119 @@ mod tests {
         let deps = find_dependencies(&conn, "g").unwrap();
         let paths: Vec<&str> = deps.iter().map(|d| d.module_path.as_str()).collect();
         assert!(paths.contains(&"crate::b"), "got {paths:?}");
+    }
+
+    /// `u` calls a method `get` it never imports; the only `get` defined
+    /// anywhere is an unrelated free function in `t` (the fastapi-crawler
+    /// `client.get` vs test-helper `get` repro: `dependencies main` listed
+    /// `tests.test_main`, which `main.py` never imports).
+    fn fixture_unrelated_name_match(conn: &Connection) {
+        let u = queries::insert_file(
+            conn,
+            &FileNode {
+                path: PathBuf::from("src/u.rs"),
+                content_hash: "hu".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            conn,
+            u,
+            &[Symbol {
+                name: "u_main".into(),
+                kind: SymbolKind::Function,
+                file: PathBuf::new(),
+                start_line: 1,
+                start_col: 1,
+                module_path: "crate::u".into(),
+            }],
+        )
+        .unwrap();
+        queries::insert_references(
+            conn,
+            u,
+            &[Reference {
+                name: "get".into(),
+                file: PathBuf::new(),
+                start_line: 2,
+                start_col: 5,
+                kind: ReferenceKind::Method,
+                container: "crate::u::u_main".into(),
+            }],
+        )
+        .unwrap();
+
+        let t = queries::insert_file(
+            conn,
+            &FileNode {
+                path: PathBuf::from("src/t.rs"),
+                content_hash: "ht".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            conn,
+            t,
+            &[Symbol {
+                name: "get".into(),
+                kind: SymbolKind::Function,
+                file: PathBuf::new(),
+                start_line: 1,
+                start_col: 1,
+                module_path: "crate::t".into(),
+            }],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn find_dependencies_ignores_unimported_name_matches() {
+        let conn = setup();
+        fixture_unrelated_name_match(&conn);
+
+        let deps = find_dependencies(&conn, "crate::u").unwrap();
+        let paths: Vec<&str> = deps.iter().map(|d| d.module_path.as_str()).collect();
+        assert!(
+            !paths.contains(&"crate::t"),
+            "unimported name match must not be an edge, got {paths:?}"
+        );
+        assert!(deps.is_empty(), "expected no deps, got {paths:?}");
+    }
+
+    #[test]
+    fn find_dependencies_marks_unindexed_modules_external() {
+        let conn = setup();
+        fixture_a_depends_on_b(&conn);
+
+        // An import nothing defines (stdlib-style): external, no file.
+        let a_id: i64 = conn
+            .query_row(
+                "SELECT id FROM files WHERE path = 'src/a.rs'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        queries::insert_imports(
+            &conn,
+            a_id,
+            &[Import {
+                module_path: "std::collections".into(),
+                alias: None,
+                file: PathBuf::new(),
+            }],
+        )
+        .unwrap();
+
+        let deps = find_dependencies(&conn, "crate::a").unwrap();
+        let z = deps
+            .iter()
+            .find(|d| d.module_path == "std::collections")
+            .unwrap();
+        assert!(z.external);
+        assert_eq!(z.file, None);
+
+        let b = deps.iter().find(|d| d.module_path == "crate::b").unwrap();
+        assert!(!b.external);
+        assert_eq!(b.file, Some(PathBuf::from("src/b.rs")));
     }
 }

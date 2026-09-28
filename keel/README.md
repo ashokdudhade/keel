@@ -193,6 +193,27 @@ GET /symbol/{name}
 
 Arrays are ordered deterministically. File paths are JSON strings.
 
+```http
+GET /insights
+```
+
+Embedded zero-dependency dashboard (HTML): index health, per-surface usage,
+confidence mix, miss recovery, top targets, recent queries.
+
+```http
+GET /api/insights
+```
+
+Dashboard data as JSON: `project`, `index` (live counts, format stamp,
+writer, `last_indexed`), `usage` rollup, `hourly` buckets (7d), `top_symbols`,
+`health` (doctor projection), `recent` events, `collection` state
+(`on`/`off`/`empty`).
+
+Usage events come from append-only `.keel/usage.jsonl` (one JSON object per
+CLI/MCP/HTTP query, 5 MiB rotation, `KEEL_NO_USAGE_LOG=1` opts out, local
+only). See `src/usage.rs` and the design doc at
+`docs/superpowers/specs/2026-09-27-keel-insights-portal-design.md`.
+
 ## Install as a Rust library
 
 For local development against this checkout:

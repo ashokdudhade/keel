@@ -128,7 +128,16 @@ fn open_project_db(root: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
+/// Pids outside this range wrap or fail inside `kill` (e.g. `u32::MAX` becomes
+/// pid `-1`, meaning "every process") and must never be signaled.
+fn valid_pid(pid: u32) -> bool {
+    pid > 0 && pid <= i32::MAX as u32
+}
+
 fn process_alive(pid: u32) -> bool {
+    if !valid_pid(pid) {
+        return false;
+    }
     Command::new("kill")
         .args(["-0", &pid.to_string()])
         .stdout(Stdio::null())
@@ -139,6 +148,9 @@ fn process_alive(pid: u32) -> bool {
 }
 
 fn signal_term(pid: u32) -> Result<()> {
+    if !valid_pid(pid) {
+        return Err(KeelError::Watch(format!("refusing to signal invalid pid {pid}")));
+    }
     let status = Command::new("kill")
         .args(["-TERM", &pid.to_string()])
         .stdout(Stdio::null())
@@ -497,6 +509,17 @@ fn http_json(method: &str, path: &str, body: Option<&str>) -> Result<(u16, Strin
     Ok((status, body))
 }
 
+/// How to start the global daemon on this platform.
+///
+/// Homebrew is macOS-only; elsewhere the foreground `keel daemon` is the path.
+pub fn daemon_start_hint() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "brew services start keel"
+    } else {
+        "keel daemon"
+    }
+}
+
 /// True when the global daemon control port responds.
 pub fn daemon_reachable() -> bool {
     http_json("GET", "/health", None)
@@ -507,11 +530,12 @@ pub fn daemon_reachable() -> bool {
 /// Register a project with the global daemon (index + watch).
 pub fn client_start_project(path: &Path) -> Result<()> {
     if !daemon_reachable() {
-        return Err(KeelError::Watch(
-            "keel daemon is not running. Start it with: brew services start keel\n\
-             (or: keel daemon)"
-                .into(),
-        ));
+        let hint = daemon_start_hint();
+        let mut msg = format!("keel daemon is not running. Start it with: {hint}");
+        if cfg!(target_os = "macos") {
+            msg.push_str("\n(or: keel daemon)");
+        }
+        return Err(KeelError::Watch(msg));
     }
     let abs = fs::canonicalize(path).map_err(|source| KeelError::Io {
         path: path.to_path_buf(),
@@ -532,6 +556,161 @@ pub fn client_start_project(path: &Path) -> Result<()> {
         v.get("pid").and_then(|p| p.as_u64()).unwrap_or(0)
     );
     Ok(())
+}
+
+/// Stop the global daemon and its project watchers.
+pub fn client_stop_daemon() -> Result<()> {
+    let pid = fs::read_to_string(daemon_pid_path())
+        .ok()
+        .and_then(|t| t.trim().parse::<u32>().ok());
+    let was_running = pid.map(process_alive).unwrap_or(false) || daemon_reachable();
+    if !was_running {
+        println!("keel daemon is not running.");
+        return Ok(());
+    }
+    // Stop watchers first: otherwise they orphan and double-index after the
+    // next daemon start spawns fresh ones.
+    for entry in load_registry().projects {
+        if process_alive(entry.pid) {
+            let _ = signal_term(entry.pid);
+        }
+    }
+    if let Some(pid) = pid {
+        if process_alive(pid) {
+            signal_term(pid)?;
+            for _ in 0..20 {
+                if !process_alive(pid) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if process_alive(pid) {
+                return Err(KeelError::Watch(format!(
+                    "keel daemon (pid {pid}) did not stop"
+                )));
+            }
+        }
+    }
+    let _ = fs::remove_file(daemon_pid_path());
+    if daemon_reachable() {
+        return Err(KeelError::Watch(
+            "keel daemon port still responds; stop it manually (brew services stop keel)".into(),
+        ));
+    }
+    println!("keel daemon stopped.");
+    Ok(())
+}
+
+/// One health check result for `keel doctor`.
+pub struct DoctorCheck {
+    /// Short check name (`daemon`, `project`, `index`).
+    pub name: &'static str,
+    /// False when the user should act; `detail` says how.
+    pub ok: bool,
+    /// One-line status, including the fix when `!ok`.
+    pub detail: String,
+}
+
+/// Diagnose daemon, project registration, and index health for `project`.
+pub fn doctor_checks(project: &Path) -> Vec<DoctorCheck> {
+    let mut out = vec![DoctorCheck {
+        name: "version",
+        ok: true,
+        detail: env!("CARGO_PKG_VERSION").to_string(),
+    }];
+
+    let abs = fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
+    let key = abs.display().to_string();
+    if daemon_reachable() {
+        out.push(DoctorCheck {
+            name: "daemon",
+            ok: true,
+            detail: "running".into(),
+        });
+    } else {
+        out.push(DoctorCheck {
+            name: "daemon",
+            ok: false,
+            detail: format!("stopped (start it with: {})", daemon_start_hint()),
+        });
+    }
+
+    let entry = load_registry().projects.into_iter().find(|e| e.path == key);
+    match entry {
+        Some(e) if process_alive(e.pid) => out.push(DoctorCheck {
+            name: "project",
+            ok: true,
+            detail: format!("watching {} (pid {})", key, e.pid),
+        }),
+        Some(e) => out.push(DoctorCheck {
+            name: "project",
+            ok: false,
+            detail: format!(
+                "registered but watcher pid {} is dead (run: keel start {})",
+                e.pid,
+                project.display()
+            ),
+        }),
+        None => out.push(DoctorCheck {
+            name: "project",
+            ok: false,
+            detail: format!("not registered (run: keel start {})", project.display()),
+        }),
+    }
+
+    let db = project.join(DB_DIR).join(DB_FILE);
+    if !db.is_file() {
+        out.push(DoctorCheck {
+            name: "index",
+            ok: false,
+            detail: format!(
+                "missing {} (run: keel start {})",
+                db.display(),
+                project.display()
+            ),
+        });
+        return out;
+    }
+    match open_doctor_db(&db) {
+        Ok(conn) => {
+            let files: i64 = conn
+                .query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))
+                .unwrap_or(0);
+            let format = crate::db::schema::index_format_version(&conn);
+            if format != crate::db::schema::INDEX_FORMAT_VERSION {
+                out.push(DoctorCheck {
+                    name: "index",
+                    ok: false,
+                    detail: format!(
+                        "{files} file(s) but format v{format} is stale (run any query to rebuild, or: rm -rf {})",
+                        project.join(DB_DIR).display(),
+                    ),
+                });
+            } else {
+                out.push(DoctorCheck {
+                    name: "index",
+                    ok: files > 0,
+                    detail: if files > 0 {
+                        format!("{files} file(s), format current")
+                    } else {
+                        "empty (run: keel index . or keel start)".into()
+                    },
+                });
+            }
+        }
+        Err(e) => out.push(DoctorCheck {
+            name: "index",
+            ok: false,
+            detail: format!("unreadable ({e})"),
+        }),
+    }
+    out
+}
+
+/// Open an index for read-only inspection without creating or migrating it.
+fn open_doctor_db(db: &Path) -> Result<Connection> {
+    let conn = Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    Ok(conn)
 }
 
 /// Unregister the current project from the global daemon.
@@ -557,7 +736,7 @@ pub fn client_status(path: &Path) -> Result<()> {
     let index = path.join(DB_DIR).join(DB_FILE);
     if !daemon_reachable() {
         println!("daemon:\tstopped");
-        println!("hint:\tbrew services start keel");
+        println!("hint:\t{}", daemon_start_hint());
         println!("index:\t{}", index.display());
         return Ok(());
     }
@@ -594,4 +773,30 @@ pub fn client_status(path: &Path) -> Result<()> {
     );
     println!("index:\t{}", index.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_pids_are_never_alive_nor_signaled() {
+        // u32::MAX wraps to -1 ("every process") inside kill(2): it must read
+        // as dead, and signaling it must be refused outright.
+        assert!(!process_alive(u32::MAX));
+        assert!(!process_alive(0));
+        assert!(signal_term(u32::MAX).is_err());
+        assert!(signal_term(0).is_err());
+    }
+
+    #[test]
+    fn start_hint_is_platform_appropriate() {
+        if cfg!(target_os = "macos") {
+            assert_eq!(daemon_start_hint(), "brew services start keel");
+        } else {
+            // Homebrew-only advice strands Linux/WSL users; the foreground
+            // daemon is the documented path there.
+            assert_eq!(daemon_start_hint(), "keel daemon");
+        }
+    }
 }

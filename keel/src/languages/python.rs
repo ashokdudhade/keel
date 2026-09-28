@@ -215,11 +215,116 @@ fn walk_references(
                 emit_call_reference(func, src, file_key, module_path, scope, out)?;
             }
         }
+        // Bare identifiers in value positions: call/decorator/class-base
+        // arguments share the `argument_list` shape. Keyword names are labels,
+        // not references — only values are emitted.
+        "argument_list" => {
+            emit_argument_values(node, src, file_key, module_path, scope, out)?;
+        }
+        // Type annotations (`x: T`, `-> R`). Nested `type` nodes handle their
+        // own level; `call` subtrees (e.g. `Annotated` metadata) fall through
+        // to the normal call/argument rules via the recursion below.
+        "type" => {
+            if !is_alias_target(node) {
+                emit_type_identifiers(node, src, file_key, module_path, scope, out)?;
+            }
+        }
         _ => {}
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         walk_references(child, src, file_key, module_path, scope, out)?;
+    }
+    Ok(())
+}
+
+/// True when `node` is the defined name of a `type X = …` alias statement.
+/// The alias target is a definition, not a reference to itself.
+fn is_alias_target(node: Node) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    if parent.kind() != "type_alias_statement" {
+        return false;
+    }
+    parent
+        .child_by_field_name("left")
+        .is_some_and(|left| left.id() == node.id())
+}
+
+/// Emit identifiers directly under an `argument_list`: positional values and
+/// keyword-argument values. Receivers, keyword names, and nested structures
+/// are left to the normal recursion (nested calls) or skipped (labels).
+fn emit_argument_values(
+    args: Node,
+    src: &[u8],
+    file_key: &str,
+    module_path: &str,
+    scope: &[String],
+    out: &mut Vec<Reference>,
+) -> Result<()> {
+    let mut cursor = args.walk();
+    for child in args.children(&mut cursor) {
+        if child.kind() == "identifier" {
+            push_reference(
+                node_text(child, src)?.to_string(),
+                child,
+                ReferenceKind::Value,
+                file_key,
+                module_path,
+                scope,
+                out,
+            );
+        } else if child.kind() == "keyword_argument" {
+            if let Some(value) = child.child_by_field_name("value") {
+                if value.kind() == "identifier" {
+                    push_reference(
+                        node_text(value, src)?.to_string(),
+                        value,
+                        ReferenceKind::Value,
+                        file_key,
+                        module_path,
+                        scope,
+                        out,
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Emit identifiers in a `type` subtree as Type references, skipping nested
+/// `type` nodes (their own arm level handles them) and `call` subtrees
+/// (handled by the call/argument rules through normal recursion).
+fn emit_type_identifiers(
+    root: Node,
+    src: &[u8],
+    file_key: &str,
+    module_path: &str,
+    scope: &[String],
+    out: &mut Vec<Reference>,
+) -> Result<()> {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.id() != root.id() && matches!(node.kind(), "type" | "call") {
+            continue;
+        }
+        if node.kind() == "identifier" {
+            push_reference(
+                node_text(node, src)?.to_string(),
+                node,
+                ReferenceKind::Type,
+                file_key,
+                module_path,
+                scope,
+                out,
+            );
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push(child);
+        }
     }
     Ok(())
 }
@@ -446,6 +551,51 @@ fn resolve_python_relative(from_file: &Path, module: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_annotation_and_argument_value_references() {
+        let plugin = PythonPlugin;
+        let src = "def f(x: MyType) -> Ret:\n    pass\n\
+             y: MyType = make()\n\
+             run(callback_fn, key=value)\n\
+             asyncio.to_thread(check, url)\n\
+             class C(Base, metaclass=M):\n    pass\n";
+        let refs = plugin.extract_references(test_path(), src).unwrap();
+        let has = |name: &str, kind: ReferenceKind| {
+            refs.iter().any(|r| r.name == name && r.kind == kind)
+        };
+
+        // Annotations (param, return, variable) are Type references.
+        assert!(has("MyType", ReferenceKind::Type));
+        assert!(has("Ret", ReferenceKind::Type));
+        // Call + keyword values are Value references; keyword names are not.
+        assert!(has("callback_fn", ReferenceKind::Value));
+        assert!(has("value", ReferenceKind::Value));
+        assert!(!refs.iter().any(|r| r.name == "key"));
+        // Attribute calls keep the method and gain the argument values.
+        assert!(has("to_thread", ReferenceKind::Method));
+        assert!(has("check", ReferenceKind::Value));
+        assert!(has("url", ReferenceKind::Value));
+        // Class bases share the argument shape.
+        assert!(has("Base", ReferenceKind::Value));
+        assert!(has("M", ReferenceKind::Value));
+        // Binding sites are definitions, never references.
+        assert!(!refs.iter().any(|r| r.name == "x"));
+        assert!(!refs.iter().any(|r| r.name == "y"));
+        // Receivers stay quiet (imports cover modules).
+        assert!(!refs.iter().any(|r| r.name == "asyncio"));
+    }
+
+    #[test]
+    fn alias_target_is_not_a_self_reference() {
+        let plugin = PythonPlugin;
+        let refs = plugin
+            .extract_references(test_path(), "type X = list[int]\n")
+            .unwrap();
+        assert!(!refs.iter().any(|r| r.name == "X"));
+        assert!(refs.iter().any(|r| r.name == "list"));
+        assert!(refs.iter().any(|r| r.name == "int"));
+    }
 
     const SOURCE: &str = r#"
 import os

@@ -14,18 +14,28 @@ use crate::error::{Result, KeelError};
 use rusqlite::Connection;
 
 /// The latest schema version this build understands.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
+
+/// Content-format version stamped into each index by the writer.
+///
+/// Unlike `SCHEMA_VERSION` (table shape), this tracks extraction semantics
+/// (module identity, symbol/reference rules). Bump it whenever indexing output
+/// changes meaning, so old indexes rebuild instead of serving stale answers.
+/// Unstamped (legacy) indexes read back as 0 and always rebuild.
+pub const INDEX_FORMAT_VERSION: i64 = 1;
 
 /// Create or migrate the schema to the latest version. Idempotent.
 ///
 /// Reads `PRAGMA user_version` and:
-/// - version 0 with no `files` table (truly fresh): creates all v2 tables and
-///   indexes;
+/// - version 0 with no `files` table (truly fresh): creates all v3 tables and
+///   indexes, stamped current (nothing stale to rebuild);
 /// - version 0 with an existing `files` table (unstamped legacy v0.1 database):
-///   runs the v0.1 → v2 upgrade in place, preserving existing data;
-/// - version 1 (stamped v0.1 database): runs the same v0.1 → v2 upgrade;
-/// - version 2: no-op;
-/// - version > [`SCHEMA_VERSION`]: returns [`KeelError::UnsupportedSchema`]
+///   runs the v0.1 → v3 upgrade in place, preserving existing data; content is
+///   stamped format 0 so the next index pass rebuilds it;
+/// - version 1 (stamped v0.1 database): runs the same chained upgrade;
+/// - version 2: adds the writer stamp (format 0, forcing one rebuild);
+/// - version 3: no-op;
+/// - version > `SCHEMA_VERSION`: returns [`KeelError::UnsupportedSchema`]
 ///   without stamping.
 ///
 /// The whole migration runs inside a single transaction so a partial failure
@@ -62,11 +72,16 @@ fn migrate(conn: &Connection, version: i64) -> Result<()> {
         0 => {
             if table_exists(conn, "files")? {
                 upgrade_to_v2(conn)?;
+                upgrade_to_v3(conn)?;
             } else {
-                create_v2(conn)?;
+                create_v3(conn)?;
             }
         }
-        1 => upgrade_to_v2(conn)?,
+        1 => {
+            upgrade_to_v2(conn)?;
+            upgrade_to_v3(conn)?;
+        }
+        2 => upgrade_to_v3(conn)?,
         _ => {}
     }
 
@@ -99,6 +114,86 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// Read the writer's content-format stamp: `INDEX_FORMAT_VERSION` when current,
+/// 0 when unstamped, legacy, or unreadable (all rebuild-safe directions).
+pub fn index_format_version(conn: &Connection) -> i64 {
+    if !table_exists(conn, "meta").unwrap_or(false) {
+        return 0;
+    }
+    conn.query_row(
+        "SELECT value FROM meta WHERE key = 'index_format'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|v| v.parse::<i64>().ok())
+    .unwrap_or(0)
+}
+
+/// Stamp the writer's content format (and writer version, for bug reports).
+pub fn stamp_index_format(conn: &Connection, version: i64) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('index_format', ?1)",
+        [version.to_string()],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('keel_version', ?1)",
+        [env!("CARGO_PKG_VERSION")],
+    )?;
+    Ok(())
+}
+
+/// Record a completed index pass (unix seconds) for health displays.
+pub fn stamp_last_indexed(conn: &Connection) -> Result<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_indexed', ?1)",
+        [now.to_string()],
+    )?;
+    Ok(())
+}
+
+/// Writer Keel version stamp, when present.
+pub fn writer_version(conn: &Connection) -> Option<String> {
+    conn.query_row(
+        "SELECT value FROM meta WHERE key = 'keel_version'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+}
+
+/// Last completed index pass (unix seconds), 0 when never indexed.
+pub fn last_indexed(conn: &Connection) -> u64 {
+    conn.query_row(
+        "SELECT value FROM meta WHERE key = 'last_indexed'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|v| v.parse::<u64>().ok())
+    .unwrap_or(0)
+}
+
+/// Create the full v3 schema on a fresh database.
+fn create_v3(conn: &Connection) -> Result<()> {
+    create_v2(conn)?;
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        "#,
+    )?;
+    // Fresh databases hold no content, so stamping current is truthful.
+    stamp_index_format(conn, INDEX_FORMAT_VERSION)?;
+    Ok(())
 }
 
 /// Create the full v2 schema on a fresh database.
@@ -200,6 +295,23 @@ fn upgrade_to_v2(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Upgrade a v2 database to v3: add the writer-stamp table and mark content
+/// format 0 (unknown writer), forcing one full rebuild on the next index pass.
+/// Indexed rows are preserved; the rebuild replaces them, it does not strand
+/// the user on an error.
+fn upgrade_to_v3(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        "#,
+    )?;
+    stamp_index_format(conn, 0)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,16 +368,18 @@ mod tests {
     "#;
 
     #[test]
-    fn fresh_db_initializes_to_v2() {
+    fn fresh_db_initializes_to_v3() {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         initialize(&conn).expect("init schema");
 
-        assert_eq!(user_version(&conn), 2);
+        assert_eq!(user_version(&conn), 3);
         assert!(table_has_column(&conn, "symbols", "module_path"));
         assert!(table_has_column(&conn, "references", "kind"));
         assert!(table_has_column(&conn, "references", "container"));
         assert!(table_exists(&conn, "imports"));
         assert!(table_exists(&conn, "impls"));
+        assert!(table_exists(&conn, "meta"));
+        assert_eq!(index_format_version(&conn), INDEX_FORMAT_VERSION);
     }
 
     #[test]
@@ -273,11 +387,11 @@ mod tests {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         initialize(&conn).expect("init schema");
         initialize(&conn).expect("re-init schema");
-        assert_eq!(user_version(&conn), 2);
+        assert_eq!(user_version(&conn), 3);
     }
 
     #[test]
-    fn legacy_v0_unstamped_db_upgrades_to_v2_preserving_files() {
+    fn legacy_v0_unstamped_db_upgrades_to_v3_preserving_files() {
         // Simulate a REAL on-disk v0.1 database: the v0.1 tables exist and hold
         // data, but `user_version` was never stamped, so it still reports 0.
         let conn = Connection::open_in_memory().expect("open in-memory db");
@@ -292,7 +406,7 @@ mod tests {
 
         initialize(&conn).expect("migrate legacy v0 db");
 
-        assert_eq!(user_version(&conn), 2);
+        assert_eq!(user_version(&conn), 3);
         assert!(table_has_column(&conn, "symbols", "module_path"));
         assert!(table_has_column(&conn, "references", "kind"));
         assert!(table_has_column(&conn, "references", "container"));
@@ -303,14 +417,16 @@ mod tests {
             .query_row("SELECT path FROM files", [], |row| row.get(0))
             .expect("file preserved");
         assert_eq!(path, "src/legacy.rs");
+        // Unknown writer: content must rebuild on the next index pass.
+        assert_eq!(index_format_version(&conn), 0);
 
         // Re-running must stay green (idempotent) on a migrated legacy db.
         initialize(&conn).expect("re-init migrated legacy db");
-        assert_eq!(user_version(&conn), 2);
+        assert_eq!(user_version(&conn), 3);
     }
 
     #[test]
-    fn v1_db_upgrades_to_v2_preserving_files() {
+    fn v1_db_upgrades_to_v3_preserving_files() {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         conn.execute_batch(V1_SCHEMA).expect("create v1 schema");
         conn.execute_batch("PRAGMA user_version = 1;")
@@ -323,13 +439,41 @@ mod tests {
 
         initialize(&conn).expect("upgrade schema");
 
-        assert_eq!(user_version(&conn), 2);
+        assert_eq!(user_version(&conn), 3);
         assert!(table_has_column(&conn, "symbols", "module_path"));
         assert!(table_has_column(&conn, "references", "kind"));
         assert!(table_has_column(&conn, "references", "container"));
         assert!(table_exists(&conn, "imports"));
         assert!(table_exists(&conn, "impls"));
 
+        let path: String = conn
+            .query_row("SELECT path FROM files", [], |row| row.get(0))
+            .expect("file preserved");
+        assert_eq!(path, "src/a.rs");
+        assert_eq!(index_format_version(&conn), 0);
+    }
+
+    #[test]
+    fn v2_db_upgrades_to_v3_marking_content_stale() {
+        // Simulate a v2 database: stamped 2 with content rows present.
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, content_hash TEXT NOT NULL);",
+        )
+        .expect("create files table");
+        conn.execute(
+            "INSERT INTO files (path, content_hash) VALUES ('src/a.rs', 'h')",
+            [],
+        )
+        .expect("seed files");
+        conn.execute_batch("PRAGMA user_version = 2;")
+            .expect("set v2 version");
+
+        initialize(&conn).expect("upgrade schema");
+
+        assert_eq!(user_version(&conn), 3);
+        assert!(table_exists(&conn, "meta"));
+        assert_eq!(index_format_version(&conn), 0);
         let path: String = conn
             .query_row("SELECT path FROM files", [], |row| row.get(0))
             .expect("file preserved");

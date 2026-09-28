@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 const DB_DIR: &str = ".keel";
 const DB_FILE: &str = "index.db";
 
-fn db_path() -> PathBuf {
+/// Path of the current-directory project index (`./.keel/index.db`).
+pub fn db_path() -> PathBuf {
     Path::new(DB_DIR).join(DB_FILE)
 }
 
@@ -107,14 +108,83 @@ fn find_index_from_registry(cwd: &Path) -> Option<PathBuf> {
 
 /// Open (creating the directory if needed) the on-disk index database.
 fn open_db() -> Result<Connection> {
-    std::fs::create_dir_all(DB_DIR)
-        .map_err(|source| KeelError::Io {
-            path: PathBuf::from(DB_DIR),
-            source,
-        })?;
-    let conn = Connection::open(db_path())?;
+    open_db_at(Path::new("."))
+}
+
+/// Open the index database rooted at `root` (`<root>/.keel/index.db`).
+///
+/// The index always lives with the sources it describes: that keeps stored
+/// (root-relative) paths truthful and stops query auto-index from wiping an
+/// index that belongs to another directory.
+fn open_db_at(root: &Path) -> Result<Connection> {
+    let dir = root.join(DB_DIR);
+    std::fs::create_dir_all(&dir).map_err(|source| KeelError::Io {
+        path: dir.clone(),
+        source,
+    })?;
+    // Best-effort: never fail indexing/queries over a gitignore write.
+    let _ = ensure_gitignored(root);
+    let conn = Connection::open(dir.join(DB_FILE))?;
     crate::db::configure_connection(&conn)?;
     Ok(conn)
+}
+
+/// Keep `<root>/.keel/` out of version control.
+///
+/// Appends `.keel/` to `<root>/.gitignore` when it isn't already covered, or
+/// creates the file when `root` is a git checkout without one. Does nothing
+/// outside a checkout. Returns whether the file was written.
+pub fn ensure_gitignored(root: &Path) -> Result<bool> {
+    const ENTRY: &str = ".keel/";
+    let ignore_path = root.join(".gitignore");
+    let existing = match std::fs::read_to_string(&ignore_path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if root.join(".git").exists() {
+                std::fs::write(&ignore_path, format!("{ENTRY}\n")).map_err(|source| {
+                    KeelError::Io {
+                        path: ignore_path,
+                        source,
+                    }
+                })?;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+        Err(source) => {
+            return Err(KeelError::Io {
+                path: ignore_path,
+                source,
+            })
+        }
+    };
+    let covered = existing.lines().any(|line| {
+        let line = line.trim();
+        matches!(line, ".keel/" | ".keel" | "/.keel/" | "/.keel")
+    });
+    if covered {
+        return Ok(false);
+    }
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&ignore_path)
+        .map_err(|source| KeelError::Io {
+            path: ignore_path.clone(),
+            source,
+        })?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        file.write_all(b"\n").map_err(|source| KeelError::Io {
+            path: ignore_path.clone(),
+            source,
+        })?;
+    }
+    file.write_all(format!("{ENTRY}\n").as_bytes())
+        .map_err(|source| KeelError::Io {
+            path: ignore_path,
+            source,
+        })?;
+    Ok(true)
 }
 
 /// Run a fast incremental index of `root` into the project DB.
@@ -140,21 +210,24 @@ fn maybe_ensure_index(auto_index: bool) -> Result<()> {
     Ok(())
 }
 
-/// Index the repository at `path`. Returns incremental indexing stats.
+/// Index the repository at `path` into `<path>/.keel/index.db`.
 pub fn run_index(path: &Path) -> Result<index::IndexStats> {
-    let mut conn = open_db()?;
+    let mut conn = open_db_at(path)?;
     index::index_repository(path, &mut conn)
 }
 
 /// Watch the repository at `path` and re-index on changes until interrupted.
 pub fn run_watch(path: &Path) -> Result<()> {
-    let mut conn = open_db()?;
+    let mut conn = open_db_at(path)?;
     index::watch::watch_repository(path, &mut conn)
 }
 
 /// Register `path` with the global daemon (indexes + watches the project).
 pub fn run_start(path: &Path) -> Result<()> {
-    crate::daemon::client_start_project(path)
+    crate::daemon::client_start_project(path)?;
+    // The daemon indexes outside this process, so cover gitignore here.
+    let _ = ensure_gitignored(path);
+    Ok(())
 }
 
 /// Unregister the current project from the global daemon.
@@ -165,6 +238,66 @@ pub fn run_stop() -> Result<()> {
 /// Print global daemon + current project watch status.
 pub fn run_status() -> Result<()> {
     crate::daemon::client_status(Path::new("."))
+}
+
+/// Stop the global daemon and its project watchers.
+pub fn run_daemon_stop() -> Result<()> {
+    crate::daemon::client_stop_daemon()
+}
+
+/// Diagnose daemon, project registration, and index health for `path`.
+pub fn run_doctor(path: &Path) -> Result<()> {
+    for check in crate::daemon::doctor_checks(path) {
+        println!(
+            "{}:\t{}\t{}",
+            check.name,
+            if check.ok { "ok" } else { "FAIL" },
+            check.detail
+        );
+    }
+    Ok(())
+}
+
+/// One-shot project setup: register with the daemon, then print MCP config.
+///
+/// The global daemon must already run (once per machine); this only fails
+/// fast with the start command when it doesn't.
+pub fn run_init(path: &Path) -> Result<()> {
+    crate::daemon::client_start_project(path)?;
+    let _ = ensure_gitignored(path);
+    let exe = std::env::current_exe().map_err(|source| KeelError::Io {
+        path: PathBuf::from("keel"),
+        source,
+    })?;
+    println!("{}", mcp_config_snippet(&exe));
+    Ok(())
+}
+
+/// Paste-ready MCP server config pointing at this `keel` binary.
+pub fn mcp_config_snippet(exe: &Path) -> String {
+    let config = serde_json::json!({
+        "mcpServers": {
+            "keel": {
+                "command": exe.display().to_string(),
+                "args": ["mcp"]
+            }
+        }
+    });
+    let body = serde_json::to_string_pretty(&config)
+        .unwrap_or_else(|_| r#"{"mcpServers": {"keel": {"command": "keel", "args": ["mcp"]}}}"#.into());
+    format!("Add this to Cursor Settings -> MCP (or ~/.cursor/mcp.json), then refresh MCP servers:\n{body}")
+}
+
+/// Miss notes worth repeating on human (non-JSON) CLI output.
+///
+/// Skips the canonical "No matching symbols found." marker (redundant with the
+/// "No <query> found for <name>" line) and keeps recovery notes.
+pub fn extra_miss_notes(notes: &[String]) -> Vec<&str> {
+    notes
+        .iter()
+        .map(String::as_str)
+        .filter(|n| *n != "No matching symbols found.")
+        .collect()
 }
 
 /// Run the global daemon (brew services).
@@ -188,7 +321,31 @@ pub fn run_definition_meta(
     crate::facade::definition_with_meta(&conn, name)
 }
 
-/// Look up references by name (also used for `callers` in v0.1).
+/// Format a symbol hit as `path:line:col<tab>kind<tab>name` (1-based).
+pub fn format_symbol_hit(s: &Symbol) -> String {
+    format!(
+        "{}:{}:{}\t{}\t{}",
+        s.file.display(),
+        s.start_line,
+        s.start_col,
+        s.kind.as_db(),
+        s.name
+    )
+}
+
+/// Format a reference/caller hit with the same shape as [`format_symbol_hit`].
+pub fn format_reference_hit(r: &Reference) -> String {
+    format!(
+        "{}:{}:{}\t{}\t{}",
+        r.file.display(),
+        r.start_line,
+        r.start_col,
+        r.kind.as_db(),
+        r.name
+    )
+}
+
+/// Look up references by name.
 pub fn run_references(name: &str, auto_index: bool) -> Result<Vec<Reference>> {
     Ok(run_references_meta(name, auto_index)?.results)
 }
@@ -280,6 +437,7 @@ pub fn run_serve(port: u16, auto_index: bool) -> Result<()> {
     }
     let addr = format!("127.0.0.1:{port}");
     eprintln!("Serving Keel JSON API on http://{addr}");
+    eprintln!("Keel Insights dashboard on http://{addr}/insights");
     api::serve(&addr, &db_path(), auto_index)
 }
 
@@ -332,6 +490,228 @@ mod tests {
         let dir = root.join(DB_DIR);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(DB_FILE), b"").unwrap();
+    }
+
+    #[test]
+    fn hit_formats_share_shape_with_kind() {
+        use crate::graph::types::{ReferenceKind, SymbolKind};
+
+        let sym = Symbol {
+            name: "AuthService".into(),
+            kind: SymbolKind::Struct,
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            start_col: 12,
+            module_path: "crate".into(),
+        };
+        let reference = Reference {
+            name: "create_order".into(),
+            file: PathBuf::from("src/main.rs"),
+            start_line: 3,
+            start_col: 5,
+            kind: ReferenceKind::Call,
+            container: String::new(),
+        };
+        assert_eq!(
+            format_symbol_hit(&sym),
+            "src/lib.rs:1:12\tstruct\tAuthService"
+        );
+        assert_eq!(
+            format_reference_hit(&reference),
+            "src/main.rs:3:5\tcall\tcreate_order"
+        );
+        // definition/references/callers/impact stay script-parseable as one shape.
+        assert_eq!(
+            format_symbol_hit(&sym).split('\t').count(),
+            format_reference_hit(&reference).split('\t').count()
+        );
+    }
+
+    #[test]
+    fn index_writes_db_at_target_not_cwd() {
+        let proj = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(proj.path().join("src")).unwrap();
+        std::fs::write(proj.path().join("src/lib.rs"), "fn hello() {}\n").unwrap();
+
+        // Indexing from another cwd must land beside the sources it describes.
+        let stats = run_index(proj.path()).unwrap();
+        assert_eq!(stats.indexed, 1);
+        let db = proj.path().join(DB_DIR).join(DB_FILE);
+        assert!(db.is_file());
+        assert!(!proj.path().join(".gitignore").exists());
+
+        // A second pass finds everything current and removes nothing (the old
+        // cwd-relative layout wiped out-of-tree indexes here).
+        let again = run_index(proj.path()).unwrap();
+        assert_eq!(again.skipped, 1);
+        assert_eq!(again.removed, 0);
+
+        let conn = Connection::open(&db).unwrap();
+        let defs = crate::db::queries::find_definition(&conn, "hello").unwrap();
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].file, PathBuf::from("src/lib.rs"));
+    }
+
+    #[test]
+    fn gitignore_appends_entry_and_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), "target/\n").unwrap();
+        assert!(ensure_gitignored(tmp.path()).unwrap());
+        let text = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert_eq!(text, "target/\n.keel/\n");
+        // Second call is a no-op.
+        assert!(!ensure_gitignored(tmp.path()).unwrap());
+    }
+
+    #[test]
+    fn gitignore_respects_existing_coverage_and_newlines() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), "target/\n.keel\n").unwrap();
+        assert!(!ensure_gitignored(tmp.path()).unwrap());
+
+        let tmp2 = tempfile::tempdir().unwrap();
+        std::fs::write(tmp2.path().join(".gitignore"), "target/").unwrap();
+        assert!(ensure_gitignored(tmp2.path()).unwrap());
+        let text = std::fs::read_to_string(tmp2.path().join(".gitignore")).unwrap();
+        assert_eq!(text, "target/\n.keel/\n");
+    }
+
+    #[test]
+    fn mcp_snippet_points_at_given_binary() {
+        let snippet = mcp_config_snippet(Path::new("/opt/keel/bin/keel"));
+        assert!(snippet.contains("mcpServers"), "{snippet}");
+        assert!(snippet.contains("/opt/keel/bin/keel"), "{snippet}");
+        assert!(snippet.contains("\"mcp\""), "{snippet}");
+    }
+
+    #[test]
+    fn extra_miss_notes_skips_canonical_marker() {
+        let notes = vec![
+            "No matching symbols found.".to_string(),
+            "Did you mean `AuthService`?".to_string(),
+        ];
+        assert_eq!(extra_miss_notes(&notes), vec!["Did you mean `AuthService`?"]);
+        assert!(extra_miss_notes(&[]).is_empty());
+    }
+
+    /// Point daemon discovery at a home and port with nothing behind them.
+    fn isolate_daemon(home: &Path) {
+        std::env::set_var("KEEL_HOME", home);
+        std::env::set_var("KEEL_DAEMON_PORT", "9");
+    }
+
+    #[test]
+    fn doctor_reports_empty_project_honestly() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        isolate_daemon(&home.path().join("keel-home"));
+        let proj = tempfile::tempdir().unwrap();
+
+        let checks = crate::daemon::doctor_checks(proj.path());
+        let get = |name: &str| {
+            checks
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap_or_else(|| panic!("missing {name} check"))
+        };
+        assert!(get("version").ok);
+        assert!(!get("daemon").ok);
+        assert!(get("daemon").detail.contains("start it with"));
+        assert!(!get("project").ok);
+        assert!(get("project").detail.contains("not registered"));
+        assert!(!get("index").ok);
+        assert!(get("index").detail.contains("missing"));
+
+        std::env::remove_var("KEEL_HOME");
+        std::env::remove_var("KEEL_DAEMON_PORT");
+    }
+
+    #[test]
+    fn doctor_sees_index_and_dead_watcher() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let keel_home = home.path().join("keel-home");
+        isolate_daemon(&keel_home);
+        let proj = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(proj.path().join("src")).unwrap();
+        std::fs::write(proj.path().join("src/lib.rs"), "fn hello() {}\n").unwrap();
+
+        // Real index on disk.
+        let db_dir = proj.path().join(DB_DIR);
+        std::fs::create_dir_all(&db_dir).unwrap();
+        let mut conn =
+            rusqlite::Connection::open(db_dir.join(DB_FILE)).unwrap();
+        crate::index::index_repository(proj.path(), &mut conn).unwrap();
+        drop(conn);
+
+        // Registry entry with a genuinely dead pid: spawn and reap a child so
+        // the pid is valid-range but guaranteed defunct.
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead_pid = child.id();
+        child.wait().unwrap();
+        let canon = std::fs::canonicalize(proj.path()).unwrap();
+        let daemon_dir = keel_home.join("daemon");
+        std::fs::create_dir_all(&daemon_dir).unwrap();
+        std::fs::write(
+            daemon_dir.join("projects.json"),
+            format!(
+                r#"{{"projects":[{{"path":"{}","pid":{dead_pid}}}]}}"#,
+                canon.display(),
+            ),
+        )
+        .unwrap();
+
+        let checks = crate::daemon::doctor_checks(proj.path());
+        let get = |name: &str| checks.iter().find(|c| c.name == name).unwrap();
+        assert!(get("index").ok, "index: {}", get("index").detail);
+        assert!(get("index").detail.contains("1 file(s)"));
+        assert!(!get("project").ok);
+        assert!(get("project").detail.contains("dead"));
+
+        std::env::remove_var("KEEL_HOME");
+        std::env::remove_var("KEEL_DAEMON_PORT");
+    }
+
+    #[test]
+    fn init_fails_fast_without_daemon() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        isolate_daemon(&home.path().join("keel-home"));
+        let proj = tempfile::tempdir().unwrap();
+
+        let err = run_init(proj.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("keel daemon is not running"),
+            "unexpected error: {err}"
+        );
+
+        std::env::remove_var("KEEL_HOME");
+        std::env::remove_var("KEEL_DAEMON_PORT");
+    }
+
+    #[test]
+    fn daemon_stop_is_ok_when_down() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        isolate_daemon(&home.path().join("keel-home"));
+
+        run_daemon_stop().unwrap();
+
+        std::env::remove_var("KEEL_HOME");
+        std::env::remove_var("KEEL_DAEMON_PORT");
+    }
+
+    #[test]
+    fn gitignore_created_only_inside_checkouts() {
+        let checkout = tempfile::tempdir().unwrap();
+        std::fs::create_dir(checkout.path().join(".git")).unwrap();
+        assert!(ensure_gitignored(checkout.path()).unwrap());
+        let text = std::fs::read_to_string(checkout.path().join(".gitignore")).unwrap();
+        assert_eq!(text, ".keel/\n");
+
+        let plain = tempfile::tempdir().unwrap();
+        assert!(!ensure_gitignored(plain.path()).unwrap());
+        assert!(!plain.path().join(".gitignore").exists());
     }
 
     #[test]

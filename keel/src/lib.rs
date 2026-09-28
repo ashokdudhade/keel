@@ -14,6 +14,7 @@ pub mod graph;
 pub mod index;
 pub mod languages;
 pub mod mcp;
+pub mod usage;
 
 pub use error::{Result, KeelError};
 pub use facade::Index;

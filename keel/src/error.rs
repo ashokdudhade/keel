@@ -54,6 +54,17 @@ pub enum KeelError {
         /// Latest schema version this build can open.
         supported: i64,
     },
+
+    /// The index was written by an older Keel and must be rebuilt before reads.
+    #[error(
+        "index format version {found} is older than current version {current}; re-index the project (rm -rf .keel && keel start, or query without --no-auto-index)"
+    )]
+    StaleIndex {
+        /// Content-format stamp found in the database (0 when unstamped).
+        found: i64,
+        /// Content-format version this build writes.
+        current: i64,
+    },
 }
 
 /// Convenience `Result` alias used throughout the library.

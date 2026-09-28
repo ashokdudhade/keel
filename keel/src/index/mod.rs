@@ -8,7 +8,7 @@ use crate::db::{queries, schema};
 use crate::error::Result;
 use crate::languages::Registry;
 use rusqlite::Connection;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// Counts of files processed by an incremental indexing pass.
@@ -49,8 +49,20 @@ pub fn index_repository_with(
     registry: &Registry,
 ) -> Result<IndexStats> {
     schema::initialize(conn)?;
+    // Stale content (older writer): wipe and re-parse everything rather than
+    // serve answers with outdated semantics. Upgrades become seamless: the
+    // first index pass after an update rebuilds automatically.
+    let stale = schema::index_format_version(conn) != schema::INDEX_FORMAT_VERSION;
+    if stale {
+        eprintln!("keel: index format changed; rebuilding index from scratch.");
+    }
     let abs_files = worker::collect_source_files(root, registry);
-    let existing = queries::existing_hashes(conn)?;
+    // Old hashes are meaningless after a format change: re-parse every file.
+    let existing: HashMap<String, String> = if stale {
+        HashMap::new()
+    } else {
+        queries::existing_hashes(conn)?
+    };
 
     let outcomes = worker::hash_and_parse(root, &abs_files, &existing, registry);
 
@@ -77,6 +89,9 @@ pub fn index_repository_with(
 
     let mut removed = 0usize;
     let tx = conn.transaction()?;
+    if stale {
+        queries::clear_index(&tx)?;
+    }
     for pf in &parsed {
         let file_id = queries::insert_file(&tx, &pf.node)?;
         queries::clear_file_rows(&tx, file_id)?;
@@ -91,6 +106,12 @@ pub fn index_repository_with(
             removed += 1;
         }
     }
+    if stale {
+        // Stamped inside the same transaction: a failed pass stays stale and
+        // retries the rebuild next time instead of marking partial content.
+        schema::stamp_index_format(&tx, schema::INDEX_FORMAT_VERSION)?;
+    }
+    schema::stamp_last_indexed(&tx)?;
     tx.commit()?;
 
     Ok(IndexStats {
@@ -125,6 +146,56 @@ mod tests {
             .unwrap();
         assert_eq!(path, "src/lib.rs");
         assert!(!path.starts_with('/'));
+    }
+
+    #[test]
+    fn stale_format_wipes_and_rebuilds_content() {
+        use crate::db::{queries, schema};
+        use crate::graph::types::{Symbol, SymbolKind};
+        use std::path::PathBuf;
+
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "fn hello() {}\n").unwrap();
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        index_repository(root, &mut conn).unwrap();
+
+        // Simulate an older writer: stale stamp plus a bogus row the new
+        // extractor would never produce.
+        schema::stamp_index_format(&conn, 0).unwrap();
+        let file_id = queries::insert_file(
+            &conn,
+            &crate::graph::types::FileNode {
+                path: PathBuf::from("src/ghost.rs"),
+                content_hash: "bogus".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            file_id,
+            &[Symbol {
+                name: "Ghost".into(),
+                kind: SymbolKind::Struct,
+                file: PathBuf::new(),
+                start_line: 1,
+                start_col: 1,
+                module_path: String::new(),
+            }],
+        )
+        .unwrap();
+
+        let stats = index_repository(root, &mut conn).unwrap();
+        assert_eq!(stats.indexed, 1);
+        assert_eq!(stats.skipped, 0);
+        assert_eq!(
+            schema::index_format_version(&conn),
+            schema::INDEX_FORMAT_VERSION
+        );
+        assert!(queries::find_definition(&conn, "Ghost").unwrap().is_empty());
+        assert_eq!(queries::find_definition(&conn, "hello").unwrap().len(), 1);
     }
 
     #[test]

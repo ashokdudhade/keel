@@ -66,6 +66,8 @@ pub enum ReferenceKind {
     Type,
     /// A path segment reference (e.g. `a::b::c`).
     Path,
+    /// A bare identifier used as a value (call argument, decorator/base arg).
+    Value,
 }
 
 impl ReferenceKind {
@@ -77,6 +79,7 @@ impl ReferenceKind {
             ReferenceKind::Method => "method".to_string(),
             ReferenceKind::Type => "type".to_string(),
             ReferenceKind::Path => "path".to_string(),
+            ReferenceKind::Value => "value".to_string(),
         }
     }
 
@@ -89,6 +92,7 @@ impl ReferenceKind {
             "method" => ReferenceKind::Method,
             "type" => ReferenceKind::Type,
             "path" => ReferenceKind::Path,
+            "value" => ReferenceKind::Value,
             _ => ReferenceKind::Call,
         }
     }
@@ -199,6 +203,7 @@ mod tests {
             ReferenceKind::Method,
             ReferenceKind::Type,
             ReferenceKind::Path,
+            ReferenceKind::Value,
         ];
         for k in kinds {
             assert_eq!(ReferenceKind::from_db(&k.as_db()), k);

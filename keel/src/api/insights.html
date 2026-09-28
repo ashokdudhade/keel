@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keel Insights</title>
+<style>
+  :root {
+    --bg: #101418;
+    --card: #1a2129;
+    --border: #2a333f;
+    --text: #e6e9ee;
+    --muted: #8b949e;
+    --green: #34d399;
+    --amber: #fbbf24;
+    --red: #f87171;
+    --blue: #60a5fa;
+    --grey: #6b7280;
+  }
+  html { background: var(--bg); }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  header { margin-bottom: 20px; }
+  header h1 { font-size: 22px; margin: 0 0 4px 0; font-weight: 650; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  header .sub code { color: var(--text); }
+  .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 10px 0; font-weight: 600; }
+  .span3 { grid-column: span 3; } .span4 { grid-column: span 4; }
+  .span6 { grid-column: span 6; } .span8 { grid-column: span 8; }
+  .span12 { grid-column: span 12; }
+  .stat { font-size: 26px; font-weight: 650; }
+  .stat small { font-size: 12px; color: var(--muted); font-weight: 400; }
+  .kv { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px dotted var(--border); }
+  .kv:last-child { border-bottom: 0; }
+  .kv .k { color: var(--muted); }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .ok { color: var(--green); } .fail { color: var(--red); }
+  .pill-green { background: #134e3c; color: #a7f3d0; }
+  .pill-amber { background: #574217; color: #fde68a; }
+  .pill-red { background: #5b2320; color: #fecaca; }
+  .pill-grey { background: #2a333f; color: #c4cdd6; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border); }
+  td { padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: 0; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .bar-label { width: 110px; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-track { flex: 1; height: 10px; background: #0c1014; border-radius: 5px; }
+  .bar-fill { height: 10px; border-radius: 5px; }
+  .bar-n { width: 40px; text-align: right; font-size: 12px; }
+  .banner { border-radius: 10px; padding: 12px 16px; margin-bottom: 12px; border: 1px solid var(--border); background: var(--card); }
+  .muted { color: var(--muted); }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: baseline; }
+  footer { margin-top: 16px; color: var(--muted); font-size: 12px; }
+  @media (max-width: 800px) { .span3, .span4, .span6, .span8 { grid-column: span 12; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Keel Insights</h1>
+    <div class="sub" id="subtitle">loading…</div>
+  </header>
+  <div id="banner"></div>
+  <div class="grid">
+    <div class="card span4"><h2>Index</h2><div id="index"></div></div>
+    <div class="card span4"><h2>Health</h2><div id="health"></div></div>
+    <div class="card span4"><h2>Answer quality</h2><div id="quality"></div></div>
+    <div class="card span8"><h2>Queries per hour · last 7 days</h2><div id="timeline"></div>
+      <div class="legend"><span><span class="swatch" style="background:var(--blue)"></span>cli</span><span><span class="swatch" style="background:var(--green)"></span>mcp</span><span><span class="swatch" style="background:var(--amber)"></span>http</span></div>
+    </div>
+    <div class="card span4"><h2>By tool</h2><div id="bytool"></div></div>
+    <div class="card span4"><h2>Top targets</h2><div id="top"></div></div>
+    <div class="card span8"><h2>Recent queries</h2><div id="recent"></div></div>
+  </div>
+  <footer>Local only — data never leaves this machine. Auto-refreshes every 30s. <span id="updated"></span></footer>
+</div>
+<script>
+"use strict";
+const SURF = { cli: "#60a5fa", mcp: "#34d399", http: "#fbbf24" };
+const CONF = { high: "#34d399", medium: "#fbbf24", low: "#f87171", unknown: "#6b7280" };
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function ago(ts) {
+  if (!ts) return "never";
+  const d = Date.now() / 1000 - ts;
+  if (d < 60) return "just now";
+  if (d < 3600) return Math.floor(d / 60) + "m ago";
+  if (d < 86400) return Math.floor(d / 3600) + "h ago";
+  return Math.floor(d / 86400) + "d ago";
+}
+function bar(label, n, max, color) {
+  const w = max ? Math.round(100 * n / max) : 0;
+  return `<div class="bar-row"><span class="bar-label">${esc(label)}</span>` +
+    `<span class="bar-track"><span class="bar-fill" style="display:block;width:${w}%;background:${color}"></span></span>` +
+    `<span class="bar-n">${n}</span></div>`;
+}
+function donut(parts) {
+  // parts: [[label, n, color]]; solid segments, no gradients.
+  const total = parts.reduce((a, p) => a + p[1], 0) || 1;
+  const C = 2 * Math.PI * 40;
+  let off = 25, segs = "";
+  for (const [label, n, color] of parts) {
+    if (!n) continue;
+    const len = C * n / total;
+    segs += `<circle cx="60" cy="60" r="40" fill="none" stroke="${color}" stroke-width="18" stroke-dasharray="${len.toFixed(1)} ${(C - len).toFixed(1)}" stroke-dashoffset="${(-off).toFixed(1)}"><title>${esc(label)}: ${n}</title></circle>`;
+    off += len;
+  }
+  return `<svg width="120" height="120" viewBox="0 0 120 120" role="img">${segs}` +
+    `<text x="60" y="57" text-anchor="middle" fill="#e6e9ee" font-size="22" font-weight="650">${total}</text>` +
+    `<text x="60" y="74" text-anchor="middle" fill="#8b949e" font-size="11">queries</text></svg>`;
+}
+function timeline(buckets) {
+  const H = buckets.length || 1;
+  const max = Math.max(1, ...buckets.map(b => b.cli + b.mcp + b.http));
+  const W = 620, HT = 110, bw = W / H;
+  let rects = "";
+  buckets.forEach((b, i) => {
+    let y = HT;
+    for (const s of ["cli", "mcp", "http"]) {
+      const h = Math.round(HT * b[s] / max);
+      y -= h;
+      if (h > 0) rects += `<rect x="${(i * bw + 0.5).toFixed(1)}" y="${y}" width="${(bw - 1).toFixed(1)}" height="${h}" fill="${SURF[s]}"><title>${s}: ${b[s]}</title></rect>`;
+    }
+  });
+  return `<svg width="100%" viewBox="0 0 ${W} ${HT}" preserveAspectRatio="none" style="height:110px" role="img">${rects}</svg>`;
+}
+function render(d) {
+  document.getElementById("subtitle").innerHTML =
+    `project <code>${esc(d.project.root)}</code> · index <code>${esc(d.project.index_db)}</code>`;
+  const b = document.getElementById("banner");
+  if (d.collection === "off") {
+    b.innerHTML = `<div class="banner">Usage collection is <b>off</b> (<code>KEEL_NO_USAGE_LOG=1</code>). Unset it and run queries to populate this page.</div>`;
+  } else if (d.collection === "empty") {
+    b.innerHTML = `<div class="banner">No usage recorded yet. Run a query (<code>keel definition …</code>) or connect your agent over MCP, then refresh.</div>`;
+  } else { b.innerHTML = ""; }
+
+  const ix = d.index;
+  const fmt = ix.format_current
+    ? `<span class="pill pill-green">current</span>`
+    : `<span class="pill pill-red">stale · v${ix.format}</span>`;
+  document.getElementById("index").innerHTML =
+    `<div class="stat">${ix.files} <small>files · ${ix.symbols} symbols · ${ix.references} refs</small></div>` +
+    `<div class="kv"><span class="k">format</span><span>${fmt}</span></div>` +
+    `<div class="kv"><span class="k">writer</span><span class="mono">${esc(ix.writer || "unknown")}</span></div>` +
+    `<div class="kv"><span class="k">last indexed</span><span>${ago(ix.last_indexed)}</span></div>`;
+
+  document.getElementById("health").innerHTML = d.health.map(h =>
+    `<div class="kv"><span class="k">${esc(h.name)}</span>` +
+    `<span class="${h.ok ? "ok" : "fail"}">${h.ok ? "ok" : "FAIL"}</span></div>` +
+    (h.ok ? "" : `<div class="muted" style="font-size:12px;margin-bottom:4px">${esc(h.detail)}</div>`)
+  ).join("");
+
+  const u = d.usage;
+  const parts = [["high", u.by_confidence.high || 0, CONF.high],
+    ["medium", u.by_confidence.medium || 0, CONF.medium],
+    ["low", u.by_confidence.low || 0, CONF.low],
+    ["unknown", u.by_confidence.unknown || 0, CONF.unknown]];
+  document.getElementById("quality").innerHTML =
+    `<div style="display:flex;gap:14px;align-items:center">${donut(parts)}<div>` +
+    `<div class="kv"><span class="k">misses</span><span>${u.misses}</span></div>` +
+    `<div class="kv"><span class="k">recovered by suggestion</span><span>${u.recovered}</span></div>` +
+    `<div class="kv"><span class="k">empty-index hits</span><span>${u.empty_index_hits}</span></div>` +
+    `<div class="kv"><span class="k">avg latency</span><span>${u.events ? Math.round(u.total_ms / u.events) : 0} ms</span></div>` +
+    `</div></div>`;
+
+  document.getElementById("timeline").innerHTML = timeline(d.hourly || []);
+  const tools = Object.entries(u.by_tool).sort((a, c) => c[1] - a[1]);
+  const tmax = Math.max(1, ...tools.map(t => t[1]));
+  document.getElementById("bytool").innerHTML = tools.length
+    ? tools.map(([t, n]) => bar(t, n, tmax, "var(--blue)")).join("")
+    : `<span class="muted">no queries yet</span>`;
+
+  const smax = Math.max(1, ...d.top_symbols.map(t => t.n));
+  document.getElementById("top").innerHTML = d.top_symbols.length
+    ? d.top_symbols.map(t => bar(t.name, t.n, smax, "var(--green)")).join("")
+    : `<span class="muted">no queries yet</span>`;
+
+  const rows = d.recent.slice().reverse().map(e => {
+    const pill = e.hits === 0
+      ? (e.suggested ? `<span class="pill pill-amber">miss · suggested</span>` : `<span class="pill pill-red">miss</span>`)
+      : `<span class="pill pill-green">${e.hits} hit${e.hits === 1 ? "" : "s"}</span>`;
+    return `<tr><td class="mono">${esc(e.tool)}</td><td class="mono">${esc(e.target)}</td>` +
+      `<td><span class="swatch" style="background:${SURF[e.surface] || "#6b7280"}"></span>${esc(e.surface)}</td>` +
+      `<td>${pill}</td><td class="muted">${ago(e.ts)}</td></tr>`;
+  }).join("");
+  document.getElementById("recent").innerHTML = rows
+    ? `<table><tr><th>tool</th><th>target</th><th>surface</th><th>result</th><th>when</th></tr>${rows}</table>`
+    : `<span class="muted">no queries yet</span>`;
+  document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString() + ".";
+}
+async function load() {
+  try {
+    const r = await fetch("/api/insights", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    render(await r.json());
+  } catch (e) {
+    document.getElementById("subtitle").textContent = "failed to load /api/insights: " + e;
+  }
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>

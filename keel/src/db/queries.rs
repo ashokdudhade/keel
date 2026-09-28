@@ -299,6 +299,43 @@ pub fn first_file_for_module_path(conn: &Connection, module_path: &str) -> Resul
     Ok(files.into_iter().next().map(PathBuf::from))
 }
 
+/// True when the index holds no files (fresh or never indexed).
+pub fn is_index_empty(conn: &Connection) -> Result<bool> {
+    let count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
+    Ok(count == 0)
+}
+
+/// Delete every indexed row (files, symbols, references, imports, impls).
+///
+/// Used to rebuild indexes whose content format predates this build; the
+/// writer stamp is managed separately by the caller.
+pub fn clear_index(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        DELETE FROM impls;
+        DELETE FROM imports;
+        DELETE FROM "references";
+        DELETE FROM symbols;
+        DELETE FROM files;
+        "#,
+    )?;
+    Ok(())
+}
+
+/// Every distinct symbol name in the index, ordered deterministically.
+///
+/// Used for miss recovery ("did you mean?") on empty results only.
+pub fn distinct_symbol_names(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT DISTINCT name FROM symbols ORDER BY name")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 /// Reference names recorded in the file at `path`, ordered deterministically.
 pub fn reference_names_in_file(conn: &Connection, path: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(

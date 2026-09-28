@@ -261,9 +261,12 @@ src/auth/service.rs:12:12	struct	AuthService
 ```bash
 brew services start keel   # global daemon (Homebrew)
 keel daemon                # global daemon (curl / foreground)
+keel init [path]           # one-shot setup: register + print MCP config
 keel start [path]          # register this project (index + watch)
 keel stop                  # unregister this project only
 keel status                # daemon + this project
+keel doctor [path]         # diagnose daemon / project / index health
+keel daemon-stop           # stop the global daemon + watchers
 keel definition <name>     # find definitions (auto-indexes)
 keel references <name>
 keel callers <name>
@@ -272,19 +275,19 @@ keel dependencies <name|module>
 keel impact <name>
 ```
 
-Index path: `./.keel/index.db` (add `.keel/` to `.gitignore`). Daemon state:
-`~/.keel/daemon/` (`KEEL_HOME`).
+Index path: `<project>/.keel/index.db` (`.keel/` is added to `.gitignore`
+automatically). Daemon state: `~/.keel/daemon/` (`KEEL_HOME`).
 
 Global flag: `--no-auto-index` skips the incremental ensure-index before queries.
 
 ## Without the daemon
 
 ```bash
-keel index .    # one-shot index
-keel watch .    # foreground re-index on file changes
+keel index [path]    # one-shot index into <path>/.keel/index.db
+keel watch [path]    # foreground re-index on file changes
 ```
 
-## Local JSON API (optional)
+## Local JSON API + Insights (optional)
 
 ```bash
 keel serve --port 7645
@@ -292,7 +295,10 @@ curl http://127.0.0.1:7645/health
 curl http://127.0.0.1:7645/symbol/AuthService
 ```
 
-Binds to `127.0.0.1` only by default.
+Open http://127.0.0.1:7645/insights for the dashboard: index health,
+per-surface usage, confidence mix, miss recovery, and recent queries, all
+from local `.keel/usage.jsonl` (rotation-capped; `KEEL_NO_USAGE_LOG=1` opts
+out). Binds to `127.0.0.1` only by default.
 
 ## Troubleshooting
 
@@ -360,13 +366,14 @@ Optional daemon state: `rm -rf ~/.keel`.
 
 ## Accuracy
 
-On popular GitHub repositories (walkdir, zod, express, flask, cobra) with
-hand-verified gold symbols:
+On popular GitHub repositories (walkdir, zod, express, flask, cobra): 15
+hand-verified queries (3 per repo, definition/callers), keel-vs-grep
+method, regenerable via `scripts/realworld-accuracy-benchmark.sh`:
 
 | Method | Precision | Recall | F1 |
 |--------|-----------|--------|----|
 | Without Keel (keyword grep) | 78.9% | 71.4% | 75.0% |
-| With Keel | 100% | 100% | 100% |
+| With Keel | 100% (21/21 tp, 0 fp) | 100% (0 fn) | 100% |
 
 Full report: [`reports/realworld-accuracy-benchmark.html`](reports/realworld-accuracy-benchmark.html).
 Agent bake-off (dated): [`reports/keel-mcp-vs-cursor-grep-bakeoff.md`](reports/keel-mcp-vs-cursor-grep-bakeoff.md)

@@ -568,41 +568,53 @@ fn call_tool(
         "definition" => {
             let symbol = require_string_arg(&arguments, "name")?;
             let module = optional_module_arg(&arguments);
+            let start = std::time::Instant::now();
             let qr = facade::definition_with_meta_opts(conn, &symbol, module.as_deref())?
                 .map_results(|s| SymbolDto::from(&s));
+            log_tool_query(conn, name, &symbol, module.as_deref(), &qr, start);
             json_text(qr)?
         }
         "references" => {
             let symbol = require_string_arg(&arguments, "name")?;
             let module = optional_module_arg(&arguments);
+            let start = std::time::Instant::now();
             let qr = facade::references_with_meta_opts(conn, &symbol, module.as_deref())?
                 .map_results(|r| ReferenceDto::from(&r));
+            log_tool_query(conn, name, &symbol, module.as_deref(), &qr, start);
             json_text(qr)?
         }
         "callers" => {
             let symbol = require_string_arg(&arguments, "name")?;
             let module = optional_module_arg(&arguments);
+            let start = std::time::Instant::now();
             let qr = facade::callers_with_meta_opts(conn, &symbol, module.as_deref())?
                 .map_results(|r| ReferenceDto::from(&r));
+            log_tool_query(conn, name, &symbol, module.as_deref(), &qr, start);
             json_text(qr)?
         }
         "implementations" => {
             let symbol = require_string_arg(&arguments, "name")?;
+            let start = std::time::Instant::now();
             let qr = facade::implementations_with_meta(conn, &symbol)?
                 .map_results(|i| ImplDto::from(&i));
+            log_tool_query(conn, name, &symbol, None, &qr, start);
             json_text(qr)?
         }
         "dependencies" => {
             let symbol = require_string_arg(&arguments, "name")?;
+            let start = std::time::Instant::now();
             let qr = facade::dependencies_with_meta(conn, &symbol)?
                 .map_results(|d| DependencyDto::from(&d));
+            log_tool_query(conn, name, &symbol, None, &qr, start);
             json_text(qr)?
         }
         "impact" => {
             let symbol = require_string_arg(&arguments, "name")?;
             let module = optional_module_arg(&arguments);
+            let start = std::time::Instant::now();
             let qr = facade::impact_with_meta_opts(conn, &symbol, module.as_deref())?
                 .map_results(|s| SymbolDto::from(&s));
+            log_tool_query(conn, name, &symbol, module.as_deref(), &qr, start);
             json_text(qr)?
         }
         "index" => {
@@ -616,6 +628,27 @@ fn call_tool(
     };
 
     Ok(payload)
+}
+
+/// Record one MCP tool call for the Insights portal (best-effort, local only).
+fn log_tool_query<T>(
+    conn: &Connection,
+    tool: &str,
+    symbol: &str,
+    module: Option<&str>,
+    qr: &crate::graph::query_result::QueryResult<T>,
+    start: std::time::Instant,
+) {
+    let summary = crate::usage::QuerySummary::from_query_result(qr);
+    crate::usage::log_query(
+        conn,
+        crate::usage::Surface::Mcp,
+        tool,
+        symbol,
+        module,
+        &summary,
+        start.elapsed().as_millis() as u64,
+    );
 }
 
 fn require_string_arg(arguments: &Value, key: &str) -> Result<String> {
