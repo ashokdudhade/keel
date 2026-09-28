@@ -224,10 +224,8 @@ fn walk_references(
         // Type annotations (`x: T`, `-> R`). Nested `type` nodes handle their
         // own level; `call` subtrees (e.g. `Annotated` metadata) fall through
         // to the normal call/argument rules via the recursion below.
-        "type" => {
-            if !is_alias_target(node) {
-                emit_type_identifiers(node, src, file_key, module_path, scope, out)?;
-            }
+        "type" if !is_alias_target(node) => {
+            emit_type_identifiers(node, src, file_key, module_path, scope, out)?;
         }
         _ => {}
     }
