@@ -84,7 +84,10 @@ unreleased 1.4.0 work below is implemented but uncommitted — verify with `git 
   → 4. `cwd/.keel/index.db`. `KEEL_MCP_DEBUG=1` prints the choice on stderr.
 - **HTTP:** `api/mod.rs` via `keel serve` on `127.0.0.1:7645`:
   `GET /health`, `GET /symbol/{name}`, `GET /insights` (embedded dashboard),
-  `GET /api/insights` (JSON). CLI output is `path:line:col` (1-based),
+  `GET /api/insights` (JSON). `keel insights [--port N]` auto-starts a
+  background `serve` (free-port fallback, reuse via `.keel/insights.port`,
+  adopts a hand-started serve for the same project, alias `insight`,
+  `KEEL_NO_BROWSER=1` skips browser). CLI output is `path:line:col` (1-based),
   tab-separated, deterministic; all four hit commands share
   `path:line:col⇥kind⇥name` via `cli::commands::format_{symbol,reference}_hit`.
 - **Insights telemetry:** `usage.rs` appends one JSON object per query to

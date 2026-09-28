@@ -453,6 +453,287 @@ pub fn run_serve(port: u16, auto_index: bool) -> Result<()> {
     api::serve(&addr, &db_path(), auto_index)
 }
 
+/// Marker file recording the background Insights server (`<port> [<pid>]`).
+const INSIGHTS_PORT_FILE: &str = "insights.port";
+/// Where the background Insights server's stderr goes.
+const INSIGHTS_LOG_FILE: &str = "insights.log";
+/// Env var suppressing the browser launch (`1`/`true`).
+const NO_BROWSER_ENV: &str = "KEEL_NO_BROWSER";
+
+/// Open the Insights dashboard, starting a background server when needed.
+///
+/// Reuses the server recorded in `./.keel/insights.port` when it still
+/// answers `/health`, else adopts a hand-started `keel serve` on `preferred`
+/// when it serves this project; otherwise binds `preferred` (a free port is
+/// picked when it is busy, `0` means any free port), spawns a detached
+/// `keel serve`, waits for `/health`, and opens the dashboard in the default
+/// browser. `json` prints `{"url","port","pid","reused"}` instead of opening
+/// a browser.
+pub fn run_insights(preferred: u16, auto_index: bool, json: bool) -> Result<()> {
+    let dir = Path::new(DB_DIR);
+    let port_file = dir.join(INSIGHTS_PORT_FILE);
+    if let Some((port, pid)) = read_insights_addr(&port_file) {
+        if server_healthy(port) {
+            return finish_insights(port, pid, true, json);
+        }
+    }
+    std::fs::create_dir_all(dir).map_err(|source| KeelError::Io {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    // A `keel serve` the user started by hand is just as good: adopt it when
+    // it serves this project instead of spawning a second server. (A server
+    // for a *different* project is left alone; we spawn our own below.)
+    if preferred != 0 {
+        if let Some(root) = server_project_root(preferred) {
+            if same_project(&root) {
+                let _ = std::fs::write(&port_file, preferred.to_string());
+                return finish_insights(preferred, None, true, json);
+            }
+        }
+    }
+    // Retry: the probed port can be stolen before the child binds it.
+    let mut last_err = String::from("no attempt made");
+    for _ in 0..3 {
+        let port = pick_free_port(preferred)?;
+        let mut child = match spawn_insights_server(port, auto_index, dir) {
+            Ok(child) => child,
+            Err(e) => {
+                last_err = e.to_string();
+                continue;
+            }
+        };
+        if wait_for_health(port, std::time::Duration::from_secs(15)) {
+            let pid = child.id();
+            std::fs::write(&port_file, format!("{port} {pid}")).map_err(|source| {
+                KeelError::Io {
+                    path: port_file.clone(),
+                    source,
+                }
+            })?;
+            return finish_insights(port, Some(pid), false, json);
+        }
+        last_err = format!("server on port {port} never answered /health");
+        let _ = child.kill();
+    }
+    Err(KeelError::Watch(format!(
+        "could not start Insights server ({last_err}); see {DB_DIR}/{INSIGHTS_LOG_FILE}"
+    )))
+}
+
+/// Parse an insights marker file (`<port> [<pid>]`); `None` when missing/garbled.
+fn read_insights_addr(path: &Path) -> Option<(u16, Option<u32>)> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut parts = text.split_whitespace();
+    let port = parts.next()?.parse::<u16>().ok()?;
+    if port == 0 {
+        return None;
+    }
+    let pid = parts.next().and_then(|p| p.parse::<u32>().ok());
+    Some((port, pid))
+}
+
+/// `preferred` when it is free, else any free loopback port (`0` = any).
+fn pick_free_port(preferred: u16) -> Result<u16> {
+    use std::net::TcpListener;
+    if preferred != 0
+        && TcpListener::bind(format!("127.0.0.1:{preferred}"))
+            .is_ok()
+    {
+        return Ok(preferred);
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|source| KeelError::Io {
+        path: PathBuf::from("127.0.0.1:0"),
+        source,
+    })?;
+    listener
+        .local_addr()
+        .map(|addr| addr.port())
+        .map_err(|source| KeelError::Io {
+            path: PathBuf::from("127.0.0.1:0"),
+            source,
+        })
+}
+
+/// Spawn a detached `keel serve --port <port>`; stderr goes to the insights log.
+fn spawn_insights_server(
+    port: u16,
+    auto_index: bool,
+    dir: &Path,
+) -> Result<std::process::Child> {
+    use std::process::{Command, Stdio};
+    let exe = std::env::current_exe().map_err(|source| KeelError::Io {
+        path: PathBuf::from("keel"),
+        source,
+    })?;
+    let log_path = dir.join(INSIGHTS_LOG_FILE);
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|source| KeelError::Io {
+            path: log_path,
+            source,
+        })?;
+    let mut cmd = Command::new(exe);
+    cmd.arg("serve").arg("--port").arg(port.to_string());
+    if !auto_index {
+        cmd.arg("--no-auto-index");
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(log)
+        .spawn()
+        .map_err(|source| KeelError::Io {
+            path: PathBuf::from("keel serve"),
+            source,
+        })
+}
+
+/// Raw `GET <path>` against a loopback `port`: `(status, body)`.
+///
+/// `None` on any transport failure. Reads are bounded (1 MiB) so a foreign
+/// endless stream on the port cannot hang the caller.
+fn http_get(port: u16, path: &str) -> Option<(u16, String)> {
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::Duration;
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(300)).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .ok()?;
+    let req = format!("GET {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    stream.write_all(req.as_bytes()).ok()?;
+    let mut raw = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => raw.extend_from_slice(&chunk[..n]),
+            Err(_) => break,
+        }
+        if raw.len() > 1024 * 1024 {
+            break;
+        }
+    }
+    let text = String::from_utf8_lossy(&raw);
+    let status = text
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok())?;
+    let body = text.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+    Some((status, body))
+}
+
+/// True when a Keel server answers `/health` on `port` (200 + `"ok"` body).
+fn server_healthy(port: u16) -> bool {
+    matches!(http_get(port, "/health"), Some((200, body)) if body.contains("\"ok\""))
+}
+
+/// Project root served by the Keel server on `port` (`None` when not Keel).
+fn server_project_root(port: u16) -> Option<PathBuf> {
+    let (status, body) = http_get(port, "/api/insights")?;
+    if status != 200 {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(&body).ok()?;
+    value
+        .get("project")?
+        .get("root")?
+        .as_str()
+        .map(PathBuf::from)
+}
+
+/// True when `root` is the current project (both sides canonicalized).
+fn same_project(root: &Path) -> bool {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    match (cwd.canonicalize(), root.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Poll `/health` until it answers or `timeout` elapses.
+fn wait_for_health(port: u16, timeout: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if server_healthy(port) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    server_healthy(port)
+}
+
+/// True when `KEEL_NO_BROWSER=1`/`true` (headless use, tests).
+fn browser_suppressed() -> bool {
+    std::env::var(NO_BROWSER_ENV)
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Open `url` in the default browser (best-effort; skipped when suppressed).
+fn open_browser(url: &str) -> Result<()> {
+    if browser_suppressed() {
+        return Ok(());
+    }
+    let (prog, extra): (&str, &[&str]) = if cfg!(target_os = "macos") {
+        ("open", &[])
+    } else if cfg!(target_os = "windows") {
+        ("cmd", &["/C", "start", ""])
+    } else {
+        ("xdg-open", &[])
+    };
+    let mut cmd = std::process::Command::new(prog);
+    cmd.args(extra).arg(url);
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let status = cmd.status().map_err(|source| KeelError::Io {
+        path: PathBuf::from(prog),
+        source,
+    })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(KeelError::Watch(format!("{prog} exited with {status}")))
+    }
+}
+
+/// Report the dashboard URL: JSON shape in `json` mode, else browser + hints.
+fn finish_insights(port: u16, pid: Option<u32>, reused: bool, json: bool) -> Result<()> {
+    let url = format!("http://127.0.0.1:{port}/insights");
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({"url": url, "port": port, "pid": pid, "reused": reused})
+        );
+        return Ok(());
+    }
+    if reused {
+        if pid.is_some() {
+            println!("Reusing running Insights server on {url}");
+        } else {
+            println!("Reusing already-running Keel server on {url}");
+        }
+    } else {
+        println!("Insights dashboard on {url}");
+    }
+    if let Err(e) = open_browser(&url) {
+        eprintln!("Could not open a browser ({e}); open the URL above manually.");
+    }
+    if let Some(pid) = pid {
+        if cfg!(target_os = "windows") {
+            println!("Background server pid {pid}; stop it with: taskkill /PID {pid} /F");
+        } else {
+            println!("Background server pid {pid}; stop it with: kill {pid}");
+        }
+    }
+    Ok(())
+}
+
 /// Serve the MCP stdio server against the best available index.
 ///
 /// Resolution: `KEEL_INDEX_DB` if set; otherwise walk up from cwd for
@@ -698,6 +979,123 @@ mod tests {
 
         std::env::remove_var("KEEL_HOME");
         std::env::remove_var("KEEL_DAEMON_PORT");
+    }
+
+    #[test]
+    fn pick_free_port_prefers_free_preferred() {
+        use std::net::TcpListener;
+        let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        assert_eq!(pick_free_port(port).unwrap(), port);
+    }
+
+    #[test]
+    fn pick_free_port_skips_busy_port() {
+        use std::net::TcpListener;
+        let busy = TcpListener::bind("127.0.0.1:0").unwrap();
+        let busy_port = busy.local_addr().unwrap().port();
+        let picked = pick_free_port(busy_port).unwrap();
+        assert_ne!(picked, busy_port);
+        // The fallback must itself be free.
+        assert!(TcpListener::bind(format!("127.0.0.1:{picked}")).is_ok());
+        drop(busy);
+    }
+
+    #[test]
+    fn server_healthy_rejects_dead_port() {
+        use std::net::TcpListener;
+        let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        assert!(!server_healthy(port));
+    }
+
+    #[test]
+    fn server_healthy_accepts_keel_health() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut req = [0u8; 512];
+            let _ = stream.read(&mut req);
+            let body = r#"{"status":"ok"}"#;
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            );
+        });
+        assert!(server_healthy(port));
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn server_project_root_reads_payload_root() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut req = [0u8; 512];
+            let _ = stream.read(&mut req);
+            let body = r#"{"project":{"root":"/tmp/some-project"}}"#;
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            );
+        });
+        assert_eq!(
+            server_project_root(port),
+            Some(PathBuf::from("/tmp/some-project"))
+        );
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn server_project_root_rejects_dead_port() {
+        use std::net::TcpListener;
+        let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        assert_eq!(server_project_root(port), None);
+    }
+
+    #[test]
+    fn same_project_matches_cwd_only() {
+        let cwd = std::env::current_dir().unwrap();
+        assert!(same_project(&cwd));
+        let elsewhere = tempfile::tempdir().unwrap();
+        assert!(!same_project(elsewhere.path()));
+    }
+
+    #[test]
+    fn open_browser_suppressed_by_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("KEEL_NO_BROWSER", "1");
+        let result = open_browser("http://example.invalid/");
+        std::env::remove_var("KEEL_NO_BROWSER");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn read_insights_addr_parses_port_and_pid() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("insights.port");
+        std::fs::write(&path, "7645 1234").unwrap();
+        assert_eq!(read_insights_addr(&path), Some((7645, Some(1234))));
+        std::fs::write(&path, "7645").unwrap();
+        assert_eq!(read_insights_addr(&path), Some((7645, None)));
+        std::fs::write(&path, "garbage").unwrap();
+        assert_eq!(read_insights_addr(&path), None);
     }
 
     #[test]

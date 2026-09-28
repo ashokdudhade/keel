@@ -290,15 +290,20 @@ keel watch [path]    # foreground re-index on file changes
 ## Local JSON API + Insights (optional)
 
 ```bash
-keel serve --port 7645
+keel insights              # start server if needed, open dashboard in browser
+keel serve --port 7645     # ...or run the server in the foreground yourself
 curl http://127.0.0.1:7645/health
 curl http://127.0.0.1:7645/symbol/AuthService
 ```
 
-Open http://127.0.0.1:7645/insights for the dashboard: index health,
-per-surface usage, confidence mix, miss recovery, and recent queries, all
-from local `.keel/usage.jsonl` (rotation-capped; `KEEL_NO_USAGE_LOG=1` opts
-out). Binds to `127.0.0.1` only by default.
+`keel insights` (alias: `keel insight`) reuses a running Keel server for
+the project when there is one — including a hand-started `keel serve` —
+otherwise binds `--port` (default 7645, a free port is picked when busy)
+and opens the dashboard: index health, per-surface usage, confidence mix,
+miss recovery, and recent queries, all from local `.keel/usage.jsonl`
+(rotation-capped; `KEEL_NO_USAGE_LOG=1` opts out). `KEEL_NO_BROWSER=1`
+skips the browser launch; `--json` prints `{"url","port","pid","reused"}`.
+Binds to `127.0.0.1` only by default.
 
 ## Troubleshooting
 

@@ -78,7 +78,7 @@ pub enum Commands {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
-    /// Set up this project: register with the daemon and print MCP config.
+    /// Set up this project: index now and print MCP config.
     Init {
         /// Path to the repository (default: current directory).
         #[arg(default_value = ".")]
@@ -102,6 +102,13 @@ pub enum Commands {
     /// Serve the JSON HTTP API (`GET /symbol/{name}`, `GET /health`).
     Serve {
         /// TCP port to listen on (default 7645).
+        #[arg(long, default_value_t = 7645)]
+        port: u16,
+    },
+    /// Open the Insights dashboard (starts a background server if needed).
+    #[command(visible_alias = "insight")]
+    Insights {
+        /// Preferred TCP port; a free port is picked when busy (0 = any free port).
         #[arg(long, default_value_t = 7645)]
         port: u16,
     },

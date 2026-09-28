@@ -191,6 +191,10 @@ fn main() -> Result<()> {
         Commands::Serve { port } => {
             commands::run_serve(port, auto_index).context("serving JSON API")?;
         }
+        Commands::Insights { port } => {
+            commands::run_insights(port, auto_index, json)
+                .context("opening Insights dashboard")?;
+        }
         Commands::Mcp => {
             commands::run_mcp(auto_index).context("serving MCP")?;
         }
