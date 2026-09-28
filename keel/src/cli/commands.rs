@@ -258,13 +258,25 @@ pub fn run_doctor(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// One-shot project setup: register with the daemon, then print MCP config.
+/// One-shot project setup: index now, then print MCP config.
 ///
-/// The global daemon must already run (once per machine); this only fails
-/// fast with the start command when it doesn't.
+/// Never needs the daemon: when one is already running the project is also
+/// registered for live watching, otherwise a hint explains the follow-up.
+/// (Indexing via [`run_index`] also creates `.keel/` and covers gitignore.)
 pub fn run_init(path: &Path) -> Result<()> {
-    crate::daemon::client_start_project(path)?;
-    let _ = ensure_gitignored(path);
+    let stats = run_index(path)?;
+    println!(
+        "Indexed {} file(s) (skipped {}, removed {}, errors {}).",
+        stats.indexed, stats.skipped, stats.removed, stats.errors
+    );
+    if crate::daemon::daemon_reachable() {
+        crate::daemon::client_start_project(path)?;
+    } else {
+        println!(
+            "keel daemon is not running; for live re-indexing, start it with `{}` then run `keel start`.",
+            crate::daemon::daemon_start_hint()
+        );
+    }
     let exe = std::env::current_exe().map_err(|source| KeelError::Io {
         path: PathBuf::from("keel"),
         source,
@@ -673,17 +685,16 @@ mod tests {
     }
 
     #[test]
-    fn init_fails_fast_without_daemon() {
+    fn init_succeeds_without_daemon() {
         let _guard = ENV_LOCK.lock().unwrap();
         let home = tempfile::tempdir().unwrap();
         isolate_daemon(&home.path().join("keel-home"));
         let proj = tempfile::tempdir().unwrap();
+        std::fs::write(proj.path().join("main.py"), "X = 1\n").unwrap();
 
-        let err = run_init(proj.path()).unwrap_err();
-        assert!(
-            err.to_string().contains("keel daemon is not running"),
-            "unexpected error: {err}"
-        );
+        run_init(proj.path()).unwrap();
+
+        assert!(proj.path().join(".keel").join("index.db").exists());
 
         std::env::remove_var("KEEL_HOME");
         std::env::remove_var("KEEL_DAEMON_PORT");

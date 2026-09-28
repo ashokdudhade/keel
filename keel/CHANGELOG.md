@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/api/insights` (JSON) with index health, usage rollups, confidence mix,
   miss recovery, and recent queries. Per-project `.keel/usage.jsonl` event
   log (5 MiB rotation, `KEEL_NO_USAGE_LOG=1` opt-out, local only).
-- `keel init` (register + print paste-ready MCP config), `keel doctor`
+- `keel init` (index now + print paste-ready MCP config; works without the
+  daemon, registers for live watching when one runs), `keel doctor`
   (daemon/project/index health), `keel daemon-stop`, and `--version`.
 - Miss recovery: empty results suggest near-matches
   (`Did you mean …?`) across CLI/MCP/JSON; case-only misses recover.

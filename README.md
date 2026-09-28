@@ -261,7 +261,7 @@ src/auth/service.rs:12:12	struct	AuthService
 ```bash
 brew services start keel   # global daemon (Homebrew)
 keel daemon                # global daemon (curl / foreground)
-keel init [path]           # one-shot setup: register + print MCP config
+keel init [path]           # one-shot setup: index now + print MCP config (no daemon needed)
 keel start [path]          # register this project (index + watch)
 keel stop                  # unregister this project only
 keel status                # daemon + this project

@@ -92,7 +92,7 @@ unreleased 1.4.0 work below is implemented but uncommitted — verify with `git 
   Emission sites: 6 CLI branches, 6 MCP arms, 1 HTTP aggregate; in-memory DBs
   skip. Reference kinds: Call/Macro/Method/Type/Path/**Value** (bare
   identifiers in args/annotations/bases; Python+TS+JS capture these).
-- **Onboarding commands:** `keel init` (register + MCP config print),
+- **Onboarding commands:** `keel init` (index now + MCP config print; no daemon needed),
   `keel doctor` (version/daemon/project/index checks), `keel daemon-stop`,
   `--version`. `keel index/watch <path>` write to `<path>/.keel/`; daemon pids
   are validated before signaling (`valid_pid`).
