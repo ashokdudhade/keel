@@ -6,7 +6,7 @@
 //! Handles `.py` and `.pyi`. Class bases are recorded as trait
 //! implementations (`extract_impls` walks `class_definition` bases).
 
-use super::{file_path_key, LanguagePlugin};
+use super::{file_path_key, DepthGuard, LanguagePlugin, WalkBudget, MAX_WALK_DEPTH};
 use crate::error::{Result, KeelError};
 use crate::graph::types::{ImplRecord, Import, Reference, ReferenceKind, Symbol, SymbolKind};
 use std::path::{Path, PathBuf};
@@ -40,7 +40,8 @@ impl LanguagePlugin for PythonPlugin {
         let src = source_code.as_bytes();
         let module_path = python_module_identity(path);
         let mut out = Vec::new();
-        walk_symbols(tree.root_node(), src, &module_path, true, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_symbols(tree.root_node(), src, &module_path, true, "", &mut out, &budget)?;
         Ok(out)
     }
 
@@ -51,6 +52,7 @@ impl LanguagePlugin for PythonPlugin {
         let module_path = python_module_identity(path);
         let mut scope: Vec<String> = Vec::new();
         let mut out = Vec::new();
+        let budget = WalkBudget::new();
         walk_references(
             tree.root_node(),
             src,
@@ -58,6 +60,7 @@ impl LanguagePlugin for PythonPlugin {
             &module_path,
             &mut scope,
             &mut out,
+            &budget,
         )?;
         Ok(out)
     }
@@ -66,7 +69,8 @@ impl LanguagePlugin for PythonPlugin {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
-        walk_imports(tree.root_node(), src, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_imports(tree.root_node(), src, &mut out, &budget)?;
         for imp in &mut out {
             imp.module_path = resolve_python_import_module(path, &imp.module_path);
         }
@@ -77,7 +81,8 @@ impl LanguagePlugin for PythonPlugin {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
-        walk_impls(tree.root_node(), src, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_impls(tree.root_node(), src, &mut out, &budget)?;
         Ok(out)
     }
 }
@@ -88,7 +93,14 @@ impl LanguagePlugin for PythonPlugin {
 /// (`Base[int]` → `Base`, matching the TS/Rust rule). Keyword arguments
 /// (`metaclass=M`) and dotted bases (`mod.Base`, including `mod.Base[T]`)
 /// are skipped, matching the direct-only rule used for arguments elsewhere.
-fn walk_impls(node: Node, src: &[u8], out: &mut Vec<ImplRecord>) -> Result<()> {
+fn walk_impls(
+    node: Node,
+    src: &[u8],
+    out: &mut Vec<ImplRecord>,
+    budget: &WalkBudget,
+) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     if node.kind() == "class_definition" {
         if let Some(name) = node.child_by_field_name("name") {
             if name.kind() == "identifier" {
@@ -113,7 +125,7 @@ fn walk_impls(node: Node, src: &[u8], out: &mut Vec<ImplRecord>) -> Result<()> {
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_impls(child, src, out)?;
+        walk_impls(child, src, out, budget)?;
     }
     Ok(())
 }
@@ -160,24 +172,35 @@ fn walk_symbols(
     src: &[u8],
     module_path: &str,
     module_scope: bool,
+    container: &str,
     out: &mut Vec<Symbol>,
+    budget: &WalkBudget,
 ) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     match node.kind() {
         "function_definition" => {
-            emit_named_symbol(node, SymbolKind::Function, module_path, out, src)?;
+            emit_named_symbol(
+                node,
+                SymbolKind::Function,
+                module_path,
+                container,
+                out,
+                src,
+            )?;
             // Nested functions are still walked via children.
         }
         "class_definition" => {
-            emit_named_symbol(node, SymbolKind::Struct, module_path, out, src)?;
+            emit_named_symbol(node, SymbolKind::Struct, module_path, container, out, src)?;
         }
         "assignment" if module_scope => {
-            emit_module_variable(node, module_path, out, src)?;
+            emit_module_variable(node, module_path, container, out, src)?;
         }
         // Class attributes are `field` symbols: plain bindings directly
         // under a class body (covering dataclass fields and enum
         // members) and `self`/`cls` attribute writes in methods.
         "assignment" if !module_scope => {
-            emit_field_symbol(node, module_path, out, src)?;
+            emit_field_symbol(node, module_path, container, out, src)?;
         }
         "decorated_definition" => {
             // Walk into the wrapped definition; do not treat decorator as scope.
@@ -189,10 +212,22 @@ fn walk_symbols(
         "function_definition" | "class_definition" => false,
         _ => module_scope,
     };
+    // Members of a class body carry the class name as their container;
+    // anything else inherits the enclosing container unchanged.
+    let owned: Option<String> = match node.kind() {
+        "class_definition" => match node.child_by_field_name("name") {
+            Some(name) if name.kind() == "identifier" => {
+                Some(node_text(name, src)?.to_string())
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    let next_container = owned.as_deref().unwrap_or(container);
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_symbols(child, src, module_path, next_module_scope, out)?;
+        walk_symbols(child, src, module_path, next_module_scope, next_container, out, budget)?;
     }
     Ok(())
 }
@@ -200,6 +235,7 @@ fn walk_symbols(
 fn emit_module_variable(
     node: Node,
     module_path: &str,
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
@@ -219,7 +255,7 @@ fn emit_module_variable(
     } else {
         SymbolKind::Other("variable".into())
     };
-    push_symbol(left, kind, module_path, out, src)
+    push_symbol(left, kind, module_path, container, out, src)
 }
 
 fn is_constant_like(name: &str) -> bool {
@@ -236,6 +272,7 @@ fn is_constant_like(name: &str) -> bool {
 fn emit_field_symbol(
     node: Node,
     module_path: &str,
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
@@ -244,7 +281,14 @@ fn emit_field_symbol(
     };
     if left.kind() == "identifier" {
         if is_direct_class_body_statement(node) {
-            push_symbol(left, SymbolKind::Other("field".into()), module_path, out, src)?;
+            push_symbol(
+                left,
+                SymbolKind::Other("field".into()),
+                module_path,
+                container,
+                out,
+                src,
+            )?;
         }
         return Ok(());
     }
@@ -266,7 +310,14 @@ fn emit_field_symbol(
     }
     if let Some(attr) = left.child_by_field_name("attribute") {
         if attr.kind() == "identifier" {
-            push_symbol(attr, SymbolKind::Other("field".into()), module_path, out, src)?;
+            push_symbol(
+                attr,
+                SymbolKind::Other("field".into()),
+                module_path,
+                container,
+                out,
+                src,
+            )?;
         }
     }
     Ok(())
@@ -291,12 +342,13 @@ fn emit_named_symbol(
     node: Node,
     kind: SymbolKind,
     module_path: &str,
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
     if let Some(name) = node.child_by_field_name("name") {
         if name.kind() == "identifier" {
-            push_symbol(name, kind, module_path, out, src)?;
+            push_symbol(name, kind, module_path, container, out, src)?;
         }
     }
     Ok(())
@@ -306,6 +358,7 @@ fn push_symbol(
     name_node: Node,
     kind: SymbolKind,
     module_path: &str,
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
@@ -318,6 +371,7 @@ fn push_symbol(
         start_line: pos.row as u32 + 1,
         start_col: pos.column as u32 + 1,
         module_path: module_path.to_string(),
+        container: container.to_string(),
     });
     Ok(())
 }
@@ -329,7 +383,10 @@ fn walk_references(
     module_path: &str,
     scope: &mut Vec<String>,
     out: &mut Vec<Reference>,
+    budget: &WalkBudget,
 ) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     match node.kind() {
         "function_definition" | "class_definition" => {
             if let Some(name) = node.child_by_field_name("name") {
@@ -338,7 +395,7 @@ fn walk_references(
                     scope.push(text.to_string());
                     let mut cursor = node.walk();
                     for child in node.children(&mut cursor) {
-                        walk_references(child, src, file_key, module_path, scope, out)?;
+                        walk_references(child, src, file_key, module_path, scope, out, budget)?;
                     }
                     scope.pop();
                     return Ok(());
@@ -392,7 +449,7 @@ fn walk_references(
         // definition. Children are walked under the decorated name so
         // call-form decorators (`@app.route("/x")`) attribute there too.
         "decorator" => {
-            if emit_decorator_reference(node, src, file_key, module_path, scope, out)? {
+            if emit_decorator_reference(node, src, file_key, module_path, scope, out, budget)? {
                 return Ok(());
             }
         }
@@ -531,7 +588,7 @@ fn walk_references(
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_references(child, src, file_key, module_path, scope, out)?;
+        walk_references(child, src, file_key, module_path, scope, out, budget)?;
     }
     Ok(())
 }
@@ -716,6 +773,7 @@ fn emit_decorator_reference(
     module_path: &str,
     scope: &mut Vec<String>,
     out: &mut Vec<Reference>,
+    budget: &WalkBudget,
 ) -> Result<bool> {
     let mut cursor = decorator.walk();
     let Some(expr) = decorator.children(&mut cursor).find(|c| c.is_named()) else {
@@ -737,7 +795,7 @@ fn emit_decorator_reference(
         // the `call`/`argument_list` arms attribute it there.
         let mut inner = decorator.walk();
         for child in decorator.children(&mut inner) {
-            walk_references(child, src, file_key, module_path, scope, out)?;
+            walk_references(child, src, file_key, module_path, scope, out, budget)?;
         }
     } else {
         emit_call_reference(expr, src, file_key, module_path, scope, out)?;
@@ -1143,7 +1201,14 @@ fn push_method_reference(
     });
 }
 
-fn walk_imports(node: Node, src: &[u8], out: &mut Vec<Import>) -> Result<()> {
+fn walk_imports(
+    node: Node,
+    src: &[u8],
+    out: &mut Vec<Import>,
+    budget: &WalkBudget,
+) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     match node.kind() {
         "import_statement" => emit_import_statement(node, src, out)?,
         "import_from_statement" => emit_import_from(node, src, out)?,
@@ -1152,20 +1217,20 @@ fn walk_imports(node: Node, src: &[u8], out: &mut Vec<Import>) -> Result<()> {
             emit_loader_import(node, src, out)?;
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                walk_imports(child, src, out)?;
+                walk_imports(child, src, out, budget)?;
             }
         }
         "call" => {
             emit_bare_loader_import(node, src, out)?;
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                walk_imports(child, src, out)?;
+                walk_imports(child, src, out, budget)?;
             }
         }
         _ => {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                walk_imports(child, src, out)?;
+                walk_imports(child, src, out, budget)?;
             }
         }
     }
@@ -1543,6 +1608,23 @@ def run():
 
     fn test_path() -> &'static Path {
         Path::new("pkg/auth/service.py")
+    }
+
+    #[test]
+    fn member_symbols_carry_enclosing_class_container() {
+        let plugin = PythonPlugin;
+        let syms = plugin
+            .extract_symbols(
+                test_path(),
+                "def top():\n    pass\n\nclass Store:\n    limit = 3\n    def save(self):\n        self.count = 1\n",
+            )
+            .unwrap();
+        let find = |n: &str| syms.iter().find(|s| s.name == n).cloned();
+        assert_eq!(find("top").unwrap().container, "");
+        assert_eq!(find("Store").unwrap().container, "");
+        assert_eq!(find("save").unwrap().container, "Store");
+        assert_eq!(find("limit").unwrap().container, "Store");
+        assert_eq!(find("count").unwrap().container, "Store");
     }
 
     #[test]

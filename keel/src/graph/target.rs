@@ -2,6 +2,7 @@
 
 use crate::db::queries;
 use crate::error::Result;
+use crate::graph::types::Symbol;
 use rusqlite::{params, Connection, OptionalExtension};
 
 /// Files and optional preferred module identity for a query target.
@@ -13,6 +14,94 @@ pub struct ResolvedTarget {
     pub preferred_module: Option<String>,
 }
 
+/// Split a member-qualified name (`C.method`) into `(container, member)`.
+///
+/// Only a single trailing `.` segment qualifies: the head must be one
+/// identifier (no further `.` or `::`), and both sides must be non-empty.
+/// Anything else (bare names, `a.b.c`, `m::C.method`) returns `None` and
+/// keeps the existing lookup behavior.
+pub fn split_member_name(name: &str) -> Option<(&str, &str)> {
+    let (head, member) = name.rsplit_once('.')?;
+    if head.is_empty() || member.is_empty() {
+        return None;
+    }
+    if head.contains(['.', ':']) || member.contains(['.', ':']) {
+        return None;
+    }
+    Some((head, member))
+}
+
+/// Lexically normalize a path (`./`, `a/../b`) without touching the fs.
+///
+/// Bails out (returns `raw`) when `..` would escape past the start.
+pub(crate) fn clean_path(raw: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    let absolute = raw.starts_with('/');
+    let normalized = raw.replace('\\', "/");
+    for comp in normalized.split('/') {
+        match comp {
+            "" | "." => {}
+            ".." => {
+                if parts.pop().is_none() {
+                    return raw.to_string();
+                }
+            }
+            c => parts.push(c),
+        }
+    }
+    let mut out = parts.join("/");
+    if absolute {
+        out.insert(0, '/');
+    }
+    out
+}
+
+
+/// Resolve a target to the indexed file: exact match, then (for filey
+/// targets only) lexically-cleaned match, then a UNIQUE suffix match in
+/// either direction — a longer spelling (`../../x.py`, absolute paths)
+/// ending at an indexed row, or a bare basename (`l.py` from a subdir)
+/// ending an indexed path.
+///
+/// Pure extensionless identifiers pass through untouched. Ambiguous
+/// suffixes resolve to nothing (callers keep trying later acceptance
+/// steps or miss honestly). Both directions require a `/` boundary, so
+/// dotted modules and member queries can only hit when a real indexed
+/// file is literally named that way (their own resolution steps also
+/// run first and win).
+pub(crate) fn resolve_file_target(conn: &Connection, raw: &str) -> Result<Option<String>> {
+    let files = queries::indexed_files(conn)?;
+    if files.iter().any(|f| f == raw) {
+        return Ok(Some(raw.to_string()));
+    }
+    // Cleaned/suffix matching only for filey targets: a slash, or a dot
+    // (an extension — pure identifiers stay out).
+    if !raw.contains(['/', '\\', '.']) {
+        return Ok(None);
+    }
+    let cleaned = clean_path(raw);
+    if cleaned != raw && files.iter().any(|f| f == &cleaned) {
+        return Ok(Some(cleaned));
+    }
+    let norm_raw = raw.replace('\\', "/");
+    let mut hits = files.iter().filter(|f| {
+        let norm_file = f.replace('\\', "/");
+        suffix_hit(&norm_raw, &norm_file) || suffix_hit(&norm_file, &norm_raw)
+    });
+    match (hits.next(), hits.next()) {
+        (Some(only), None) => Ok(Some(only.clone())),
+        _ => Ok(None),
+    }
+}
+
+/// True when the longer of two normalized paths ends at the shorter on a
+/// `/` boundary (exact equality excluded — the caller tries that first).
+fn suffix_hit(longer: &str, shorter: &str) -> bool {
+    longer.len() > shorter.len()
+        && longer.ends_with(shorter)
+        && longer.as_bytes()[longer.len() - shorter.len() - 1] == b'/'
+}
+
 /// Resolve `target` to indexed files.
 ///
 /// Acceptance order:
@@ -22,8 +111,12 @@ pub struct ResolvedTarget {
 ///    Beats directory: TypeScript modules like `src/auth` are slashy
 ///    but exact.
 /// 3. Directory prefix over indexed files (`src/graph`, trailing `/` ok)
-/// 4. Qualified symbol (`module::…::name`, e.g. `crate::mcp::serve`)
-/// 5. Symbol name definitions
+/// 4. Suffix-tolerant file (`../../x.py`, absolute paths, bare basenames
+///    from subdirs; unique only)
+/// 5. Qualified symbol (`module::…::name`, e.g. `crate::mcp::serve`;
+///    single-segment `Type::member` falls back to member lookup)
+/// 6. Member symbol (`Type.member`)
+/// 7. Symbol name definitions
 pub fn normalize_target(conn: &Connection, target: &str) -> Result<ResolvedTarget> {
     if file_indexed(conn, target)? {
         let modules = queries::module_paths_in_file(conn, target)?;
@@ -67,6 +160,17 @@ pub fn normalize_target(conn: &Connection, target: &str) -> Result<ResolvedTarge
         });
     }
 
+    // Suffix-tolerant file match (`../../x.py`, absolute paths, bare
+    // basenames from subdirs): runs after module/dir steps so slashy
+    // module names keep precedence.
+    if let Some(file) = resolve_file_target(conn, target)? {
+        let modules = queries::module_paths_in_file(conn, &file)?;
+        return Ok(ResolvedTarget {
+            files: vec![file],
+            preferred_module: preferred_module_from_list(&modules),
+        });
+    }
+
     if let Some((module, bare)) = target.rsplit_once("::") {
         let qualified = queries::find_definition_by_qualified(conn, module, bare)?;
         if !qualified.is_empty() {
@@ -83,21 +187,44 @@ pub fn normalize_target(conn: &Connection, target: &str) -> Result<ResolvedTarge
                 preferred_module: Some(module.to_string()),
             });
         }
+        // Single-segment `Type::member`: retry as a member lookup, like
+        // `definition` (module paths win ties by trying first).
+        if !module.is_empty() && !bare.is_empty() && !module.contains("::") {
+            let members = queries::find_definition_by_container(conn, module, bare)?;
+            if !members.is_empty() {
+                return Ok(files_for_symbols(&members));
+            }
+        }
+    }
+
+    // Member-qualified symbols (`Type.member`): the defining files of
+    // that member only, so same-named members in other files stay out.
+    if let Some((container, sym)) = split_member_name(target) {
+        let members = queries::find_definition_by_container(conn, container, sym)?;
+        if !members.is_empty() {
+            return Ok(files_for_symbols(&members));
+        }
     }
 
     let defs = queries::find_definition(conn, target)?;
+    Ok(files_for_symbols(&defs))
+}
+
+/// Target from symbol hits: sorted de-duplicated defining files plus the
+/// unique module when all hits agree.
+fn files_for_symbols(defs: &[Symbol]) -> ResolvedTarget {
     let mut files = Vec::new();
-    for d in &defs {
+    for d in defs {
         let path = d.file.to_string_lossy().into_owned();
         if !files.contains(&path) {
             files.push(path);
         }
     }
     files.sort();
-    Ok(ResolvedTarget {
-        preferred_module: unique_module_from_symbols(&defs),
+    ResolvedTarget {
+        preferred_module: unique_module_from_symbols(defs),
         files,
-    })
+    }
 }
 
 /// Indexed files under `target` when it names a directory (trailing `/` and
@@ -258,10 +385,109 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate::mcp".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
         conn
+    }
+
+    #[test]
+    fn normalize_accepts_member_qualified_symbol() {
+        let conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        for (path, container, line) in [
+            ("a.py", "Alpha", 2),
+            ("b.py", "Beta", 2),
+        ] {
+            let id = queries::insert_file(
+                &conn,
+                &FileNode {
+                    path: PathBuf::from(path),
+                    content_hash: "h".into(),
+                },
+            )
+            .unwrap();
+            queries::insert_symbols(
+                &conn,
+                id,
+                &[Symbol {
+                    name: "save".into(),
+                    kind: SymbolKind::Function,
+                    file: PathBuf::new(),
+                    start_line: line,
+                    start_col: 5,
+                    module_path: path.strip_suffix(".py").unwrap().into(),
+                    container: container.into(),
+                }],
+            )
+            .unwrap();
+        }
+
+        // Dotted member form resolves to the defining file only.
+        let dotted = normalize_target(&conn, "Alpha.save").unwrap();
+        assert_eq!(dotted.files, vec!["a.py".to_string()]);
+        assert_eq!(dotted.preferred_module.as_deref(), Some("a"));
+
+        // Single-segment `::` falls back to the member lookup.
+        let scoped = normalize_target(&conn, "Beta::save").unwrap();
+        assert_eq!(scoped.files, vec!["b.py".to_string()]);
+
+        // Bare names still cover every defining file.
+        let bare = normalize_target(&conn, "save").unwrap();
+        assert_eq!(bare.files, vec!["a.py".to_string(), "b.py".to_string()]);
+    }
+
+    #[test]
+    fn normalize_accepts_relative_and_absolute_file_paths() {
+        let conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        for path in ["src/a.py", "src/b.py"] {
+            queries::insert_file(
+                &conn,
+                &FileNode {
+                    path: PathBuf::from(path),
+                    content_hash: "h".into(),
+                },
+            )
+            .unwrap();
+        }
+
+        // Cwd-relative, absolute, and bare-basename spellings find the
+        // root-relative row.
+        for target in [
+            "../../src/a.py",
+            "./src/a.py",
+            "/repo/src/a.py",
+            "a.py",
+            "src/../src/a.py",
+        ] {
+            let got = normalize_target(&conn, target).unwrap();
+            assert_eq!(got.files, vec!["src/a.py".to_string()], "{target}");
+        }
+
+        // Ambiguous suffixes resolve to nothing (no guessing).
+        let conn2 = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn2).unwrap();
+        for path in ["x/dup.py", "y/dup.py"] {
+            queries::insert_file(
+                &conn2,
+                &FileNode {
+                    path: PathBuf::from(path),
+                    content_hash: "h".into(),
+                },
+            )
+            .unwrap();
+        }
+        let ambiguous = normalize_target(&conn2, "sub/dup.py").unwrap();
+        assert!(ambiguous.files.is_empty());
+        // Ambiguous bare basenames resolve to nothing too.
+        let ambiguous_bare = normalize_target(&conn2, "dup.py").unwrap();
+        assert!(ambiguous_bare.files.is_empty());
+
+        // Pure extensionless identifiers never take the suffix path.
+        let bare = normalize_target(&conn, "a").unwrap();
+        assert!(bare.files.is_empty());
     }
 
     #[test]

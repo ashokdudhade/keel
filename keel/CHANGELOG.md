@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- File targets are suffix-tolerant: `dependents`/`outline`/`unused` file
+  arguments accept cwd-relative (`../../x.py`), absolute, and bare-basename
+  (`l.py` from a subdir) spellings when exactly one indexed file matches,
+  so queries from subdirectories no longer miss honestly-resolvable files.
+  Matching runs after module/directory steps (slashy module names keep
+  precedence), requires a `/` boundary, and ambiguous tails still miss
+  honestly with "did you mean" suggestions. One shared resolver backs all
+  three commands, so they agree.
+- CLI queries resolve the project root upward: running from a subdirectory
+  reads (and auto-indexes) the nearest ancestor `.keel/index.db` instead of
+  stranding on a fresh empty index — and no longer litters subdirs with
+  stray `.keel/` dirs. Previews, usage log, and `serve` follow the same
+  root. Explicit-scope commands (`index`/`watch`/daemon) keep their given
+  path, and `KEEL_INDEX_DB`/registry stay MCP-only so a global export
+  can't hijack local queries.
+- Read-only index databases stay queryable: schema `initialize` no longer
+  opens a write transaction when the version is current, so pure reads
+  (and `--no-auto-index` queries) work on read-only files instead of
+  failing with a write error.
+- Indexing survives pathological nesting: parallel parsing runs on a
+  dedicated rayon pool with 64 MiB worker stacks (default 2 MiB stacks
+  overflowed on merely deep files in debug builds, aborting the whole
+  run), and every extraction walk enforces a 1024-level depth budget —
+  deeper files fail loudly per file (`nesting exceeds 1024 levels`)
+  instead of crashing the process. Deepest nesting observed across six
+  real repos is 89 levels, so the cap never trips in practice.
+- Symbol names, search patterns, and module filters are trimmed at the
+  CLI/MCP/HTTP boundaries, so padded input (`"serve "`) hits instead of
+  missing. File/dir paths and dependents/dependencies targets stay raw
+  (trailing whitespace can be significant there).
+- `dependents`/`dependencies` accept member targets (`Type.member` and
+  single-segment `Type::member`), resolving to the member's defining
+  files so same-named members elsewhere stay out (all surfaces: target
+  normalization is shared).
+- Member-qualified definition lookup: `definition` (CLI, MCP, and HTTP
+  `/symbol/`) accepts `Type.member`, resolving the member inside that
+  enclosing type; a single-segment `Type::member` falls back to the same
+  lookup when the module reading misses (module paths win ties, with a
+  note when the fallback fires). `search` (CLI, MCP, HTTP `/search/`)
+  resolves `Type.member` / single-segment `Type::member` the same way
+  but case-insensitively, matching substring search (`definition`
+  stays exact). Member symbols record their enclosing
+  class/struct/enum/trait/interface/impl-receiver in a new indexed
+  `symbols.container` column (schema v6, auto-migrated; one rebuild),
+  also exposed as `container` on JSON symbol hits. `/symbol/` now
+  resolves `::`-qualified names in its definition list too.
 - `index` remembers files that fail with a content hash (invalid UTF-8,
   extractor failures): unchanged bad files skip on later passes instead
   of re-printing the same error on every query. Editing the file retries

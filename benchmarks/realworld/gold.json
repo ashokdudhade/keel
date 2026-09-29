@@ -34,20 +34,24 @@
       "repo": "colinhacks-zod",
       "language": "TypeScript",
       "symbol": "ZodObject",
-      "note": "src + deno copies",
+      "note": "src + deno copies, incl. ZodFirstPartyTypeKind members",
       "definitions": [
         { "file": "src/types.ts", "line": 2412 },
-        { "file": "deno/lib/types.ts", "line": 2412 }
+        { "file": "src/types.ts", "line": 5132 },
+        { "file": "deno/lib/types.ts", "line": 2412 },
+        { "file": "deno/lib/types.ts", "line": 5132 }
       ]
     },
     {
       "repo": "colinhacks-zod",
       "language": "TypeScript",
       "symbol": "ZodString",
-      "note": "src + deno copies",
+      "note": "src + deno copies, incl. ZodFirstPartyTypeKind members",
       "definitions": [
         { "file": "src/types.ts", "line": 672 },
-        { "file": "deno/lib/types.ts", "line": 672 }
+        { "file": "src/types.ts", "line": 5118 },
+        { "file": "deno/lib/types.ts", "line": 672 },
+        { "file": "deno/lib/types.ts", "line": 5118 }
       ]
     },
     {

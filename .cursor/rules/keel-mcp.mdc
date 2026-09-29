@@ -11,7 +11,7 @@ user to say “use keel” or “via MCP”.
 
 ## Use Keel first for
 
-- Where is X defined? → `definition`
+- Where is X defined? → `definition` (`Type.member` finds the member inside that type)
 - Who references / uses X? → `references`
 - Who calls X? → `callers`
 - What implements trait T? → `implementations`

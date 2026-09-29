@@ -69,6 +69,50 @@ pub fn file_path_key(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+/// Maximum tree depth the extraction walks descend. Real files nest tens
+/// of levels (deepest observed across six real repos: 89); beyond this
+/// the file errors loudly instead of overflowing a worker-thread stack.
+pub(crate) const MAX_WALK_DEPTH: u32 = 1024;
+
+/// Tracks recursion depth for one extraction walk; see [`DepthGuard`].
+///
+/// Interior mutability (`Cell`) so walks hold only shared borrows: the
+/// guard stays alive across recursive calls without borrow conflicts.
+pub(crate) struct WalkBudget {
+    depth: std::cell::Cell<u32>,
+}
+
+impl WalkBudget {
+    pub(crate) fn new() -> Self {
+        Self {
+            depth: std::cell::Cell::new(0),
+        }
+    }
+}
+
+/// RAII depth guard: [`DepthGuard::enter`] fails once [`MAX_WALK_DEPTH`]
+/// is exceeded (the caller errors the file), else holds one level until
+/// dropped so early returns and `?` stay balanced.
+pub(crate) struct DepthGuard<'a> {
+    budget: &'a WalkBudget,
+}
+
+impl<'a> DepthGuard<'a> {
+    pub(crate) fn enter(budget: &'a WalkBudget) -> Option<Self> {
+        if budget.depth.get() >= MAX_WALK_DEPTH {
+            return None;
+        }
+        budget.depth.set(budget.depth.get() + 1);
+        Some(Self { budget })
+    }
+}
+
+impl Drop for DepthGuard<'_> {
+    fn drop(&mut self) {
+        self.budget.depth.set(self.budget.depth.get() - 1);
+    }
+}
+
 /// Whether a JS/TS declaration node sits at module top level: a direct
 /// child of `program`, possibly through `export_statement` /
 /// `ambient_declaration` wrappers (`export const x`, `declare const x`).
@@ -234,6 +278,7 @@ mod tests {
                     start_line: (i as u32) + 1,
                     start_col: 1,
                     module_path: "toy".into(),
+                    container: String::new(),
                 });
             }
             Ok(out)

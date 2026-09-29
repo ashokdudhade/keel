@@ -421,7 +421,7 @@ fn tools_list_result() -> Value {
             tool_def(
                 "definition",
                 &format!(
-                    "Find definition location(s) for a symbol. Prefer exact names. Optional module disambiguates overloads.{trust}"
+                    "Find definition location(s) for a symbol. Prefer exact names; `Type.member` finds the member inside that type. Optional module disambiguates overloads.{trust}"
                 ),
                 with_preview(capped_query_schema()),
                 true,
@@ -453,7 +453,7 @@ fn tools_list_result() -> Value {
             tool_def(
                 "dependencies",
                 &format!(
-                    "Find modules/files a module or symbol depends on. Pass a module path (e.g. crate::mcp), directory, file path, symbol, or qualified symbol (e.g. crate::mcp::serve).{trust}"
+                    "Find modules/files a module or symbol depends on. Pass a module path (e.g. crate::mcp), directory, file path, symbol, qualified symbol (e.g. crate::mcp::serve), or member (e.g. Type.member).{trust}"
                 ),
                 capped_target_schema(),
                 true,
@@ -477,7 +477,7 @@ fn tools_list_result() -> Value {
             tool_def(
                 "search",
                 &format!(
-                    "Search symbol names by substring (case-insensitive) when the exact name is unknown. Exact matches rank first.{trust}"
+                    "Search symbol names by substring (case-insensitive) when the exact name is unknown. Exact matches rank first; `Type.member` resolves the member exactly.{trust}"
                 ),
                 with_preview(search_schema()),
                 true,
@@ -493,7 +493,7 @@ fn tools_list_result() -> Value {
             tool_def(
                 "dependents",
                 &format!(
-                    "Find modules that depend on a module, file, or symbol (reverse dependencies). Pass a module path (e.g. crate::mcp), directory, file path, symbol, or qualified symbol (e.g. crate::mcp::serve).{trust}"
+                    "Find modules that depend on a module, file, or symbol (reverse dependencies). Pass a module path (e.g. crate::mcp), directory, file path, symbol, qualified symbol (e.g. crate::mcp::serve), or member (e.g. Type.member).{trust}"
                 ),
                 capped_target_schema(),
                 true,
@@ -663,8 +663,24 @@ fn optional_module_arg(arguments: &Value) -> Option<String> {
     arguments
         .get("module")
         .and_then(|v| v.as_str())
-        .map(str::to_owned)
+        .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
+}
+
+/// Required symbol/`pattern` argument: trimmed, since padding is an agent
+/// typo, never part of a name. Paths keep [`require_string_arg`] (raw).
+fn require_symbol_arg(arguments: &Value, key: &str) -> Result<String> {
+    let value = arguments
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_owned())
+        .ok_or_else(|| KeelError::Mcp(format!("missing required argument: {key}")))?;
+    if value.is_empty() {
+        return Err(KeelError::Mcp(format!(
+            "argument `{key}` must not be empty"
+        )));
+    }
+    Ok(value)
 }
 
 fn optional_limit_arg(arguments: &Value) -> Option<usize> {
@@ -715,7 +731,7 @@ fn call_tool(
 
     let payload = match name {
         "definition" => {
-            let symbol = require_string_arg(&arguments, "name")?;
+            let symbol = require_symbol_arg(&arguments, "name")?;
             let module = optional_module_arg(&arguments);
             let limit = optional_limit_arg(&arguments);
             let mut previews = optional_preview_arg(&arguments)
@@ -734,7 +750,7 @@ fn call_tool(
             json_text(qr)?
         }
         "references" => {
-            let symbol = require_string_arg(&arguments, "name")?;
+            let symbol = require_symbol_arg(&arguments, "name")?;
             let module = optional_module_arg(&arguments);
             let limit = optional_limit_arg(&arguments);
             let mut previews = optional_preview_arg(&arguments)
@@ -753,7 +769,7 @@ fn call_tool(
             json_text(qr)?
         }
         "callers" => {
-            let symbol = require_string_arg(&arguments, "name")?;
+            let symbol = require_symbol_arg(&arguments, "name")?;
             let module = optional_module_arg(&arguments);
             let limit = optional_limit_arg(&arguments);
             let mut previews = optional_preview_arg(&arguments)
@@ -772,7 +788,7 @@ fn call_tool(
             json_text(qr)?
         }
         "implementations" => {
-            let symbol = require_string_arg(&arguments, "name")?;
+            let symbol = require_symbol_arg(&arguments, "name")?;
             let module = optional_module_arg(&arguments);
             let limit = optional_limit_arg(&arguments);
             let mut previews = optional_preview_arg(&arguments)
@@ -791,7 +807,7 @@ fn call_tool(
             json_text(qr)?
         }
         "dependencies" => {
-            let symbol = require_string_arg(&arguments, "name")?;
+            let symbol = require_symbol_arg(&arguments, "name")?;
             let limit = optional_limit_arg(&arguments);
             let start = std::time::Instant::now();
             let qr = facade::dependencies_with_meta(conn, &symbol)?
@@ -801,7 +817,7 @@ fn call_tool(
             json_text(qr)?
         }
         "dependents" => {
-            let symbol = require_string_arg(&arguments, "name")?;
+            let symbol = require_symbol_arg(&arguments, "name")?;
             let limit = optional_limit_arg(&arguments);
             let start = std::time::Instant::now();
             let qr = facade::dependents_with_meta(conn, &symbol)?
@@ -811,7 +827,7 @@ fn call_tool(
             json_text(qr)?
         }
         "impact" => {
-            let symbol = require_string_arg(&arguments, "name")?;
+            let symbol = require_symbol_arg(&arguments, "name")?;
             let module = optional_module_arg(&arguments);
             let limit = optional_limit_arg(&arguments);
             let mut previews = optional_preview_arg(&arguments)
@@ -848,7 +864,7 @@ fn call_tool(
             json_text(qr)?
         }
         "search" => {
-            let pattern = require_string_arg(&arguments, "pattern")?;
+            let pattern = require_symbol_arg(&arguments, "pattern")?;
             let limit = arguments
                 .get("limit")
                 .and_then(|v| v.as_u64())
@@ -1219,6 +1235,34 @@ mod tests {
     }
 
     #[test]
+    fn require_symbol_arg_trims_padding_but_rejects_blank() {
+        assert_eq!(
+            require_symbol_arg(&json!({"name": "  serve "}), "name").unwrap(),
+            "serve"
+        );
+        assert_eq!(
+            require_symbol_arg(&json!({"pattern": "\torder\n"}), "pattern").unwrap(),
+            "order"
+        );
+        let blank = require_symbol_arg(&json!({"name": "   "}), "name").unwrap_err();
+        assert!(
+            blank.to_string().contains("must not be empty"),
+            "got: {blank}"
+        );
+        // Paths stay raw: trailing whitespace may be significant.
+        assert_eq!(
+            require_string_arg(&json!({"path": "dir/ "}), "path").unwrap(),
+            "dir/ "
+        );
+        // A padded module still filters (whitespace-only means no filter).
+        assert_eq!(
+            optional_module_arg(&json!({"module": " crate::mcp "})),
+            Some("crate::mcp".to_string())
+        );
+        assert_eq!(optional_module_arg(&json!({"module": "  "})), None);
+    }
+
+    #[test]
     fn handle_resources_and_prompts_list_return_empty() {
         let mut conn = Connection::open_in_memory().unwrap();
         schema::initialize(&conn).unwrap();
@@ -1336,6 +1380,7 @@ mod tests {
                     start_line: 9,
                     start_col: 1,
                     module_path: "crate".into(),
+                    container: String::new(),
                 },
                 Symbol {
                     name: "A".into(),
@@ -1344,6 +1389,7 @@ mod tests {
                     start_line: 1,
                     start_col: 1,
                     module_path: "crate".into(),
+                    container: String::new(),
                 },
             ],
         )
@@ -1398,6 +1444,7 @@ mod tests {
                     start_line: 1,
                     start_col: 1,
                     module_path: "crate".into(),
+                    container: String::new(),
                 },
                 Symbol {
                     name: "B".into(),
@@ -1406,6 +1453,7 @@ mod tests {
                     start_line: 9,
                     start_col: 1,
                     module_path: "crate".into(),
+                    container: String::new(),
                 },
             ],
         )
@@ -1465,6 +1513,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate::b".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -1486,6 +1535,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate::a".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -1548,6 +1598,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate::b".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -1573,6 +1624,7 @@ mod tests {
                     start_line: 1,
                     start_col: 1,
                     module_path: module.into(),
+                    container: String::new(),
                 }],
             )
             .unwrap();
@@ -1642,6 +1694,7 @@ mod tests {
                     start_line: 9,
                     start_col: 1,
                     module_path: "crate".into(),
+                    container: String::new(),
                 },
                 Symbol {
                     name: "order".into(),
@@ -1650,6 +1703,7 @@ mod tests {
                     start_line: 1,
                     start_col: 1,
                     module_path: "crate".into(),
+                    container: String::new(),
                 },
             ],
         )
@@ -1772,6 +1826,7 @@ mod tests {
                 start_line: 1,
                 start_col: 12,
                 module_path: "crate".into(),
+                container: String::new(),
             }],
         )
         .unwrap();

@@ -224,6 +224,96 @@
           "line": 6
         }
       ]
+    },
+    {
+      "language": "TypeScript",
+      "symbol": "TsService.run",
+      "definitions": [
+        {
+          "file": "ts/src/service.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "language": "TypeScript",
+      "symbol": "TsConfig.port",
+      "definitions": [
+        {
+          "file": "ts/src/service.ts",
+          "line": 13
+        }
+      ]
+    },
+    {
+      "language": "Python",
+      "symbol": "PyService.run",
+      "definitions": [
+        {
+          "file": "py/pkg/service.py",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "language": "Python",
+      "symbol": "PyConfig.port",
+      "definitions": [
+        {
+          "file": "py/pkg/service.py",
+          "line": 12
+        }
+      ]
+    },
+    {
+      "language": "Rust",
+      "symbol": "Cfg.port",
+      "definitions": [
+        {
+          "file": "rust/src/lib.rs",
+          "line": 18
+        }
+      ]
+    },
+    {
+      "language": "Rust",
+      "symbol": "Cfg::port",
+      "definitions": [
+        {
+          "file": "rust/src/lib.rs",
+          "line": 18
+        }
+      ]
+    },
+    {
+      "language": "Go",
+      "symbol": "Storer.Get",
+      "definitions": [
+        {
+          "file": "go/auth/service.go",
+          "line": 12
+        }
+      ]
+    },
+    {
+      "language": "JavaScript",
+      "symbol": "JsService.login",
+      "definitions": [
+        {
+          "file": "js/src/service.js",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "language": "JavaScript",
+      "symbol": "JsConfig.port",
+      "definitions": [
+        {
+          "file": "js/src/service.js",
+          "line": 12
+        }
+      ]
     }
   ]
 }

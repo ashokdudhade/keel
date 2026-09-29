@@ -219,6 +219,58 @@ mod tests {
         assert_eq!(again.syntax_errors, 0);
     }
 
+    fn nested_class_source(levels: usize) -> String {
+        let mut src = String::new();
+        for i in 0..levels {
+            src.push_str(&format!("class C{i}:\n"));
+            for _ in 0..=i {
+                src.push_str("    ");
+            }
+        }
+        src.push_str("def leaf():\n");
+        for _ in 0..=levels {
+            src.push_str("    ");
+        }
+        src.push_str("pass\n");
+        src
+    }
+
+    #[test]
+    fn deep_nesting_indexes_without_overflowing_worker_stacks() {
+        // 400 levels overflowed 2 MiB rayon workers (debug) whenever a
+        // second file forced pool threads; the parse pool must absorb it.
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("ok.py"), "def fine():\n    pass\n").unwrap();
+        fs::write(root.join("deep.py"), nested_class_source(400)).unwrap();
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        let stats = index_repository(root, &mut conn).unwrap();
+        assert_eq!(stats.indexed, 2, "{stats:?}");
+        assert_eq!(stats.errors, 0, "{stats:?}");
+        let leaf = crate::db::queries::find_definition(&conn, "leaf").unwrap();
+        assert_eq!(leaf.len(), 1, "deepest symbol extracted");
+    }
+
+    #[test]
+    fn absurd_nesting_fails_loudly_per_file() {
+        // Beyond MAX_WALK_DEPTH the file errors (named, counted, queried
+        // siblings unaffected) instead of aborting the process.
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("ok.py"), "def fine():\n    pass\n").unwrap();
+        fs::write(root.join("deep.py"), nested_class_source(1500)).unwrap();
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        let stats = index_repository(root, &mut conn).unwrap();
+        assert_eq!(stats.indexed, 1, "{stats:?}");
+        assert_eq!(stats.errors, 1, "{stats:?}");
+        let fine = crate::db::queries::find_definition(&conn, "fine").unwrap();
+        assert_eq!(fine.len(), 1);
+        let leaf = crate::db::queries::find_definition(&conn, "leaf").unwrap();
+        assert!(leaf.is_empty(), "capped file contributes no symbols");
+    }
+
     #[test]
     fn hard_error_files_are_remembered_until_changed() {
         let dir = tempdir().unwrap();
@@ -300,6 +352,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: String::new(),
+                container: String::new(),
             }],
         )
         .unwrap();

@@ -13,7 +13,7 @@
 //!   `graph::impact`.
 //! - Go has no trait-impl form; `implementations` stays empty for Go sources.
 
-use super::{file_path_key, LanguagePlugin};
+use super::{file_path_key, DepthGuard, LanguagePlugin, WalkBudget, MAX_WALK_DEPTH};
 use crate::error::{Result, KeelError};
 use crate::graph::types::{ImplRecord, Import, Reference, ReferenceKind, Symbol, SymbolKind};
 use std::path::{Path, PathBuf};
@@ -65,7 +65,8 @@ impl LanguagePlugin for RustPlugin {
         let src = source_code.as_bytes();
         let mut mods = rust_file_module_segments(path);
         let mut out = Vec::new();
-        walk_symbols(tree.root_node(), src, &mut mods, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_symbols(tree.root_node(), src, &mut mods, "", &mut out, &budget)?;
         Ok(out)
     }
 
@@ -76,6 +77,7 @@ impl LanguagePlugin for RustPlugin {
         let file_mods = rust_file_module_segments(path);
         let mut scope: Vec<String> = Vec::new();
         let mut out = Vec::new();
+        let budget = WalkBudget::new();
         walk_references(
             tree.root_node(),
             src,
@@ -83,6 +85,7 @@ impl LanguagePlugin for RustPlugin {
             &file_mods,
             &mut scope,
             &mut out,
+            &budget,
         )?;
         Ok(out)
     }
@@ -91,7 +94,8 @@ impl LanguagePlugin for RustPlugin {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
-        walk_imports(tree.root_node(), src, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_imports(tree.root_node(), src, &mut out, &budget)?;
         Ok(out)
     }
 
@@ -101,6 +105,7 @@ impl LanguagePlugin for RustPlugin {
         let query = impl_query();
         let mut cursor = QueryCursor::new();
         let mut out = Vec::new();
+        let budget = WalkBudget::new();
         let mut matches = cursor.matches(query, tree.root_node(), src);
         while let Some(m) = matches.next() {
             for cap in m.captures {
@@ -111,11 +116,11 @@ impl LanguagePlugin for RustPlugin {
                 if impl_item.kind() != "impl_item" {
                     continue;
                 }
-                let Some(type_name) = impl_type_name(ty, src)? else {
+                let Some(type_name) = impl_type_name(ty, src, &budget)? else {
                     continue;
                 };
                 let trait_name = match impl_item.child_by_field_name("trait") {
-                    Some(t) => impl_type_name(t, src)?,
+                    Some(t) => impl_type_name(t, src, &budget)?,
                     None => None,
                 };
                 let pos = impl_item.start_position();
@@ -136,11 +141,13 @@ impl LanguagePlugin for RustPlugin {
 /// `Store`, matching the TS heritage rule) and scopes collapse to the
 /// final segment (`m::Store` → `Store`), since implementation lookup
 /// matches bare names. Tuples, arrays, and `dyn` name no type and stay out.
-fn impl_type_name(node: Node, src: &[u8]) -> Result<Option<String>> {
+fn impl_type_name(node: Node, src: &[u8], budget: &WalkBudget) -> Result<Option<String>> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     match node.kind() {
         "type_identifier" | "identifier" => Ok(Some(node_text(node, src)?.to_string())),
         "generic_type" => match node.child_by_field_name("type") {
-            Some(t) => impl_type_name(t, src),
+            Some(t) => impl_type_name(t, src, budget),
             None => Ok(None),
         },
         "scoped_type_identifier" => match node.child_by_field_name("name") {
@@ -251,60 +258,87 @@ fn qualify_scope(file_key: &str, file_mods: &[String], scope: &[String]) -> Stri
 
 /// Pre-order walk emitting a [`Symbol`] per definition, tracking the enclosing
 /// `mod` chain so each symbol records its qualified `module_path`.
-fn walk_symbols(node: Node, src: &[u8], mods: &mut Vec<String>, out: &mut Vec<Symbol>) -> Result<()> {
+fn walk_symbols(
+    node: Node,
+    src: &[u8],
+    mods: &mut Vec<String>,
+    container: &str,
+    out: &mut Vec<Symbol>,
+    budget: &WalkBudget,
+) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     match node.kind() {
         "mod_item" => {
             if let Some(name) = node.child_by_field_name("name") {
                 let text = node_text(name, src)?;
-                push_symbol(name, SymbolKind::Module, mods, out, src)?;
+                push_symbol(name, SymbolKind::Module, mods, container, out, src)?;
                 mods.push(text.to_string());
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
-                    walk_symbols(child, src, mods, out)?;
+                    walk_symbols(child, src, mods, container, out, budget)?;
                 }
                 mods.pop();
                 return Ok(());
             }
         }
-        "function_item" => emit_named_symbol(node, SymbolKind::Function, mods, out, src)?,
+        "function_item" => emit_named_symbol(node, SymbolKind::Function, mods, container, out, src)?,
         // Bodiless trait declarations are definitions; metavariable
         // names (`$m`) are template placeholders, not symbols.
         "function_signature_item" => {
             if let Some(name) = node.child_by_field_name("name") {
                 if name.kind() == "identifier" {
-                    push_symbol(name, SymbolKind::Function, mods, out, src)?;
+                    push_symbol(name, SymbolKind::Function, mods, container, out, src)?;
                 }
             }
         }
-        "struct_item" => emit_named_symbol(node, SymbolKind::Struct, mods, out, src)?,
-        "union_item" => emit_named_symbol(node, SymbolKind::Struct, mods, out, src)?,
-        "trait_item" => emit_named_symbol(node, SymbolKind::Trait, mods, out, src)?,
-        "enum_item" => emit_named_symbol(node, SymbolKind::Enum, mods, out, src)?,
-        "const_item" => emit_named_symbol(node, SymbolKind::Const, mods, out, src)?,
-        "static_item" => emit_named_symbol(node, SymbolKind::Const, mods, out, src)?,
+        "struct_item" => emit_named_symbol(node, SymbolKind::Struct, mods, container, out, src)?,
+        "union_item" => emit_named_symbol(node, SymbolKind::Struct, mods, container, out, src)?,
+        "trait_item" => emit_named_symbol(node, SymbolKind::Trait, mods, container, out, src)?,
+        "enum_item" => emit_named_symbol(node, SymbolKind::Enum, mods, container, out, src)?,
+        "const_item" => emit_named_symbol(node, SymbolKind::Const, mods, container, out, src)?,
+        "static_item" => emit_named_symbol(node, SymbolKind::Const, mods, container, out, src)?,
         "macro_definition" => {
-            emit_named_symbol(node, SymbolKind::Other("macro".into()), mods, out, src)?;
+            emit_named_symbol(node, SymbolKind::Other("macro".into()), mods, container, out, src)?;
         }
         // Members are indexed items too: struct/union fields and enum
         // variants (`field` kind), so field reads resolve to a
         // definition. Tuple fields have no names and stay out.
         "field_declaration" | "enum_variant" => {
-            emit_named_symbol(node, SymbolKind::Other("field".into()), mods, out, src)?;
+            emit_named_symbol(node, SymbolKind::Other("field".into()), mods, container, out, src)?;
         }
         "impl_item" => {
             // Match the historical behavior: only plain `type_identifier` impl
             // targets become an `Impl` symbol (skip `impl Vec<T>` etc.).
             if let Some(ty) = node.child_by_field_name("type") {
                 if ty.kind() == "type_identifier" {
-                    push_symbol(ty, SymbolKind::Impl, mods, out, src)?;
+                    push_symbol(ty, SymbolKind::Impl, mods, container, out, src)?;
                 }
             }
         }
         _ => {}
     }
+    // Members of a type/impl/trait body carry the type name; anything
+    // else inherits the enclosing container unchanged.
+    let owned: Option<String> = match node.kind() {
+        "impl_item" => match node.child_by_field_name("type") {
+            Some(ty) => impl_type_name(ty, src, budget)?,
+            None => None,
+        },
+        "struct_item" | "union_item" | "trait_item" | "enum_item" => {
+            match node.child_by_field_name("name") {
+                Some(name) if matches!(name.kind(), "type_identifier" | "identifier") => {
+                    Some(node_text(name, src)?.to_string())
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    let next_container = owned.as_deref().unwrap_or(container);
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_symbols(child, src, mods, out)?;
+        walk_symbols(child, src, mods, next_container, out, budget)?;
     }
     Ok(())
 }
@@ -314,11 +348,12 @@ fn emit_named_symbol(
     node: Node,
     kind: SymbolKind,
     mods: &[String],
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
     if let Some(name) = node.child_by_field_name("name") {
-        push_symbol(name, kind, mods, out, src)?;
+        push_symbol(name, kind, mods, container, out, src)?;
     }
     Ok(())
 }
@@ -328,6 +363,7 @@ fn push_symbol(
     name_node: Node,
     kind: SymbolKind,
     mods: &[String],
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
@@ -340,6 +376,7 @@ fn push_symbol(
         start_line: pos.row as u32 + 1,
         start_col: pos.column as u32 + 1,
         module_path: qualify_mod(mods),
+        container: container.to_string(),
     });
     Ok(())
 }
@@ -353,7 +390,10 @@ fn walk_references(
     file_mods: &[String],
     scope: &mut Vec<String>,
     out: &mut Vec<Reference>,
+    budget: &WalkBudget,
 ) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     match node.kind() {
         "mod_item" | "function_item" => {
             if let Some(name) = node.child_by_field_name("name") {
@@ -361,7 +401,7 @@ fn walk_references(
                 scope.push(text.to_string());
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
-                    walk_references(child, src, file_key, file_mods, scope, out)?;
+                    walk_references(child, src, file_key, file_mods, scope, out, budget)?;
                 }
                 scope.pop();
                 return Ok(());
@@ -544,7 +584,7 @@ fn walk_references(
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_references(child, src, file_key, file_mods, scope, out)?;
+        walk_references(child, src, file_key, file_mods, scope, out, budget)?;
     }
     Ok(())
 }
@@ -1238,7 +1278,14 @@ fn qualifier_of(path_node: Node, src: &[u8]) -> Result<String> {
 
 /// Pre-order walk emitting an [`Import`] per imported path, expanding grouped
 /// `use a::{b, c as d}` lists into one record each.
-fn walk_imports(node: Node, src: &[u8], out: &mut Vec<Import>) -> Result<()> {
+fn walk_imports(
+    node: Node,
+    src: &[u8],
+    out: &mut Vec<Import>,
+    budget: &WalkBudget,
+) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     if node.kind() == "use_declaration" {
         if let Some(arg) = node.child_by_field_name("argument") {
             expand_use(arg, "", src, out)?;
@@ -1247,7 +1294,7 @@ fn walk_imports(node: Node, src: &[u8], out: &mut Vec<Import>) -> Result<()> {
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_imports(child, src, out)?;
+        walk_imports(child, src, out, budget)?;
     }
     Ok(())
 }
@@ -1357,6 +1404,23 @@ fn greet() {}
 
     fn test_path() -> &'static Path {
         Path::new("src/lib.rs")
+    }
+
+    #[test]
+    fn member_symbols_carry_enclosing_type_container() {
+        let plugin = RustPlugin;
+        let syms = plugin
+            .extract_symbols(
+                test_path(),
+                "fn top() {}\nstruct Store { limit: u32 }\nimpl Store {\n    fn save(&self) {}\n}\ntrait Repo {\n    fn load(&self);\n}\n",
+            )
+            .unwrap();
+        let find = |n: &str| syms.iter().find(|s| s.name == n).cloned();
+        assert_eq!(find("top").unwrap().container, "");
+        assert_eq!(find("Store").unwrap().container, "");
+        assert_eq!(find("limit").unwrap().container, "Store");
+        assert_eq!(find("save").unwrap().container, "Store");
+        assert_eq!(find("load").unwrap().container, "Repo");
     }
 
     #[test]

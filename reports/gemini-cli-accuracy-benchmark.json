@@ -15,7 +15,7 @@
   },
   "head": "2fe7c2d",
   "index": {
-    "seconds": 0.094,
+    "seconds": 0.025,
     "stdout": "Indexed 0 file(s) (skipped 2290, removed 0, errors 0, syntax errors 0).",
     "extension_counts": {
       ".js": 58,

@@ -305,6 +305,11 @@ pub fn definition_with_meta(conn: &Connection, name: &str) -> Result<QueryResult
 }
 
 /// Definitions with optional module filter (or qualified `name`).
+///
+/// Member-qualified names (`C.method`) look up the member inside that
+/// container; a single-segment `Type::member` falls back to the same
+/// container lookup when the module interpretation finds nothing (module
+/// paths always win ties).
 pub fn definition_with_meta_opts(
     conn: &Connection,
     name: &str,
@@ -312,11 +317,30 @@ pub fn definition_with_meta_opts(
 ) -> Result<QueryResult<Symbol>> {
     ensure_index_current(conn)?;
     let (mod_path, bare) = resolve_symbol_target(name, module);
-    let results = if let Some(m) = mod_path {
+    let member = target::split_member_name(bare);
+    let mut results = if let Some((container, sym)) = member {
+        // Dotted member form, with or without an explicit module filter.
+        let mut hits = queries::find_definition_by_container(conn, container, sym)?;
+        if let Some(m) = mod_path {
+            hits.retain(|s| s.module_path == m);
+        }
+        hits
+    } else if let Some(m) = mod_path {
         queries::find_definition_by_qualified(conn, m, bare)?
     } else {
         queries::find_definition(conn, bare)?
     };
+    // `Type::member` reads as module `Type` first; when that misses and
+    // the head is a single segment, retry as a member lookup.
+    let mut member_fallback = false;
+    if results.is_empty() && member.is_none() && module.filter(|m| !m.is_empty()).is_none() {
+        if let Some((m, sym)) = split_qualified_name(name) {
+            if !m.contains("::") {
+                results = queries::find_definition_by_container(conn, m, sym)?;
+                member_fallback = !results.is_empty();
+            }
+        }
+    }
     let multi = results.len() > 1;
     let tiers: Vec<u8> = if results.is_empty() {
         vec![]
@@ -328,7 +352,7 @@ pub fn definition_with_meta_opts(
     let mut notes = Vec::new();
     if multi {
         notes.push(format!(
-            "Found {} definitions for `{bare}`; disambiguate with module arg or qualified name (e.g. `crate::mcp::{bare}`).",
+            "Found {} definitions for `{bare}`; disambiguate with module arg, qualified name (e.g. `crate::mcp::{bare}`), or member form (`Type::{bare}`).",
             results.len()
         ));
     } else if results.is_empty() {
@@ -339,6 +363,11 @@ pub fn definition_with_meta_opts(
         } else {
             notes.extend(miss_notes(conn, bare));
         }
+    } else if member_fallback {
+        notes.push(format!(
+            "Resolved `{name}` as member `{bare}` of type `{}`.",
+            split_qualified_name(name).map(|(m, _)| m).unwrap_or_default()
+        ));
     }
     Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
 }
@@ -891,6 +920,39 @@ pub fn search_with_meta(
             vec!["Empty search pattern.".into()],
         ));
     }
+    // Member-qualified patterns (`Type.member`, single-segment
+    // `Type::member`) resolve exactly; substring matching would never
+    // hit them since symbol names carry no separators. On a miss the
+    // lookup falls through to the normal substring path below.
+    if let Some((container, sym)) = target::split_member_name(pattern) {
+        let mut hits = queries::find_definition_by_container_nocase(conn, container, sym)?;
+        hits.truncate(limit.clamp(1, 200));
+        if !hits.is_empty() {
+            let tiers = vec![1; hits.len()];
+            return Ok(QueryResult::from_tiers(
+                hits,
+                &tiers,
+                false,
+                vec![format!(
+                    "Member lookup: `{sym}` inside type `{container}`."
+                )],
+            ));
+        }
+    } else if let Some((head, sym)) = split_qualified_name(pattern) {
+        if !head.contains("::") {
+            let mut hits = queries::find_definition_by_container_nocase(conn, head, sym)?;
+            hits.truncate(limit.clamp(1, 200));
+            if !hits.is_empty() {
+                let tiers = vec![1; hits.len()];
+                return Ok(QueryResult::from_tiers(
+                    hits,
+                    &tiers,
+                    false,
+                    vec![format!("Member lookup: `{sym}` inside type `{head}`.")],
+                ));
+            }
+        }
+    }
     let (mut results, truncated) = queries::search_symbols(conn, pattern, limit)?;
     if results.is_empty() {
         let mut notes = vec![format!("No symbols matching `{pattern}`.")];
@@ -936,52 +998,10 @@ pub fn search_with_meta(
 /// Resolve a user-supplied file path to an indexed path.
 ///
 /// Tries the raw string, then a lexically cleaned form (`./x`, `a/../b`),
-/// then a unique suffix match (absolute paths into the indexed tree).
+/// then a unique suffix match (absolute/cwd-relative paths into the
+/// indexed tree, or a bare basename from a subdir).
 fn resolve_outline_file(conn: &Connection, raw: &str) -> Result<Option<String>> {
-    let files = queries::indexed_files(conn)?;
-    if files.iter().any(|f| f == raw) {
-        return Ok(Some(raw.to_string()));
-    }
-    let cleaned = clean_path(raw);
-    if cleaned != raw && files.iter().any(|f| f == &cleaned) {
-        return Ok(Some(cleaned));
-    }
-    let norm_raw = raw.replace('\\', "/");
-    let mut hits = files.iter().filter(|f| {
-        let norm_file = f.replace('\\', "/");
-        norm_raw.len() > norm_file.len()
-            && norm_raw.ends_with(norm_file.as_str())
-            && norm_raw.as_bytes()[norm_raw.len() - norm_file.len() - 1] == b'/'
-    });
-    match (hits.next(), hits.next()) {
-        (Some(only), None) => Ok(Some(only.clone())),
-        _ => Ok(None),
-    }
-}
-
-/// Lexically normalize a path (`./`, `a/../b`) without touching the fs.
-///
-/// Bails out (returns `raw`) when `..` would escape past the start.
-fn clean_path(raw: &str) -> String {
-    let mut parts: Vec<&str> = Vec::new();
-    let absolute = raw.starts_with('/');
-    let normalized = raw.replace('\\', "/");
-    for comp in normalized.split('/') {
-        match comp {
-            "" | "." => {}
-            ".." => {
-                if parts.pop().is_none() {
-                    return raw.to_string();
-                }
-            }
-            c => parts.push(c),
-        }
-    }
-    let mut out = parts.join("/");
-    if absolute {
-        out.insert(0, '/');
-    }
-    out
+    target::resolve_file_target(conn, raw)
 }
 
 /// "Did you mean …?" over indexed file paths (miss path only).
@@ -1569,6 +1589,159 @@ mod tests {
     }
 
     #[test]
+    fn split_member_name_accepts_single_level_only() {
+        assert_eq!(target::split_member_name("C.method"), Some(("C", "method")));
+        assert_eq!(target::split_member_name("Store.save"), Some(("Store", "save")));
+        assert_eq!(target::split_member_name("save"), None);
+        assert_eq!(target::split_member_name("a.b.c"), None);
+        assert_eq!(target::split_member_name("m::C.method"), None);
+        assert_eq!(target::split_member_name(".method"), None);
+        assert_eq!(target::split_member_name("C."), None);
+        assert_eq!(target::split_member_name("C::method"), None);
+    }
+
+    #[test]
+    fn definition_accepts_member_qualified_name() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("svc.py"),
+            "class Alpha:\n    def save(self):\n        pass\n\nclass Beta:\n    def save(self):\n        pass\n",
+        )
+        .unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        let bare = index.definition_with_meta("save").unwrap();
+        assert_eq!(bare.results.len(), 2, "bare name finds both: {bare:?}");
+
+        let alpha = index.definition_with_meta("Alpha.save").unwrap();
+        assert_eq!(alpha.results.len(), 1, "{alpha:?}");
+        assert_eq!(alpha.results[0].start_line, 2);
+        assert_eq!(alpha.results[0].container, "Alpha");
+
+        let beta = index.definition_with_meta("Beta.save").unwrap();
+        assert_eq!(beta.results.len(), 1, "{beta:?}");
+        assert_eq!(beta.results[0].start_line, 6);
+
+        let miss = index.definition_with_meta("Alpha.nope").unwrap();
+        assert!(miss.results.is_empty(), "{miss:?}");
+
+        // `definition` stays exact: wrong case is a miss (search folds).
+        let folded = index.definition_with_meta("alpha.save").unwrap();
+        assert!(folded.results.is_empty(), "{folded:?}");
+
+        // An explicit module filter still applies to member hits.
+        let scoped = index
+            .definition_with_meta_opts("Alpha.save", Some("svc"))
+            .unwrap();
+        assert_eq!(scoped.results.len(), 1, "{scoped:?}");
+        let excluded = index
+            .definition_with_meta_opts("Alpha.save", Some("other"))
+            .unwrap();
+        assert!(excluded.results.is_empty(), "{excluded:?}");
+    }
+
+    #[test]
+    fn definition_type_colon_member_prefers_module_then_container() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        // Module `box` owns a top-level `save`; class `Box` owns a method.
+        fs::write(
+            root.join("box.py"),
+            "def save():\n    pass\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("other.py"),
+            "class Box:\n    def save(self):\n        pass\n",
+        )
+        .unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        // Module `box` owns a `save`: the module reading wins, no fallback.
+        let mod_hit = index.definition_with_meta("box::save").unwrap();
+        assert_eq!(mod_hit.results.len(), 1, "{mod_hit:?}");
+        assert_eq!(mod_hit.results[0].start_line, 1);
+        assert_eq!(mod_hit.results[0].container, "");
+        assert!(
+            !mod_hit.notes.iter().any(|n| n.contains("as member")),
+            "module hit must not claim member fallback: {mod_hit:?}"
+        );
+
+        // No module named `Box`: falls back to the class member.
+        let member_hit = index.definition_with_meta("Box::save").unwrap();
+        assert_eq!(member_hit.results.len(), 1, "{member_hit:?}");
+        assert_eq!(member_hit.results[0].start_line, 2);
+        assert_eq!(member_hit.results[0].container, "Box");
+        assert!(
+            member_hit.notes.iter().any(|n| n.contains("as member")),
+            "fallback must say so: {member_hit:?}"
+        );
+    }
+
+    #[test]
+    fn search_accepts_member_qualified_pattern() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("svc.py"),
+            "class Alpha:\n    def save(self):\n        pass\n\nclass Beta:\n    def save(self):\n        pass\n",
+        )
+        .unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        for query in ["Alpha.save", "Alpha::save"] {
+            let hits = index.search_with_meta(query, 50).unwrap();
+            assert_eq!(hits.results.len(), 1, "{query}: {hits:?}");
+            assert_eq!(hits.results[0].start_line, 2, "{query}");
+            assert!(
+                hits.notes.iter().any(|n| n.contains("Member lookup")),
+                "{query}: {hits:?}"
+            );
+        }
+
+        // Search stays case-insensitive for member patterns too.
+        let folded = index.search_with_meta("alpha.SAVE", 50).unwrap();
+        assert_eq!(folded.results.len(), 1, "{folded:?}");
+        assert_eq!(folded.results[0].start_line, 2);
+
+        // A miss falls through to substring behavior (still a miss here).
+        let miss = index.search_with_meta("Alpha.nope", 50).unwrap();
+        assert!(miss.results.is_empty(), "{miss:?}");
+
+        // Bare substring search is untouched.
+        let bare = index.search_with_meta("save", 50).unwrap();
+        assert_eq!(bare.results.len(), 2, "{bare:?}");
+    }
+
+    #[test]
+    fn definition_rust_impl_member_resolves_both_forms() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("lib.rs"),
+            "pub struct Cache;\n\nimpl Cache {\n    pub fn save(&self) {}\n}\n",
+        )
+        .unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        for query in ["Cache::save", "Cache.save"] {
+            let hit = index.definition_with_meta(query).unwrap();
+            assert_eq!(hit.results.len(), 1, "{query}: {hit:?}");
+            assert_eq!(hit.results[0].start_line, 4, "{query}");
+            assert_eq!(hit.results[0].container, "Cache", "{query}");
+        }
+    }
+
+    #[test]
     fn multi_def_notes_omit_impact_wording() {
         let dir = tempdir().unwrap();
         let root = dir.path();
@@ -1930,7 +2103,7 @@ mod tests {
     }
 
     #[test]
-    fn outline_miss_suggests_files_and_names_empty_files() {
+    fn outline_bare_basename_hits_unique_file_and_still_suggests_on_miss() {
         let dir = tempdir().unwrap();
         let root = dir.path();
         fs::create_dir_all(root.join("src")).unwrap();
@@ -1940,7 +2113,14 @@ mod tests {
         let mut index = Index::open_in_memory().unwrap();
         index.index_path(root).unwrap();
 
+        // Unique bare basename resolves (subdir-friendly); no miss note.
         let meta = index.outline_with_meta("lib.rs").unwrap();
+        assert_eq!(meta.results.len(), 1);
+        assert_eq!(meta.results[0].name, "solo");
+        assert!(meta.notes.is_empty(), "got {:?}", meta.notes);
+
+        // Genuinely missing targets still miss with a suggestion.
+        let meta = index.outline_with_meta("ib.rs").unwrap();
         assert!(meta.results.is_empty());
         assert!(
             meta.notes.iter().any(|n| n.contains("No indexed file")),

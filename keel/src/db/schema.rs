@@ -14,7 +14,7 @@ use crate::error::{Result, KeelError};
 use rusqlite::Connection;
 
 /// The latest schema version this build understands.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 /// Content-format version stamped into each index by the writer.
 ///
@@ -22,21 +22,22 @@ const SCHEMA_VERSION: i64 = 5;
 /// (module identity, symbol/reference rules). Bump it whenever indexing output
 /// changes meaning, so old indexes rebuild instead of serving stale answers.
 /// Unstamped (legacy) indexes read back as 0 and always rebuild.
-pub const INDEX_FORMAT_VERSION: i64 = 2;
+pub const INDEX_FORMAT_VERSION: i64 = 3;
 
 /// Create or migrate the schema to the latest version. Idempotent.
 ///
 /// Reads `PRAGMA user_version` and:
-/// - version 0 with no `files` table (truly fresh): creates all v5 tables and
+/// - version 0 with no `files` table (truly fresh): creates all v6 tables and
 ///   indexes, stamped current (nothing stale to rebuild);
 /// - version 0 with an existing `files` table (unstamped legacy v0.1 database):
-///   runs the v0.1 → v5 upgrade in place, preserving existing data; content is
+///   runs the v0.1 → v6 upgrade in place, preserving existing data; content is
 ///   stamped format 0 so the next index pass rebuilds it;
 /// - version 1 (stamped v0.1 database): runs the same chained upgrade;
-/// - version 2: adds the writer stamp (format 0, forcing one rebuild), then v5;
+/// - version 2: adds the writer stamp (format 0, forcing one rebuild), then v6;
 /// - version 3: adds the reference qualifier column, then forces one rebuild;
 /// - version 4: adds `file_id` indexes (no rebuild: content is unchanged);
-/// - version 5: no-op;
+/// - version 5: adds the symbol container column, then forces one rebuild;
+/// - version 6: no-op;
 /// - version > `SCHEMA_VERSION`: returns [`KeelError::UnsupportedSchema`]
 ///   without stamping.
 ///
@@ -47,6 +48,12 @@ pub const INDEX_FORMAT_VERSION: i64 = 2;
 /// `references` is a reserved SQL keyword, so it is always quoted.
 pub fn initialize(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+
+    // Fast path: a current database needs no writes at all, so pure reads
+    // (and `--no-auto-index` queries) keep working on read-only files.
+    if version == SCHEMA_VERSION {
+        return Ok(());
+    }
 
     conn.execute_batch("BEGIN;")?;
     if let Err(e) = migrate(conn, version) {
@@ -77,8 +84,9 @@ fn migrate(conn: &Connection, version: i64) -> Result<()> {
                 upgrade_to_v3(conn)?;
                 upgrade_to_v4(conn)?;
                 upgrade_to_v5(conn)?;
+                upgrade_to_v6(conn)?;
             } else {
-                create_v5(conn)?;
+                create_v6(conn)?;
             }
         }
         1 => {
@@ -86,17 +94,24 @@ fn migrate(conn: &Connection, version: i64) -> Result<()> {
             upgrade_to_v3(conn)?;
             upgrade_to_v4(conn)?;
             upgrade_to_v5(conn)?;
+            upgrade_to_v6(conn)?;
         }
         2 => {
             upgrade_to_v3(conn)?;
             upgrade_to_v4(conn)?;
             upgrade_to_v5(conn)?;
+            upgrade_to_v6(conn)?;
         }
         3 => {
             upgrade_to_v4(conn)?;
             upgrade_to_v5(conn)?;
+            upgrade_to_v6(conn)?;
         }
-        4 => upgrade_to_v5(conn)?,
+        4 => {
+            upgrade_to_v5(conn)?;
+            upgrade_to_v6(conn)?;
+        }
+        5 => upgrade_to_v6(conn)?,
         _ => {}
     }
 
@@ -255,6 +270,40 @@ fn create_file_id_indexes(conn: &Connection) -> Result<()> {
 /// stay valid and immediately benefit.
 fn upgrade_to_v5(conn: &Connection) -> Result<()> {
     create_file_id_indexes(conn)?;
+    Ok(())
+}
+
+/// Create the full v6 schema on a fresh database.
+fn create_v6(conn: &Connection) -> Result<()> {
+    create_v5(conn)?;
+    add_symbols_container(conn)?;
+    Ok(())
+}
+
+/// Add the `symbols.container` column (innermost enclosing named type)
+/// plus its lookup index. Idempotent, so both fresh creation and the
+/// v5 → v6 upgrade share it.
+fn add_symbols_container(conn: &Connection) -> Result<()> {
+    if table_exists(conn, "symbols")? {
+        if !column_exists(conn, "symbols", "container")? {
+            conn.execute_batch(
+                "ALTER TABLE symbols ADD COLUMN container TEXT NOT NULL DEFAULT '';",
+            )?;
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_symbols_container ON symbols(container, name);",
+        )?;
+    }
+    Ok(())
+}
+
+/// Upgrade a v5 database to v6: add the symbol container column and mark
+/// content format 0 (unknown writer), forcing one full rebuild on the next
+/// index pass so containers get populated. Indexed rows are preserved; the
+/// rebuild replaces them, it does not strand the user on an error.
+fn upgrade_to_v6(conn: &Connection) -> Result<()> {
+    add_symbols_container(conn)?;
+    stamp_index_format(conn, 0)?;
     Ok(())
 }
 
@@ -454,12 +503,13 @@ mod tests {
     }
 
     #[test]
-    fn fresh_db_initializes_to_v5() {
+    fn fresh_db_initializes_to_v6() {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         initialize(&conn).expect("init schema");
 
-        assert_eq!(user_version(&conn), 5);
+        assert_eq!(user_version(&conn), 6);
         assert!(table_has_column(&conn, "symbols", "module_path"));
+        assert!(table_has_column(&conn, "symbols", "container"));
         assert!(table_has_column(&conn, "references", "kind"));
         assert!(table_has_column(&conn, "references", "container"));
         assert!(table_has_column(&conn, "references", "qualifier"));
@@ -470,6 +520,7 @@ mod tests {
         assert!(index_exists(&conn, "idx_references_file"));
         assert!(index_exists(&conn, "idx_imports_file"));
         assert!(index_exists(&conn, "idx_impls_file"));
+        assert!(index_exists(&conn, "idx_symbols_container"));
         assert_eq!(index_format_version(&conn), INDEX_FORMAT_VERSION);
     }
 
@@ -478,11 +529,11 @@ mod tests {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         initialize(&conn).expect("init schema");
         initialize(&conn).expect("re-init schema");
-        assert_eq!(user_version(&conn), 5);
+        assert_eq!(user_version(&conn), 6);
     }
 
     #[test]
-    fn legacy_v0_unstamped_db_upgrades_to_v5_preserving_files() {
+    fn legacy_v0_unstamped_db_upgrades_to_v6_preserving_files() {
         // Simulate a REAL on-disk v0.1 database: the v0.1 tables exist and hold
         // data, but `user_version` was never stamped, so it still reports 0.
         let conn = Connection::open_in_memory().expect("open in-memory db");
@@ -497,7 +548,7 @@ mod tests {
 
         initialize(&conn).expect("migrate legacy v0 db");
 
-        assert_eq!(user_version(&conn), 5);
+        assert_eq!(user_version(&conn), 6);
         assert!(table_has_column(&conn, "symbols", "module_path"));
         assert!(table_has_column(&conn, "references", "kind"));
         assert!(table_has_column(&conn, "references", "container"));
@@ -514,11 +565,11 @@ mod tests {
 
         // Re-running must stay green (idempotent) on a migrated legacy db.
         initialize(&conn).expect("re-init migrated legacy db");
-        assert_eq!(user_version(&conn), 5);
+        assert_eq!(user_version(&conn), 6);
     }
 
     #[test]
-    fn v1_db_upgrades_to_v5_preserving_files() {
+    fn v1_db_upgrades_to_v6_preserving_files() {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         conn.execute_batch(V1_SCHEMA).expect("create v1 schema");
         conn.execute_batch("PRAGMA user_version = 1;")
@@ -531,7 +582,7 @@ mod tests {
 
         initialize(&conn).expect("upgrade schema");
 
-        assert_eq!(user_version(&conn), 5);
+        assert_eq!(user_version(&conn), 6);
         assert!(table_has_column(&conn, "symbols", "module_path"));
         assert!(table_has_column(&conn, "references", "kind"));
         assert!(table_has_column(&conn, "references", "container"));
@@ -547,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_db_upgrades_to_v5_marking_content_stale() {
+    fn v2_db_upgrades_to_v6_marking_content_stale() {
         // Simulate a v2 database: stamped 2 with content rows present.
         let conn = Connection::open_in_memory().expect("open in-memory db");
         conn.execute_batch(
@@ -567,7 +618,7 @@ mod tests {
 
         initialize(&conn).expect("upgrade schema");
 
-        assert_eq!(user_version(&conn), 5);
+        assert_eq!(user_version(&conn), 6);
         assert!(table_exists(&conn, "meta"));
         assert_eq!(index_format_version(&conn), 0);
         let path: String = conn
@@ -577,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn v3_db_upgrades_to_v5_adding_qualifier() {
+    fn v3_db_upgrades_to_v6_adding_qualifier() {
         // Simulate a v3 database: full v3 tables stamped 3 with a reference row.
         let conn = Connection::open_in_memory().expect("open in-memory db");
         conn.execute_batch(
@@ -603,7 +654,7 @@ mod tests {
 
         initialize(&conn).expect("upgrade schema");
 
-        assert_eq!(user_version(&conn), 5);
+        assert_eq!(user_version(&conn), 6);
         assert!(table_has_column(&conn, "references", "qualifier"));
         // Legacy rows default to the empty (unattributable) qualifier.
         let qualifier: String = conn
@@ -614,14 +665,16 @@ mod tests {
         assert_eq!(index_format_version(&conn), 0);
 
         initialize(&conn).expect("re-init stays green");
-        assert_eq!(user_version(&conn), 5);
+        assert_eq!(user_version(&conn), 6);
     }
 
     #[test]
-    fn v4_db_upgrades_to_v5_adding_file_indexes_without_rebuild() {
+    fn v4_db_upgrades_to_v6_adding_indexes_and_container() {
         // Simulate a v4 database: current tables stamped 4 with content.
+        // The chain runs v5 (file_id indexes, no rebuild) then v6
+        // (container column, rebuild forced).
         let conn = Connection::open_in_memory().expect("open in-memory db");
-        initialize(&conn).expect("create v5 schema");
+        initialize(&conn).expect("create v6 schema");
         conn.execute_batch("PRAGMA user_version = 4;")
             .expect("downgrade stamp to v4");
         // A real v4 database has no file_id indexes yet.
@@ -637,17 +690,90 @@ mod tests {
 
         initialize(&conn).expect("upgrade schema");
 
-        assert_eq!(user_version(&conn), 5);
+        assert_eq!(user_version(&conn), 6);
         assert!(index_exists(&conn, "idx_symbols_file"));
         assert!(index_exists(&conn, "idx_references_file"));
         assert!(index_exists(&conn, "idx_imports_file"));
         assert!(index_exists(&conn, "idx_impls_file"));
-        // Index-only migration: content stays valid, no rebuild forced.
-        assert_eq!(index_format_version(&conn), INDEX_FORMAT_VERSION);
+        assert!(table_has_column(&conn, "symbols", "container"));
+        assert!(index_exists(&conn, "idx_symbols_container"));
+        // The v6 leg forces one rebuild to populate containers.
+        assert_eq!(index_format_version(&conn), 0);
         let path: String = conn
             .query_row("SELECT path FROM files", [], |row| row.get(0))
             .expect("file preserved");
         assert_eq!(path, "src/a.rs");
+    }
+
+    #[test]
+    fn v5_db_upgrades_to_v6_adding_symbol_container() {
+        // Simulate a v5 database: full v5 tables (symbols without the
+        // container column) stamped 5 with a symbol row.
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, content_hash TEXT NOT NULL);
+            CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL REFERENCES files(id), name TEXT NOT NULL, kind TEXT NOT NULL, start_line INTEGER NOT NULL, start_col INTEGER NOT NULL, module_path TEXT NOT NULL DEFAULT '');
+            CREATE TABLE "references" (id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL REFERENCES files(id), name TEXT NOT NULL, start_line INTEGER NOT NULL, start_col INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'call', container TEXT NOT NULL DEFAULT '', qualifier TEXT NOT NULL DEFAULT '');
+            CREATE TABLE imports (id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL REFERENCES files(id), module_path TEXT NOT NULL, alias TEXT);
+            CREATE TABLE impls (id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL REFERENCES files(id), type_name TEXT NOT NULL, trait_name TEXT, start_line INTEGER NOT NULL, start_col INTEGER NOT NULL);
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            "#,
+        )
+        .expect("create v5 tables");
+        conn.execute(
+            "INSERT INTO files (path, content_hash) VALUES ('src/a.py', 'h')",
+            [],
+        )
+        .expect("seed files");
+        conn.execute(
+            "INSERT INTO symbols (file_id, name, kind, start_line, start_col) VALUES (1, 'save', 'function', 3, 5)",
+            [],
+        )
+        .expect("seed symbols");
+        conn.execute_batch("PRAGMA user_version = 5;")
+            .expect("set v5 version");
+
+        initialize(&conn).expect("upgrade schema");
+
+        assert_eq!(user_version(&conn), 6);
+        assert!(table_has_column(&conn, "symbols", "container"));
+        assert!(index_exists(&conn, "idx_symbols_container"));
+        // Legacy rows default to the empty (top-level) container.
+        let container: String = conn
+            .query_row("SELECT container FROM symbols", [], |row| row.get(0))
+            .expect("read container");
+        assert_eq!(container, "");
+        // Content rebuilds on the next index pass to populate containers.
+        assert_eq!(index_format_version(&conn), 0);
+
+        initialize(&conn).expect("re-init stays green");
+        assert_eq!(user_version(&conn), 6);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn initialize_on_current_db_writes_nothing() {
+        // A current database must open read-only: pure reads (and
+        // `--no-auto-index` queries) keep working on read-only files.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("index.db");
+        {
+            let conn = Connection::open(&db).unwrap();
+            initialize(&conn).unwrap();
+        }
+        std::fs::set_permissions(
+            &db,
+            std::fs::Permissions::from_mode(0o444),
+        )
+        .unwrap();
+        let conn = Connection::open(&db).unwrap();
+        initialize(&conn).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]

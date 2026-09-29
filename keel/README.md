@@ -143,7 +143,7 @@ Stable tools:
 
 | Tool | Arguments | Description |
 |------|-----------|-------------|
-| `definition` | `{ "name", "module"?, "limit"?, "preview"? }` | Symbol definition(s); `module` or qualified `name` disambiguates |
+| `definition` | `{ "name", "module"?, "limit"?, "preview"? }` | Symbol definition(s); `module`, qualified `name`, or `Type.member` disambiguates |
 | `references` | `{ "name", "module"?, "limit"?, "preview"? }` | Reference sites (import-aware when module known) |
 | `callers` | `{ "name", "module"?, "limit"?, "preview"? }` | Call/use sites (import-aware when unique or provided) |
 | `implementations` | `{ "name", "module"?, "limit"?, "preview"? }` | Trait/interface/base implementers (Rust, TS, Python, JS; Go explicit assertions only) |

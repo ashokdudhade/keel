@@ -30,11 +30,29 @@ pub struct Cli {
 /// typo, not a miss, so fail with exit 2 and usage instead of printing a
 /// confusing `No definition found for ` header with a trailing space.
 fn non_empty_name(value: &str) -> Result<String, String> {
+    // Padded names (`"serve "`) are agent typos, not symbols: trim them
+    // so the query hits instead of missing.
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Err("name must not be empty".to_string())
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+/// Non-trimming variant for dependents/dependencies targets, which may be
+/// file paths where trailing whitespace is significant.
+fn non_empty_target(value: &str) -> Result<String, String> {
     if value.is_empty() {
         Err("name must not be empty".to_string())
     } else {
         Ok(value.to_string())
     }
+}
+
+/// Module filters carry no significant whitespace; trim padding.
+fn trim_module(value: &str) -> Result<String, String> {
+    Ok(value.trim().to_string())
 }
 
 /// Available subcommands.
@@ -47,11 +65,11 @@ pub enum Commands {
     },
     /// Print definition location(s) for a symbol name.
     Definition {
-        /// Symbol name to look up.
+        /// Symbol name to look up (`Type.member` finds the member inside that type).
         #[arg(value_parser = non_empty_name)]
         name: String,
         /// Only consider definitions in this module (e.g. crate::mcp).
-        #[arg(long)]
+        #[arg(long, value_parser = trim_module)]
         module: Option<String>,
         /// Maximum matches to show (1-100000, default 500).
         #[arg(long)]
@@ -66,7 +84,7 @@ pub enum Commands {
         #[arg(value_parser = non_empty_name)]
         name: String,
         /// Only consider definitions in this module when names collide.
-        #[arg(long)]
+        #[arg(long, value_parser = trim_module)]
         module: Option<String>,
         /// Maximum matches to show (1-100000, default 500).
         #[arg(long)]
@@ -81,7 +99,7 @@ pub enum Commands {
         #[arg(value_parser = non_empty_name)]
         name: String,
         /// Only consider definitions in this module when names collide.
-        #[arg(long)]
+        #[arg(long, value_parser = trim_module)]
         module: Option<String>,
         /// Maximum matches to show (1-100000, default 500).
         #[arg(long)]
@@ -131,7 +149,7 @@ pub enum Commands {
         #[arg(value_parser = non_empty_name)]
         name: String,
         /// Only consider the trait in this module when names collide.
-        #[arg(long)]
+        #[arg(long, value_parser = trim_module)]
         module: Option<String>,
         /// Maximum matches to show (1-100000, default 500).
         #[arg(long)]
@@ -142,10 +160,10 @@ pub enum Commands {
     },
     /// Print modules/files that a module or symbol depends on.
     Dependencies {
-        /// Module path, directory, file path, symbol, or qualified symbol
-        /// (e.g. crate::mcp::serve) to analyze. Parent modules and
-        /// directories cover their whole subtree.
-        #[arg(value_parser = non_empty_name)]
+        /// Module path, directory, file path, symbol, qualified symbol
+        /// (e.g. crate::mcp::serve), or member (e.g. Type.member) to
+        /// analyze. Parent modules and directories cover their whole subtree.
+        #[arg(value_parser = non_empty_target)]
         name: String,
         /// Maximum matches to show (1-100000, default 500).
         #[arg(long)]
@@ -153,10 +171,10 @@ pub enum Commands {
     },
     /// Print modules that depend on a module, file, or symbol.
     Dependents {
-        /// Module path, directory, file path, symbol, or qualified symbol
-        /// to analyze. Parent modules and directories cover their whole
-        /// subtree.
-        #[arg(value_parser = non_empty_name)]
+        /// Module path, directory, file path, symbol, qualified symbol,
+        /// or member (e.g. Type.member) to analyze. Parent modules and
+        /// directories cover their whole subtree.
+        #[arg(value_parser = non_empty_target)]
         name: String,
         /// Maximum matches to show (1-100000, default 500).
         #[arg(long)]
@@ -168,7 +186,7 @@ pub enum Commands {
         #[arg(value_parser = non_empty_name)]
         name: String,
         /// Only consider definitions in this module when names collide.
-        #[arg(long)]
+        #[arg(long, value_parser = trim_module)]
         module: Option<String>,
         /// Maximum matches to show (1-100000, default 500).
         #[arg(long)]
@@ -204,7 +222,7 @@ pub enum Commands {
     },
     /// Search symbol names by substring (case-insensitive).
     Search {
-        /// Substring to match against symbol names.
+        /// Substring to match against symbol names (`Type.member` resolves the member exactly).
         #[arg(value_parser = non_empty_name)]
         pattern: String,
         /// Maximum matches to show (1-200, default 50).

@@ -113,6 +113,10 @@ pub struct Symbol {
     pub start_col: u32,
     /// Fully-qualified module path of the symbol (empty when unresolved).
     pub module_path: String,
+    /// Innermost enclosing named type for member symbols (class, struct,
+    /// enum, trait, interface, or impl receiver); empty for top-level
+    /// symbols. Powers member-qualified lookup (`C.method`).
+    pub container: String,
 }
 
 /// A reference (call or macro invocation) to a name. `file` is empty during

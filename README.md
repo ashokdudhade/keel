@@ -199,7 +199,7 @@ After saving, refresh MCP in Cursor Settings. You should see **eleven tools**:
 
 | Tool | Purpose |
 |------|---------|
-| `definition` | Definition(s) for a symbol; optional `module` or qualified name (`crate::mcp::serve`) |
+| `definition` | Definition(s) for a symbol; optional `module`, qualified name (`crate::mcp::serve`), or member form (`Type.member`) |
 | `references` | Reference sites; optional `module` narrows when names collide |
 | `callers` | Call/use sites; import-aware when module is unique or provided |
 | `implementations` | Implementers of a trait/interface/base (Rust, TS, Python, JS; Go explicit assertions only) |

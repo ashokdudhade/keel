@@ -7,7 +7,7 @@ about this repository's code — do not wait to be told to use them.
 
 ## Use Keel first for
 
-- Where is X defined? → `definition`
+- Where is X defined? → `definition` (`Type.member` finds the member inside that type)
 - Who references / uses X? → `references`
 - Who calls X? → `callers`
 - What implements trait T? → `implementations`

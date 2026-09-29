@@ -1313,6 +1313,87 @@ fn indexes_go_fixture_and_finds_symbol() {
 }
 
 #[test]
+fn cli_definition_trims_padded_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("svc.py"), "def save():\n    pass\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["definition", "  save "])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("svc.py:1:5"),
+        "padded name must hit, got: {stdout}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn cli_definition_queries_read_only_db_without_auto_index() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("svc.py"), "def save():\n    pass\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let db = root.join(".keel/index.db");
+    std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["definition", "save", "--no-auto-index"])
+        .output()
+        .unwrap();
+    std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("svc.py:1:5"), "got: {stdout}");
+}
+
+#[test]
+fn cli_queries_resolve_project_root_from_subdir() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("sub/deep")).unwrap();
+    std::fs::write(root.join("r.py"), "def rootfn():\n    pass\n").unwrap();
+
+    let sb = env!("CARGO_BIN_EXE_keel");
+    let out = std::process::Command::new(sb)
+        .current_dir(root)
+        .args(["index", "."])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // Queries from a nested subdir read the ancestor index (and must not
+    // strand a stray `.keel/` in the subdir).
+    let out = std::process::Command::new(sb)
+        .current_dir(root.join("sub/deep"))
+        .args(["definition", "rootfn"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("rootfn"), "got: {stdout}");
+    assert!(
+        !root.join("sub/deep/.keel").exists(),
+        "subdir query must not create a stray index"
+    );
+}
+
+#[test]
 fn cli_index_caps_per_file_syntax_warnings() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

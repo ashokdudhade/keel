@@ -493,6 +493,7 @@ mod tests {
                     start_line: 1,
                     start_col: 1,
                     module_path: "crate".into(),
+                    container: String::new(),
                 },
                 Symbol {
                     name: "b".into(),
@@ -501,6 +502,7 @@ mod tests {
                     start_line: 2,
                     start_col: 1,
                     module_path: "crate".into(),
+                    container: String::new(),
                 },
                 Symbol {
                     name: "c".into(),
@@ -509,6 +511,7 @@ mod tests {
                     start_line: 3,
                     start_col: 1,
                     module_path: "crate".into(),
+                    container: String::new(),
                 },
                 Symbol {
                     name: "lonely".into(),
@@ -517,6 +520,7 @@ mod tests {
                     start_line: 4,
                     start_col: 1,
                     module_path: "crate".into(),
+                    container: String::new(),
                 },
             ],
         )
@@ -569,6 +573,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "src.a".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -590,6 +595,7 @@ mod tests {
                 start_line: 3,
                 start_col: 1,
                 module_path: "src.b".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -650,6 +656,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "src.a".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -672,6 +679,7 @@ mod tests {
                 start_line: 4,
                 start_col: 5,
                 module_path: "src.b".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -725,6 +733,7 @@ mod tests {
                     start_line: 1,
                     start_col: 1,
                     module_path: "crate".into(),
+                    container: String::new(),
                 },
                 Symbol {
                     name: "y".into(),
@@ -733,6 +742,7 @@ mod tests {
                     start_line: 2,
                     start_col: 1,
                     module_path: "crate".into(),
+                    container: String::new(),
                 },
                 Symbol {
                     name: "z".into(),
@@ -741,6 +751,7 @@ mod tests {
                     start_line: 3,
                     start_col: 1,
                     module_path: "crate".into(),
+                    container: String::new(),
                 },
             ],
         )
@@ -833,6 +844,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "pkg.a".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -918,6 +930,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate::api".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -931,6 +944,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate::mcp".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -944,6 +958,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -1012,6 +1027,7 @@ mod tests {
                     start_line: 1,
                     start_col: 1,
                     module_path: "a".into(),
+                    container: String::new(),
                 },
                 Symbol {
                     name: "local_user".into(),
@@ -1020,6 +1036,7 @@ mod tests {
                     start_line: 5,
                     start_col: 1,
                     module_path: "a".into(),
+                    container: String::new(),
                 },
             ],
         )
@@ -1056,6 +1073,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "b".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -1100,6 +1118,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "m".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -1121,6 +1140,7 @@ mod tests {
                 start_line: 5,
                 start_col: 1,
                 module_path: "a".into(),
+                container: String::new(),
             }],
         )
         .unwrap();

@@ -227,6 +227,7 @@ mod tests {
                 start_line: 3,
                 start_col: 1,
                 module_path: "crate::a".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -286,6 +287,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate::b".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -308,6 +310,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate::c".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -330,6 +333,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate::leaf".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -402,6 +406,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate::u".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -438,6 +443,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate::t".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -527,6 +533,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "pkg.a".into(),
+                container: String::new(),
             }],
         )
         .unwrap();

@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// A parsed file with its extracted symbols and references.
 pub struct ParsedFile {
@@ -303,6 +304,29 @@ fn normalize_crate_imports(imports: &mut [Import], crate_name: &str) {
     }
 }
 
+/// Worker-thread stack for parallel parsing. Extraction walks recurse to
+/// input depth, and default 2 MiB rayon stacks overflow on merely deep
+/// files in debug builds; 64 MiB fits ~3000 nesting levels with headroom.
+/// Beyond `MAX_WALK_DEPTH` files fail loudly instead of aborting.
+const PARSE_STACK_SIZE: usize = 64 * 1024 * 1024;
+
+/// Process-wide parse pool, built once. `None` when the OS refuses thread
+/// spawn (apocalyptic): callers fall back to the default rayon pool.
+static PARSE_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+
+fn parse_pool() -> Option<&'static rayon::ThreadPool> {
+    if let Some(pool) = PARSE_POOL.get() {
+        return Some(pool);
+    }
+    match rayon::ThreadPoolBuilder::new()
+        .stack_size(PARSE_STACK_SIZE)
+        .build()
+    {
+        Ok(pool) => Some(PARSE_POOL.get_or_init(|| pool)),
+        Err(_) => None,
+    }
+}
+
 /// Hash every file; parse those whose hash changed. Reads each file at most once.
 ///
 /// `crates` is the [`rust_crate_names`] map for same-crate `use` normalization.
@@ -316,21 +340,27 @@ pub fn hash_and_parse(
     registry: &Registry,
     crates: &HashMap<PathBuf, String>,
 ) -> Vec<FileOutcome> {
-    files
-        .par_iter()
-        .map(|abs_path| {
-            let rel = normalize_path(root, abs_path);
-            let key = rel.to_string_lossy().into_owned();
-            match process_one(abs_path, &rel, &key, existing, registry, root, crates) {
-                Ok(outcome) => outcome,
-                Err(e) => FileOutcome::Failed {
-                    path: abs_path.clone(),
-                    message: e.to_string(),
-                    hash: None,
-                },
-            }
-        })
-        .collect()
+    let parse_all = || {
+        files
+            .par_iter()
+            .map(|abs_path| {
+                let rel = normalize_path(root, abs_path);
+                let key = rel.to_string_lossy().into_owned();
+                match process_one(abs_path, &rel, &key, existing, registry, root, crates) {
+                    Ok(outcome) => outcome,
+                    Err(e) => FileOutcome::Failed {
+                        path: abs_path.clone(),
+                        message: e.to_string(),
+                        hash: None,
+                    },
+                }
+            })
+            .collect()
+    };
+    match parse_pool() {
+        Some(pool) => pool.install(parse_all),
+        None => parse_all(),
+    }
 }
 
 fn process_one(

@@ -46,10 +46,13 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
   per-file failures counted in `IndexStats.errors` without aborting; files
   that parse with syntax errors still index but warn per file and count in
   `IndexStats.syntax_errors` (`LanguagePlugin::has_syntax_errors`).
-- **Storage:** `rusqlite` bundled SQLite, `PRAGMA user_version = 5`
-  (`db/schema.rs` migrates v0/v1/v2/v3/v4 → v5 idempotently in one transaction;
-  v5 adds `file_id` indexes only — no content rebuild).
-  Tables: `files`, `symbols` (+`module_path`), `"references"` (+`kind`,
+  Parsing runs on a dedicated 64 MiB-stack rayon pool, and every
+  extraction walk enforces `MAX_WALK_DEPTH` (1024; real max observed: 89):
+  deeper files fail loudly per file instead of overflowing a stack.
+- **Storage:** `rusqlite` bundled SQLite, `PRAGMA user_version = 6`
+  (`db/schema.rs` migrates v0–v5 → v6 idempotently in one transaction;
+  v6 adds the `symbols.container` column + index and forces one rebuild).
+  Tables: `files`, `symbols` (+`module_path`, +`container`), `"references"` (+`kind`,
   +`container`, +`qualifier`), `imports`, `impls`, `meta` (writer stamps).
   `INDEX_FORMAT_VERSION` (=2) tracks content semantics separately from schema:
   the indexer auto-rebuilds stale content; reads via facade/HTTP refuse with
@@ -88,10 +91,22 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
   `definition`/`references`/`callers`/`impact`/`implementations`
   accept optional `module` or qualified `name` (`crate::mcp::serve`); when both
   are passed, `module` wins and `name` is stripped to bare symbol.
-- **Index resolution** (`cli/commands.rs::resolve_index_db`): 1. `KEEL_INDEX_DB`
+  `definition`/`search` also take member form (`Type.member` and
+  single-segment `Type::member`; `definition` tries the module reading
+  of `::` first, `search` is case-insensitive).
+- **Index resolution** (`cli/commands.rs::resolve_index_db`, MCP): 1. `KEEL_INDEX_DB`
   if set → 2. walk up from cwd for `.keel/index.db` → 3. daemon registry
   (project containing cwd, else sole registered index; never guess among many)
   → 4. `cwd/.keel/index.db`. `KEEL_MCP_DEBUG=1` prints the choice on stderr.
+  CLI queries use `query_root` (step 2 then 4 only): subdir queries read the
+  ancestor index; explicit `index`/`watch` paths and `KEEL_INDEX_DB`/registry
+  keep their scope.
+  File targets are suffix-tolerant (`graph::target::resolve_file_target`,
+  shared by `dependents`/`outline`/`unused`): exact → cleaned → unique
+  suffix, so `../../x.py`, absolute paths, and bare basenames from subdirs
+  resolve; runs after module/dir steps, `/`-boundary required, ambiguous
+  tails miss honestly with suggestions, extensionless identifiers pass
+  through to symbol resolution.
 - **HTTP:** `api/mod.rs` via `keel serve` on `127.0.0.1:7645`:
   `GET /health`, `GET /symbol/{name}[?limit=N]`, `GET /outline/{path}[?limit=N]`,
   `GET /search/{pattern}[?limit=N]`, `GET /impact/{name}[?module=M]`,
@@ -125,7 +140,10 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
   (`mcp` in `mcp::serve`); Method refs store receiver text (`db` in
   `db.get()`) — all five languages — so module-scoped callers can break
   import-tier ties; undecided ties stay dropped with an honest note.
-  Schema v5, index format 2 (migrations via `schema::initialize`).
+  Schema v6, index format 3 (migrations via `schema::initialize`). Member
+  symbols record their enclosing type in `symbols.container`, so
+  `definition` accepts `Type.member` (and single-segment `Type::member`
+  as a fallback when the module reading misses).
 - **Onboarding commands:** `keel init` (index now + MCP config print; no daemon needed),
   `keel doctor` (version/daemon/project/MCP/index checks; flags corrupt DBs as unreadable), `keel daemon-stop`,
   `--version`. `keel index/watch <path>` write to `<path>/.keel/`; daemon pids
@@ -150,7 +168,7 @@ cargo install --path ./keel                 # contributor install from source
 - Benchmarks: `scripts/accuracy-benchmark.sh`, `scripts/realworld-accuracy-benchmark.sh`,
   `scripts/impact-benchmark.sh` (transitive impact recall, 5 languages, no grep baseline),
   `scripts/references-benchmark.sh` (module-scoped references vs whole-word grep).
-  All three core gates hold F1 1.0 (impact 52 queries, accuracy 20, references 12).
+  All three core gates hold F1 1.0 (impact 52 queries, accuracy 29 incl. 9 member-qualified, references 12).
 - Website: `cd website && npm ci && npm run build` (Node 20).
 - Reset a project index: `rm -rf .keel && keel start` (or `keel index .`).
 

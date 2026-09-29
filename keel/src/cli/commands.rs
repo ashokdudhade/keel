@@ -14,9 +14,29 @@ use std::path::{Path, PathBuf};
 const DB_DIR: &str = ".keel";
 const DB_FILE: &str = "index.db";
 
-/// Path of the current-directory project index (`./.keel/index.db`).
+/// Root whose index CLI queries read: nearest ancestor (or cwd itself) with
+/// an existing `.keel/index.db`, else cwd. Lets queries run from project
+/// subdirectories without stranding them on a fresh empty index.
+///
+/// Explicit-scope commands (`index`/`watch`/daemon) keep their given path;
+/// only the implicit query root resolves upward. Unlike MCP resolution
+/// this ignores `KEEL_INDEX_DB` and the daemon registry: a globally
+/// exported override must not hijack local queries.
+pub fn query_root() -> PathBuf {
+    // Absolute: `find_index_walking_up` cannot ascend from `"."` (`pop`
+    // fails), so resolve the real cwd first.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if let Some(db) = find_index_walking_up(&cwd) {
+        if let Some(root) = db.parent().and_then(|d| d.parent()) {
+            return root.to_path_buf();
+        }
+    }
+    PathBuf::from(".")
+}
+
+/// Path of the project index queries read (see [`query_root`]).
 pub fn db_path() -> PathBuf {
-    Path::new(DB_DIR).join(DB_FILE)
+    project_index_db(&query_root())
 }
 
 fn project_index_db(root: &Path) -> PathBuf {
@@ -109,7 +129,7 @@ fn find_index_from_registry(cwd: &Path) -> Option<PathBuf> {
 
 /// Open (creating the directory if needed) the on-disk index database.
 fn open_db() -> Result<Connection> {
-    open_db_at(Path::new("."))
+    open_db_at(&query_root())
 }
 
 /// Open the index database rooted at `root` (`<root>/.keel/index.db`).
@@ -193,7 +213,7 @@ pub fn ensure_gitignored(root: &Path) -> Result<bool> {
 /// Unchanged files are hash-skipped. Emits a one-line stderr note only when
 /// something actually changed or failed.
 pub fn ensure_index(root: &Path) -> Result<IndexStats> {
-    let mut conn = open_db()?;
+    let mut conn = open_db_at(root)?;
     let stats = index::index_repository(root, &mut conn)?;
     if stats.indexed + stats.removed + stats.errors > 0 {
         eprintln!(
@@ -210,7 +230,7 @@ pub fn ensure_index(root: &Path) -> Result<IndexStats> {
 
 fn maybe_ensure_index(auto_index: bool) -> Result<()> {
     if auto_index {
-        ensure_index(Path::new("."))?;
+        ensure_index(&query_root())?;
     }
     Ok(())
 }
@@ -559,9 +579,7 @@ pub fn preview_cache(preview: bool) -> Option<PreviewCache> {
     if !preview {
         return None;
     }
-    Some(PreviewCache::new(index_root_from_db(&resolve_index_db(
-        Path::new("."),
-    ))))
+    Some(PreviewCache::new(index_root_from_db(&db_path())))
 }
 
 fn truncate_preview(s: &str) -> String {
@@ -765,7 +783,7 @@ pub fn run_impact_meta(
 /// Serve the JSON API on `127.0.0.1:{port}` using the on-disk index.
 pub fn run_serve(port: u16, auto_index: bool) -> Result<()> {
     if auto_index {
-        ensure_index(Path::new("."))?;
+        ensure_index(&query_root())?;
     } else {
         let conn = open_db()?;
         schema::initialize(&conn)?;
@@ -1221,6 +1239,7 @@ mod tests {
             start_line: 1,
             start_col: 12,
             module_path: "crate".into(),
+            container: String::new(),
         };
         let reference = Reference {
             name: "create_order".into(),

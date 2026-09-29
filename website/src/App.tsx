@@ -30,7 +30,7 @@ const tools: { name: string; summary: string }[] = [
   {
     name: "definition",
     summary:
-      "Definition(s) for a symbol; optional module or qualified name (crate::mcp::serve)",
+      "Definition(s) for a symbol; module, qualified name, or Type.member form",
   },
   {
     name: "references",
@@ -61,11 +61,15 @@ const tools: { name: string; summary: string }[] = [
   },
   {
     name: "search",
-    summary: "Substring symbol-name search; exact matches rank first",
+    summary: "Substring symbol-name search; exact and Type.member matches first",
   },
   {
     name: "dependents",
     summary: "Modules that depend on a module, file, or symbol",
+  },
+  {
+    name: "unused",
+    summary: "Functions with no callers (candidates; entry points exempt)",
   },
   {
     name: "index",

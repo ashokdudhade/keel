@@ -4,13 +4,13 @@
     "without_keel": {
       "tp": 19,
       "fp": 0,
-      "fn": 9,
+      "fn": 13,
       "precision": 1.0,
-      "recall": 0.6785714285714286,
-      "f1": 0.8085106382978724
+      "recall": 0.59375,
+      "f1": 0.7450980392156863
     },
     "with_keel": {
-      "tp": 28,
+      "tp": 32,
       "fp": 0,
       "fn": 0,
       "precision": 1.0,
@@ -102,13 +102,13 @@
       "without_keel": {
         "tp": 4,
         "fp": 0,
-        "fn": 2,
+        "fn": 6,
         "precision": 1.0,
-        "recall": 0.6666666666666666,
-        "f1": 0.8
+        "recall": 0.4,
+        "f1": 0.5714285714285715
       },
       "with_keel": {
-        "tp": 6,
+        "tp": 10,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
@@ -119,7 +119,7 @@
   },
   "index_stats": {
     "BurntSushi-walkdir": {
-      "seconds": 0.015,
+      "seconds": 0.009,
       "stdout": "Indexed 0 file(s) (skipped 9, removed 0, errors 0, syntax errors 0).",
       "language": "Rust",
       "url": "https://github.com/BurntSushi/walkdir.git",
@@ -127,7 +127,7 @@
       "description": "Popular Rust recursive directory walker"
     },
     "colinhacks-zod": {
-      "seconds": 0.021,
+      "seconds": 0.01,
       "stdout": "Indexed 0 file(s) (skipped 167, removed 0, errors 0, syntax errors 0).",
       "language": "TypeScript",
       "url": "https://github.com/colinhacks/zod.git",
@@ -135,7 +135,7 @@
       "description": "Popular TypeScript schema validation library"
     },
     "expressjs-express": {
-      "seconds": 0.019,
+      "seconds": 0.009,
       "stdout": "Indexed 0 file(s) (skipped 152, removed 0, errors 0, syntax errors 0).",
       "language": "JavaScript",
       "url": "https://github.com/expressjs/express.git",
@@ -143,7 +143,7 @@
       "description": "Popular Node.js web framework"
     },
     "pallets-flask": {
-      "seconds": 0.019,
+      "seconds": 0.009,
       "stdout": "Indexed 0 file(s) (skipped 83, removed 0, errors 0, syntax errors 0).",
       "language": "Python",
       "url": "https://github.com/pallets/flask.git",
@@ -151,7 +151,7 @@
       "description": "Popular Python web microframework"
     },
     "spf13-cobra": {
-      "seconds": 0.016,
+      "seconds": 0.009,
       "stdout": "Indexed 0 file(s) (skipped 36, removed 0, errors 0, syntax errors 0).",
       "language": "Go",
       "url": "https://github.com/spf13/cobra.git",
@@ -315,25 +315,27 @@
       "repo": "colinhacks-zod",
       "language": "TypeScript",
       "symbol": "ZodObject",
-      "note": "src + deno copies",
+      "note": "src + deno copies, incl. ZodFirstPartyTypeKind members",
       "without_keel": {
         "tp": 2,
         "fp": 0,
-        "fn": 0,
+        "fn": 2,
         "precision": 1.0,
-        "recall": 1.0,
-        "f1": 1.0,
+        "recall": 0.5,
+        "f1": 0.6666666666666666,
         "predicted": [
           "deno/lib/types.ts:2412",
           "src/types.ts:2412"
         ],
         "expected": [
           "deno/lib/types.ts:2412",
-          "src/types.ts:2412"
+          "deno/lib/types.ts:5132",
+          "src/types.ts:2412",
+          "src/types.ts:5132"
         ]
       },
       "with_keel": {
-        "tp": 2,
+        "tp": 4,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
@@ -341,11 +343,15 @@
         "f1": 1.0,
         "predicted": [
           "deno/lib/types.ts:2412",
-          "src/types.ts:2412"
+          "deno/lib/types.ts:5132",
+          "src/types.ts:2412",
+          "src/types.ts:5132"
         ],
         "expected": [
           "deno/lib/types.ts:2412",
-          "src/types.ts:2412"
+          "deno/lib/types.ts:5132",
+          "src/types.ts:2412",
+          "src/types.ts:5132"
         ]
       }
     },
@@ -353,36 +359,42 @@
       "repo": "colinhacks-zod",
       "language": "TypeScript",
       "symbol": "ZodString",
-      "note": "src + deno copies",
+      "note": "src + deno copies, incl. ZodFirstPartyTypeKind members",
       "without_keel": {
         "tp": 2,
         "fp": 0,
-        "fn": 0,
+        "fn": 2,
         "precision": 1.0,
-        "recall": 1.0,
-        "f1": 1.0,
+        "recall": 0.5,
+        "f1": 0.6666666666666666,
         "predicted": [
           "deno/lib/types.ts:672",
           "src/types.ts:672"
         ],
         "expected": [
+          "deno/lib/types.ts:5118",
           "deno/lib/types.ts:672",
+          "src/types.ts:5118",
           "src/types.ts:672"
         ]
       },
       "with_keel": {
-        "tp": 2,
+        "tp": 4,
         "fp": 0,
         "fn": 0,
         "precision": 1.0,
         "recall": 1.0,
         "f1": 1.0,
         "predicted": [
+          "deno/lib/types.ts:5118",
           "deno/lib/types.ts:672",
+          "src/types.ts:5118",
           "src/types.ts:672"
         ],
         "expected": [
+          "deno/lib/types.ts:5118",
           "deno/lib/types.ts:672",
+          "src/types.ts:5118",
           "src/types.ts:672"
         ]
       }

@@ -60,6 +60,13 @@ pub enum KeelError {
         supported: i64,
     },
 
+    /// Source nesting exceeds the extraction walk limit.
+    #[error("nesting exceeds {limit} levels; split deeply-nested code to index this file")]
+    TooDeeplyNested {
+        /// Walk-depth limit that was exceeded.
+        limit: u32,
+    },
+
     /// The index was written by an older Keel and must be rebuilt before reads.
     #[error(
         "index format version {found} is older than current version {current}; re-index the project (rm -rf .keel && keel start, or query without --no-auto-index)"

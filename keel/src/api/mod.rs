@@ -28,6 +28,8 @@ pub struct SymbolDto {
     pub start_col: u32,
     /// Fully-qualified module path.
     pub module_path: String,
+    /// Innermost enclosing named type for member symbols (empty for top-level).
+    pub container: String,
     /// Source line at the hit (present only when previews were requested).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
@@ -206,6 +208,7 @@ impl From<&Symbol> for SymbolDto {
             start_line: s.start_line,
             start_col: s.start_col,
             module_path: s.module_path.clone(),
+            container: s.container.clone(),
             preview: None,
         }
     }
@@ -333,6 +336,7 @@ fn build_response(
 
     if let Some(pattern) = path.strip_prefix("/search/") {
         let pattern = percent_decode(pattern);
+        let pattern = pattern.trim();
         if pattern.is_empty() {
             return Ok((
                 StatusCode(400),
@@ -341,7 +345,7 @@ fn build_response(
             ));
         }
         let (limit, limit_note) = query_limit(url);
-        let mut payload = search_response(db_path, &pattern, limit, auto_index)?;
+        let mut payload = search_response(db_path, pattern, limit, auto_index)?;
         if let Some(note) = limit_note {
             payload.notes.push(note);
         }
@@ -381,6 +385,7 @@ fn build_response(
 
     if let Some(name) = path.strip_prefix("/symbol/") {
         let name = percent_decode(name);
+        let name = name.trim();
         if name.is_empty() {
             return Ok((
                 StatusCode(400),
@@ -389,7 +394,7 @@ fn build_response(
             ));
         }
         let (limit, limit_note) = query_hit_limit(url);
-        let mut payload = symbol_intelligence(db_path, &name, limit, auto_index)?;
+        let mut payload = symbol_intelligence(db_path, name, limit, auto_index)?;
         if let Some(note) = limit_note {
             payload.notes.push(note);
         }
@@ -410,6 +415,7 @@ fn build_response(
 
     if let Some(name) = path.strip_prefix("/impact/") {
         let name = percent_decode(name);
+        let name = name.trim();
         if name.is_empty() {
             return Ok((
                 StatusCode(400),
@@ -419,7 +425,7 @@ fn build_response(
         }
         let module = query_module(url);
         let (limit, limit_note) = query_hit_limit(url);
-        let mut payload = impact_response(db_path, &name, module.as_deref(), limit, auto_index)?;
+        let mut payload = impact_response(db_path, name, module.as_deref(), limit, auto_index)?;
         if let Some(note) = limit_note {
             payload.notes.push(note);
         }
@@ -550,7 +556,21 @@ fn symbol_intelligence(
     crate::facade::ensure_index_current(&conn)?;
     let start = std::time::Instant::now();
 
-    let definition = queries::find_definition(&conn, name)?;
+    // Member-qualified names (`C.method`, `Type::member` with a
+    // single-segment head) resolve the definition list by container,
+    // matching the CLI/MCP `definition` behavior.
+    let definition = if let Some((container, sym)) = crate::graph::target::split_member_name(name) {
+        queries::find_definition_by_container(&conn, container, sym)?
+    } else if let Some((head, sym)) = crate::facade::split_qualified_name(name) {
+        let hits = queries::find_definition_by_qualified(&conn, head, sym)?;
+        if hits.is_empty() && !head.contains("::") {
+            queries::find_definition_by_container(&conn, head, sym)?
+        } else {
+            hits
+        }
+    } else {
+        queries::find_definition(&conn, name)?
+    };
     let references = queries::find_references(&conn, name)?;
     let implementations = queries::find_implementations(&conn, name)?;
     let dependencies = deps::find_dependencies(&conn, name)?;
@@ -695,8 +715,9 @@ fn query_module(url: &str) -> Option<String> {
     for pair in query.split('&') {
         if let Some(value) = pair.strip_prefix("module=") {
             let decoded = percent_decode(value);
-            if !decoded.is_empty() {
-                return Some(decoded);
+            let trimmed = decoded.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_owned());
             }
         }
     }
@@ -994,6 +1015,7 @@ mod tests {
                     start_line: 1,
                     start_col: 1,
                     module_path: String::new(),
+                    container: String::new(),
                 },
                 Symbol {
                     name: "beta".to_string(),
@@ -1002,6 +1024,7 @@ mod tests {
                     start_line: 5,
                     start_col: 1,
                     module_path: String::new(),
+                    container: String::new(),
                 },
             ],
         )
@@ -1090,6 +1113,7 @@ mod tests {
                         start_line: 1,
                         start_col: 1,
                         module_path: String::new(),
+                        container: String::new(),
                     }],
                 )
                 .expect("insert symbols");
@@ -1144,6 +1168,30 @@ mod tests {
             "got {}",
             body
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn symbol_and_search_routes_trim_padding() {
+        let dir =
+            std::env::temp_dir().join(format!("keel_trim_http_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let db_path = seeded_db(&dir);
+        let (status, body, _) =
+            build_response(Method::Get, "/symbol/%20alpha%20", &db_path, false)
+                .expect("build response");
+        assert_eq!(status, StatusCode(200));
+        let v: serde_json::Value = serde_json::from_str(&body).expect("parse json");
+        assert_eq!(v["definition"].as_array().expect("array").len(), 1);
+        assert_eq!(v["definition"][0]["name"], "alpha");
+
+        let (status, body, _) =
+            build_response(Method::Get, "/search/%20beta%20", &db_path, false)
+                .expect("build response");
+        assert_eq!(status, StatusCode(200));
+        let v: serde_json::Value = serde_json::from_str(&body).expect("parse json");
+        assert_eq!(v["results"].as_array().expect("array").len(), 1);
+        assert_eq!(v["results"][0]["name"], "beta");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1236,6 +1284,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "a".to_string(),
+                container: String::new(),
             }],
         )
         .expect("insert alpha");
@@ -1257,6 +1306,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "b".to_string(),
+                container: String::new(),
             }],
         )
         .expect("insert beta");

@@ -74,8 +74,8 @@ pub fn delete_file_and_rows(conn: &Connection, path: &str) -> Result<()> {
 /// Insert all symbols for a file.
 pub fn insert_symbols(conn: &Connection, file_id: i64, symbols: &[Symbol]) -> Result<()> {
     let mut stmt = conn.prepare(
-        "INSERT INTO symbols (file_id, name, kind, start_line, start_col, module_path)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO symbols (file_id, name, kind, start_line, start_col, module_path, container)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
     for s in symbols {
         stmt.execute(params![
@@ -84,7 +84,8 @@ pub fn insert_symbols(conn: &Connection, file_id: i64, symbols: &[Symbol]) -> Re
             s.kind.as_db(),
             s.start_line as i64,
             s.start_col as i64,
-            s.module_path
+            s.module_path,
+            s.container
         ])?;
     }
     Ok(())
@@ -146,7 +147,7 @@ pub fn find_definition_by_qualified(
     name: &str,
 ) -> Result<Vec<Symbol>> {
     let mut stmt = conn.prepare(
-        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path
+        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path, s.container
          FROM symbols s JOIN files f ON s.file_id = f.id
          WHERE s.module_path = ?1 AND s.name = ?2
          ORDER BY f.path, s.start_line, s.start_col",
@@ -159,6 +160,71 @@ pub fn find_definition_by_qualified(
             start_line: row.get::<_, i64>(3)? as u32,
             start_col: row.get::<_, i64>(4)? as u32,
             module_path: row.get::<_, String>(5)?,
+            container: row.get::<_, String>(6)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// Find member definitions with the given enclosing `container` (class,
+/// struct, enum, trait, interface, or impl receiver) and `name`, ordered
+/// by location. Powers member-qualified lookup (`C.method`).
+pub fn find_definition_by_container(
+    conn: &Connection,
+    container: &str,
+    name: &str,
+) -> Result<Vec<Symbol>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path, s.container
+         FROM symbols s JOIN files f ON s.file_id = f.id
+         WHERE s.container = ?1 AND s.name = ?2
+         ORDER BY f.path, s.start_line, s.start_col",
+    )?;
+    let rows = stmt.query_map(params![container, name], |row| {
+        Ok(Symbol {
+            name: row.get::<_, String>(0)?,
+            kind: SymbolKind::from_db(&row.get::<_, String>(1)?),
+            file: PathBuf::from(row.get::<_, String>(2)?),
+            start_line: row.get::<_, i64>(3)? as u32,
+            start_col: row.get::<_, i64>(4)? as u32,
+            module_path: row.get::<_, String>(5)?,
+            container: row.get::<_, String>(6)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// Case-insensitive variant of [`find_definition_by_container`] for
+/// substring search, which is case-insensitive everywhere else.
+/// `definition` keeps the exact (case-sensitive) form.
+pub fn find_definition_by_container_nocase(
+    conn: &Connection,
+    container: &str,
+    name: &str,
+) -> Result<Vec<Symbol>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path, s.container
+         FROM symbols s JOIN files f ON s.file_id = f.id
+         WHERE s.container = ?1 COLLATE NOCASE AND s.name = ?2 COLLATE NOCASE
+         ORDER BY f.path, s.start_line, s.start_col",
+    )?;
+    let rows = stmt.query_map(params![container, name], |row| {
+        Ok(Symbol {
+            name: row.get::<_, String>(0)?,
+            kind: SymbolKind::from_db(&row.get::<_, String>(1)?),
+            file: PathBuf::from(row.get::<_, String>(2)?),
+            start_line: row.get::<_, i64>(3)? as u32,
+            start_col: row.get::<_, i64>(4)? as u32,
+            module_path: row.get::<_, String>(5)?,
+            container: row.get::<_, String>(6)?,
         })
     })?;
     let mut out = Vec::new();
@@ -228,7 +294,7 @@ pub fn module_paths_in_file(conn: &Connection, path: &str) -> Result<Vec<String>
 /// Find all symbol definitions matching `name`, ordered deterministically.
 pub fn find_definition(conn: &Connection, name: &str) -> Result<Vec<Symbol>> {
     let mut stmt = conn.prepare(
-        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path
+        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path, s.container
          FROM symbols s JOIN files f ON s.file_id = f.id
          WHERE s.name = ?1
          ORDER BY f.path, s.start_line, s.start_col",
@@ -241,6 +307,7 @@ pub fn find_definition(conn: &Connection, name: &str) -> Result<Vec<Symbol>> {
             start_line: row.get::<_, i64>(3)? as u32,
             start_col: row.get::<_, i64>(4)? as u32,
             module_path: row.get::<_, String>(5)?,
+            container: row.get::<_, String>(6)?,
         })
     })?;
     let mut out = Vec::new();
@@ -262,7 +329,7 @@ pub fn search_symbols(
     let escaped = pattern.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
     let like = format!("%{escaped}%");
     let mut stmt = conn.prepare(
-        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path
+        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path, s.container
          FROM symbols s JOIN files f ON s.file_id = f.id
          WHERE s.name LIKE ?1 ESCAPE '\\'
          ORDER BY f.path, s.start_line, s.start_col
@@ -276,6 +343,7 @@ pub fn search_symbols(
             start_line: row.get::<_, i64>(3)? as u32,
             start_col: row.get::<_, i64>(4)? as u32,
             module_path: row.get::<_, String>(5)?,
+            container: row.get::<_, String>(6)?,
         })
     })?;
     let mut out = Vec::new();
@@ -301,7 +369,7 @@ pub fn indexed_files(conn: &Connection) -> Result<Vec<String>> {
 /// All symbols defined in `file`, in source order.
 pub fn symbols_in_file(conn: &Connection, file: &str) -> Result<Vec<Symbol>> {
     let mut stmt = conn.prepare(
-        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path
+        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path, s.container
          FROM symbols s JOIN files f ON s.file_id = f.id
          WHERE f.path = ?1
          ORDER BY s.start_line, s.start_col",
@@ -314,6 +382,7 @@ pub fn symbols_in_file(conn: &Connection, file: &str) -> Result<Vec<Symbol>> {
             start_line: row.get::<_, i64>(3)? as u32,
             start_col: row.get::<_, i64>(4)? as u32,
             module_path: row.get::<_, String>(5)?,
+            container: row.get::<_, String>(6)?,
         })
     })?;
     let mut out = Vec::new();
@@ -334,7 +403,7 @@ pub fn unreferenced_functions(
     files: Option<&[String]>,
 ) -> Result<Vec<Symbol>> {
     let mut sql = String::from(
-        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path
+        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path, s.container
          FROM symbols s JOIN files f ON s.file_id = f.id
          WHERE s.kind = 'function'
          AND NOT EXISTS (SELECT 1 FROM \"references\" r WHERE r.name = s.name)",
@@ -353,6 +422,7 @@ pub fn unreferenced_functions(
             start_line: row.get::<_, i64>(3)? as u32,
             start_col: row.get::<_, i64>(4)? as u32,
             module_path: row.get::<_, String>(5)?,
+            container: row.get::<_, String>(6)?,
         })
     };
     let mut out = Vec::new();
@@ -380,7 +450,7 @@ pub fn all_functions(
     files: Option<&[String]>,
 ) -> Result<Vec<Symbol>> {
     let mut sql = String::from(
-        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path
+        "SELECT s.name, s.kind, f.path, s.start_line, s.start_col, s.module_path, s.container
          FROM symbols s JOIN files f ON s.file_id = f.id
          WHERE s.kind = 'function'",
     );
@@ -398,6 +468,7 @@ pub fn all_functions(
             start_line: row.get::<_, i64>(3)? as u32,
             start_col: row.get::<_, i64>(4)? as u32,
             module_path: row.get::<_, String>(5)?,
+            container: row.get::<_, String>(6)?,
         })
     };
     let mut out = Vec::new();
@@ -598,6 +669,7 @@ mod tests {
                 start_line: 10,
                 start_col: 1,
                 module_path: String::new(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -660,6 +732,7 @@ mod tests {
                 start_line: 3,
                 start_col: 1,
                 module_path: "crate::api".to_string(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -684,6 +757,51 @@ mod tests {
         let refs = find_references(&conn, "spawn").unwrap();
         assert_eq!(refs[0].kind, ReferenceKind::Method);
         assert_eq!(refs[0].container, "handler");
+    }
+
+    #[test]
+    fn symbol_container_round_trips_and_qualifies_members() {
+        let conn = setup();
+        let file_id = insert_file(
+            &conn,
+            &FileNode { path: PathBuf::from("svc.py"), content_hash: "h".to_string() },
+        )
+        .unwrap();
+        let sym = |name: &str, container: &str, line: u32| Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Function,
+            file: PathBuf::new(),
+            start_line: line,
+            start_col: 5,
+            module_path: "svc".to_string(),
+            container: container.to_string(),
+        };
+        insert_symbols(
+            &conn,
+            file_id,
+            &[
+                sym("save", "Alpha", 2),
+                sym("save", "Beta", 6),
+                sym("save", "", 9),
+            ],
+        )
+        .unwrap();
+
+        let alpha = find_definition_by_container(&conn, "Alpha", "save").unwrap();
+        assert_eq!(alpha.len(), 1);
+        assert_eq!(alpha[0].start_line, 2);
+        assert_eq!(alpha[0].container, "Alpha");
+
+        let beta = find_definition_by_container(&conn, "Beta", "save").unwrap();
+        assert_eq!(beta.len(), 1);
+        assert_eq!(beta[0].start_line, 6);
+
+        // Bare lookup still sees all three, each with its container.
+        let all = find_definition(&conn, "save").unwrap();
+        assert_eq!(all.len(), 3);
+        let containers: Vec<&str> =
+            all.iter().map(|s| s.container.as_str()).collect();
+        assert_eq!(containers, vec!["Alpha", "Beta", ""]);
     }
 
     #[test]
@@ -918,6 +1036,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate".to_string(),
+                container: String::new(),
             }],
         )
         .unwrap();

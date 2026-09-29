@@ -574,6 +574,7 @@ mod tests {
                 start_line: 2,
                 start_col: 1,
                 module_path: "crate::a".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -596,6 +597,7 @@ mod tests {
                 start_line: 2,
                 start_col: 1,
                 module_path: "crate::b".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -651,6 +653,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate::d".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -789,6 +792,7 @@ mod tests {
             start_line: 1,
             start_col: 1,
             module_path: module.into(),
+            container: String::new(),
         };
         // The Go file sorts first, so a tier tie would resolve to it.
         queries::insert_symbols(conn, file("go/h.go"), &[def("h")]).unwrap();
@@ -852,6 +856,7 @@ mod tests {
             start_line: 2,
             start_col: 3,
             module_path: module.into(),
+            container: String::new(),
         };
         queries::insert_symbols(&conn, file("js/src/j.js"), &[def("js/src/j")]).unwrap();
         queries::insert_symbols(&conn, file("ts/src/j.ts"), &[def("ts/src/j")]).unwrap();
@@ -912,6 +917,7 @@ mod tests {
             start_line: 5,
             start_col: 9,
             module_path: module.into(),
+            container: String::new(),
         };
         queries::insert_symbols(&conn, file("a.py"), &[def("a")]).unwrap();
         queries::insert_symbols(&conn, file("c.py"), &[def("c")]).unwrap();
@@ -1019,6 +1025,7 @@ mod tests {
                     start_line: 1,
                     start_col: 1,
                     module_path: module.into(),
+                    container: String::new(),
                 }],
             )
             .unwrap();
@@ -1100,6 +1107,7 @@ mod tests {
                     start_line: 1,
                     start_col: 1,
                     module_path: module.into(),
+                    container: String::new(),
                 }],
             )
             .unwrap();
@@ -1177,6 +1185,7 @@ mod tests {
                     start_line: 1,
                     start_col: 1,
                     module_path: module.into(),
+                    container: String::new(),
                 }],
             )
             .unwrap();
@@ -1249,6 +1258,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "a".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -1271,6 +1281,7 @@ mod tests {
                 start_line: 9,
                 start_col: 1,
                 module_path: "c".into(),
+                container: String::new(),
             }],
         )
         .unwrap();
@@ -1326,6 +1337,7 @@ mod tests {
                     start_line: 1,
                     start_col: 1,
                     module_path: module.into(),
+                    container: String::new(),
                 }],
             )
             .unwrap();
@@ -1448,6 +1460,7 @@ mod tests {
                 start_line: 1,
                 start_col: 1,
                 module_path: "crate".into(),
+                container: String::new(),
             }],
         )
         .unwrap();

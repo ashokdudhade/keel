@@ -6,7 +6,7 @@
 //! `.ts`/`.mts`/`.cts` parse with the TypeScript grammar; `.tsx` uses the TSX
 //! grammar. Extraction walks are shared.
 
-use super::{file_path_key, is_top_level_js_declaration, path_module_identity, resolve_relative_path_module, LanguagePlugin};
+use super::{file_path_key, is_top_level_js_declaration, path_module_identity, resolve_relative_path_module, DepthGuard, LanguagePlugin, WalkBudget, MAX_WALK_DEPTH};
 use crate::error::{Result, KeelError};
 use crate::graph::types::{ImplRecord, Import, Reference, ReferenceKind, Symbol, SymbolKind};
 use std::path::{Path, PathBuf};
@@ -51,7 +51,8 @@ impl LanguagePlugin for TypeScriptPlugin {
         let src = source_code.as_bytes();
         let module_path = path_module_identity(path);
         let mut out = Vec::new();
-        walk_symbols(tree.root_node(), src, &module_path, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_symbols(tree.root_node(), src, &module_path, "", &mut out, &budget)?;
         Ok(out)
     }
 
@@ -62,6 +63,7 @@ impl LanguagePlugin for TypeScriptPlugin {
         let module_path = path_module_identity(path);
         let mut scope: Vec<String> = Vec::new();
         let mut out = Vec::new();
+        let budget = WalkBudget::new();
         walk_references(
             tree.root_node(),
             src,
@@ -69,6 +71,7 @@ impl LanguagePlugin for TypeScriptPlugin {
             &module_path,
             &mut scope,
             &mut out,
+            &budget,
         )?;
         Ok(out)
     }
@@ -77,7 +80,8 @@ impl LanguagePlugin for TypeScriptPlugin {
         let tree = Self::parse_ts(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
-        walk_imports(tree.root_node(), src, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_imports(tree.root_node(), src, &mut out, &budget)?;
         for imp in &mut out {
             imp.module_path = resolve_relative_path_module(path, &imp.module_path);
         }
@@ -88,7 +92,8 @@ impl LanguagePlugin for TypeScriptPlugin {
         let tree = Self::parse_ts(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
-        walk_impls(tree.root_node(), src, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_impls(tree.root_node(), src, &mut out, &budget)?;
         Ok(out)
     }
 }
@@ -108,7 +113,8 @@ impl LanguagePlugin for TsxPlugin {
         let src = source_code.as_bytes();
         let module_path = path_module_identity(path);
         let mut out = Vec::new();
-        walk_symbols(tree.root_node(), src, &module_path, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_symbols(tree.root_node(), src, &module_path, "", &mut out, &budget)?;
         Ok(out)
     }
 
@@ -119,6 +125,7 @@ impl LanguagePlugin for TsxPlugin {
         let module_path = path_module_identity(path);
         let mut scope: Vec<String> = Vec::new();
         let mut out = Vec::new();
+        let budget = WalkBudget::new();
         walk_references(
             tree.root_node(),
             src,
@@ -126,6 +133,7 @@ impl LanguagePlugin for TsxPlugin {
             &module_path,
             &mut scope,
             &mut out,
+            &budget,
         )?;
         Ok(out)
     }
@@ -134,7 +142,8 @@ impl LanguagePlugin for TsxPlugin {
         let tree = TypeScriptPlugin::parse_tsx(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
-        walk_imports(tree.root_node(), src, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_imports(tree.root_node(), src, &mut out, &budget)?;
         for imp in &mut out {
             imp.module_path = resolve_relative_path_module(path, &imp.module_path);
         }
@@ -145,7 +154,8 @@ impl LanguagePlugin for TsxPlugin {
         let tree = TypeScriptPlugin::parse_tsx(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
-        walk_impls(tree.root_node(), src, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_impls(tree.root_node(), src, &mut out, &budget)?;
         Ok(out)
     }
 }
@@ -173,39 +183,43 @@ fn walk_symbols(
     node: Node,
     src: &[u8],
     module_path: &str,
+    container: &str,
     out: &mut Vec<Symbol>,
+    budget: &WalkBudget,
 ) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     match node.kind() {
         "function_declaration" | "generator_function_declaration" => {
-            emit_named_symbol(node, SymbolKind::Function, module_path, out, src)?;
+            emit_named_symbol(node, SymbolKind::Function, module_path, container, out, src)?;
         }
         "class_declaration" | "abstract_class_declaration" => {
-            emit_named_symbol(node, SymbolKind::Struct, module_path, out, src)?;
+            emit_named_symbol(node, SymbolKind::Struct, module_path, container, out, src)?;
         }
         "interface_declaration" => {
-            emit_named_symbol(node, SymbolKind::Trait, module_path, out, src)?;
+            emit_named_symbol(node, SymbolKind::Trait, module_path, container, out, src)?;
         }
         "type_alias_declaration" => {
-            emit_named_symbol(node, SymbolKind::Other("type".into()), module_path, out, src)?;
+            emit_named_symbol(node, SymbolKind::Other("type".into()), module_path, container, out, src)?;
         }
         "enum_declaration" => {
-            emit_named_symbol(node, SymbolKind::Enum, module_path, out, src)?;
+            emit_named_symbol(node, SymbolKind::Enum, module_path, container, out, src)?;
         }
         "method_definition" => {
             // Constructors are still useful as Function symbols for name lookup.
-            emit_named_symbol(node, SymbolKind::Function, module_path, out, src)?;
+            emit_named_symbol(node, SymbolKind::Function, module_path, container, out, src)?;
         }
         // Bodiless declarations are still definitions: abstract methods,
         // interface members, and function overloads.
         "abstract_method_signature" | "method_signature" | "function_signature" => {
-            emit_named_symbol(node, SymbolKind::Function, module_path, out, src)?;
+            emit_named_symbol(node, SymbolKind::Function, module_path, container, out, src)?;
         }
         // Members are indexed items too: class fields, property
         // signatures, and enum members (`field` kind), so member reads
         // resolve to a definition. Computed/string/number/private names
         // are not plain identifiers and stay out.
         "public_field_definition" | "property_signature" | "enum_assignment" => {
-            emit_named_symbol(node, SymbolKind::Other("field".into()), module_path, out, src)?;
+            emit_named_symbol(node, SymbolKind::Other("field".into()), module_path, container, out, src)?;
         }
         // Bare enum members (`User,` without `= …`) are direct
         // identifiers under the body, not assignments.
@@ -213,23 +227,43 @@ fn walk_symbols(
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
                 if child.kind() == "property_identifier" {
-                    push_symbol(child, SymbolKind::Other("field".into()), module_path, out, src)?;
+                    push_symbol(child, SymbolKind::Other("field".into()), module_path, container, out, src)?;
                 }
             }
         }
         "lexical_declaration" | "variable_declaration"
             if is_top_level_js_declaration(node) =>
         {
-            emit_top_level_variables(node, module_path, out, src)?;
+            emit_top_level_variables(node, module_path, container, out, src)?;
         }
         "variable_declarator" => {
-            emit_bound_function(node, module_path, out, src)?;
+            emit_bound_function(node, module_path, container, out, src)?;
         }
         _ => {}
     }
+    // Members of a class/interface/enum body carry the type name;
+    // anything else inherits the enclosing container unchanged.
+    let owned: Option<String> = match node.kind() {
+        "class_declaration"
+        | "abstract_class_declaration"
+        | "interface_declaration"
+        | "enum_declaration" => match node.child_by_field_name("name") {
+            Some(name)
+                if matches!(
+                    name.kind(),
+                    "identifier" | "property_identifier" | "type_identifier"
+                ) =>
+            {
+                Some(node_text(name, src)?.to_string())
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    let next_container = owned.as_deref().unwrap_or(container);
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_symbols(child, src, module_path, out)?;
+        walk_symbols(child, src, module_path, next_container, out, budget)?;
     }
     Ok(())
 }
@@ -238,6 +272,7 @@ fn emit_named_symbol(
     node: Node,
     kind: SymbolKind,
     module_path: &str,
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
@@ -247,7 +282,7 @@ fn emit_named_symbol(
             name.kind(),
             "identifier" | "property_identifier" | "type_identifier"
         ) {
-            push_symbol(name, kind, module_path, out, src)?;
+            push_symbol(name, kind, module_path, container, out, src)?;
         }
     }
     Ok(())
@@ -260,6 +295,7 @@ fn emit_named_symbol(
 fn emit_top_level_variables(
     node: Node,
     module_path: &str,
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
@@ -288,7 +324,7 @@ fn emit_top_level_variables(
         }
         if let Some(name) = child.child_by_field_name("name") {
             if name.kind() == "identifier" {
-                push_symbol(name, kind.clone(), module_path, out, src)?;
+                push_symbol(name, kind.clone(), module_path, container, out, src)?;
             }
         }
     }
@@ -300,6 +336,7 @@ fn emit_top_level_variables(
 fn emit_bound_function(
     declarator: Node,
     module_path: &str,
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
@@ -316,7 +353,7 @@ fn emit_bound_function(
         return Ok(());
     };
     if name.kind() == "identifier" {
-        push_symbol(name, SymbolKind::Function, module_path, out, src)?;
+        push_symbol(name, SymbolKind::Function, module_path, container, out, src)?;
     }
     Ok(())
 }
@@ -325,6 +362,7 @@ fn push_symbol(
     name_node: Node,
     kind: SymbolKind,
     module_path: &str,
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
@@ -337,6 +375,7 @@ fn push_symbol(
         start_line: pos.row as u32 + 1,
         start_col: pos.column as u32 + 1,
         module_path: module_path.to_string(),
+        container: container.to_string(),
     });
     Ok(())
 }
@@ -348,7 +387,10 @@ fn walk_references(
     module_path: &str,
     scope: &mut Vec<String>,
     out: &mut Vec<Reference>,
+    budget: &WalkBudget,
 ) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     match node.kind() {
         "function_declaration"
         | "generator_function_declaration"
@@ -365,7 +407,7 @@ fn walk_references(
                     scope.push(text.to_string());
                     let mut cursor = node.walk();
                     for child in node.children(&mut cursor) {
-                        walk_references(child, src, file_key, module_path, scope, out)?;
+                        walk_references(child, src, file_key, module_path, scope, out, budget)?;
                     }
                     scope.pop();
                     return Ok(());
@@ -403,7 +445,7 @@ fn walk_references(
         // walked under the decorated name so call-form decorators
         // (`@Route("/x")`) attribute there too.
         "decorator" => {
-            if emit_decorator_reference(node, src, file_key, module_path, scope, out)? {
+            if emit_decorator_reference(node, src, file_key, module_path, scope, out, budget)? {
                 return Ok(());
             }
         }
@@ -471,7 +513,7 @@ fn walk_references(
             if pushed {
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
-                    walk_references(child, src, file_key, module_path, scope, out)?;
+                    walk_references(child, src, file_key, module_path, scope, out, budget)?;
                 }
                 scope.pop();
                 return Ok(());
@@ -633,7 +675,7 @@ fn walk_references(
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_references(child, src, file_key, module_path, scope, out)?;
+        walk_references(child, src, file_key, module_path, scope, out, budget)?;
     }
     Ok(())
 }
@@ -958,6 +1000,7 @@ fn emit_decorator_reference(
     module_path: &str,
     scope: &mut Vec<String>,
     out: &mut Vec<Reference>,
+    budget: &WalkBudget,
 ) -> Result<bool> {
     let mut cursor = decorator.walk();
     let Some(expr) = decorator.children(&mut cursor).find(|c| c.is_named()) else {
@@ -984,7 +1027,7 @@ fn emit_decorator_reference(
         // `call_expression`/`arguments` arms attribute it there.
         let mut inner = decorator.walk();
         for child in decorator.children(&mut inner) {
-            walk_references(child, src, file_key, module_path, scope, out)?;
+            walk_references(child, src, file_key, module_path, scope, out, budget)?;
         }
     } else {
         emit_call_reference(expr, src, file_key, module_path, scope, out)?;
@@ -1317,7 +1360,14 @@ fn push_method_reference(
     });
 }
 
-fn walk_imports(node: Node, src: &[u8], out: &mut Vec<Import>) -> Result<()> {
+fn walk_imports(
+    node: Node,
+    src: &[u8],
+    out: &mut Vec<Import>,
+    budget: &WalkBudget,
+) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     if node.kind() == "import_statement" {
         let source = match node.child_by_field_name("source") {
             Some(s) => strip_quotes(node_text(s, src)?),
@@ -1325,7 +1375,7 @@ fn walk_imports(node: Node, src: &[u8], out: &mut Vec<Import>) -> Result<()> {
                 // Still walk children for nested forms; nothing to emit without source.
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
-                    walk_imports(child, src, out)?;
+                    walk_imports(child, src, out, budget)?;
                 }
                 return Ok(());
             }
@@ -1388,7 +1438,7 @@ fn walk_imports(node: Node, src: &[u8], out: &mut Vec<Import>) -> Result<()> {
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_imports(child, src, out)?;
+        walk_imports(child, src, out, budget)?;
     }
     Ok(())
 }
@@ -1704,7 +1754,14 @@ fn heritage_base_name(node: Node, src: &[u8]) -> Result<Option<String>> {
 
 /// Collect (class/interface, base) pairs: `implements` and `extends` on
 /// classes, `extends` on interfaces. Shared by the TS and TSX plugins.
-fn walk_impls(node: Node, src: &[u8], out: &mut Vec<ImplRecord>) -> Result<()> {
+fn walk_impls(
+    node: Node,
+    src: &[u8],
+    out: &mut Vec<ImplRecord>,
+    budget: &WalkBudget,
+) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     match node.kind() {
         "class_declaration" | "abstract_class_declaration" => {
             if let Some(name) = node.child_by_field_name("name") {
@@ -1743,7 +1800,7 @@ fn walk_impls(node: Node, src: &[u8], out: &mut Vec<ImplRecord>) -> Result<()> {
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_impls(child, src, out)?;
+        walk_impls(child, src, out, budget)?;
     }
     Ok(())
 }
@@ -1784,6 +1841,24 @@ function run(): void {
 
     fn test_path() -> &'static Path {
         Path::new("src/auth/service.ts")
+    }
+
+    #[test]
+    fn member_symbols_carry_enclosing_type_container() {
+        let plugin = TypeScriptPlugin;
+        let syms = plugin
+            .extract_symbols(
+                test_path(),
+                "function top() {}\nclass Store {\n  limit = 1;\n  save() {}\n}\ninterface Repo {\n  load(): void;\n}\nenum Role {\n  Admin,\n}\n",
+            )
+            .unwrap();
+        let find = |n: &str| syms.iter().find(|s| s.name == n).cloned();
+        assert_eq!(find("top").unwrap().container, "");
+        assert_eq!(find("Store").unwrap().container, "");
+        assert_eq!(find("save").unwrap().container, "Store");
+        assert_eq!(find("limit").unwrap().container, "Store");
+        assert_eq!(find("load").unwrap().container, "Repo");
+        assert_eq!(find("Admin").unwrap().container, "Role");
     }
 
     #[test]

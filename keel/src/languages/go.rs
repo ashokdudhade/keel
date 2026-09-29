@@ -7,7 +7,7 @@
 //! assertions (`var _ io.Reader = MyReader{}`); structural method-set
 //! matching is future work.
 
-use super::{file_path_key, path_module_identity, LanguagePlugin};
+use super::{file_path_key, path_module_identity, DepthGuard, LanguagePlugin, WalkBudget, MAX_WALK_DEPTH};
 use crate::error::{Result, KeelError};
 use crate::graph::types::{ImplRecord, Import, Reference, ReferenceKind, Symbol, SymbolKind};
 use std::path::{Path, PathBuf};
@@ -41,7 +41,8 @@ impl LanguagePlugin for GoPlugin {
         let src = source_code.as_bytes();
         let package = resolve_module_path(path, tree.root_node(), src)?;
         let mut out = Vec::new();
-        walk_symbols(tree.root_node(), src, &package, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_symbols(tree.root_node(), src, &package, "", &mut out, &budget)?;
         Ok(out)
     }
 
@@ -52,6 +53,7 @@ impl LanguagePlugin for GoPlugin {
         let file_key = file_path_key(path);
         let mut scope: Vec<String> = Vec::new();
         let mut out = Vec::new();
+        let budget = WalkBudget::new();
         walk_references(
             tree.root_node(),
             src,
@@ -59,6 +61,7 @@ impl LanguagePlugin for GoPlugin {
             &package,
             &mut scope,
             &mut out,
+            &budget,
         )?;
         Ok(out)
     }
@@ -67,7 +70,8 @@ impl LanguagePlugin for GoPlugin {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
-        walk_imports(tree.root_node(), src, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_imports(tree.root_node(), src, &mut out, &budget)?;
         Ok(out)
     }
 
@@ -75,7 +79,8 @@ impl LanguagePlugin for GoPlugin {
         let tree = Self::parse(source_code)?;
         let src = source_code.as_bytes();
         let mut out = Vec::new();
-        walk_impls(tree.root_node(), src, &mut out)?;
+        let budget = WalkBudget::new();
+        walk_impls(tree.root_node(), src, &mut out, &budget)?;
         Ok(out)
     }
 }
@@ -86,7 +91,14 @@ impl LanguagePlugin for GoPlugin {
 /// Only the blank name counts: a named `var w Widget = Widget{}` is an
 /// initialization, not an implementation claim. Values that are plain
 /// identifiers or constructor calls carry no provable type and stay out.
-fn walk_impls(node: Node, src: &[u8], out: &mut Vec<ImplRecord>) -> Result<()> {
+fn walk_impls(
+    node: Node,
+    src: &[u8],
+    out: &mut Vec<ImplRecord>,
+    budget: &WalkBudget,
+) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     if node.kind() == "var_spec" {
         if let (Some(name), Some(ty), Some(value)) = (
             node.child_by_field_name("name"),
@@ -95,8 +107,8 @@ fn walk_impls(node: Node, src: &[u8], out: &mut Vec<ImplRecord>) -> Result<()> {
         ) {
             if name.kind() == "identifier" && node_text(name, src)? == "_" {
                 if let (Some(trait_name), Some(type_name)) = (
-                    concrete_type_name(ty, src)?,
-                    assertion_value_type(value, src)?,
+                    concrete_type_name(ty, src, budget)?,
+                    assertion_value_type(value, src, budget)?,
                 ) {
                     let pos = node.start_position();
                     out.push(ImplRecord {
@@ -112,7 +124,7 @@ fn walk_impls(node: Node, src: &[u8], out: &mut Vec<ImplRecord>) -> Result<()> {
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_impls(child, src, out)?;
+        walk_impls(child, src, out, budget)?;
     }
     Ok(())
 }
@@ -120,7 +132,9 @@ fn walk_impls(node: Node, src: &[u8], out: &mut Vec<ImplRecord>) -> Result<()> {
 /// Final type name of an assertion side: a bare name, the `name` of a
 /// qualified type (`io.Reader` → `Reader`), the `type` of a generic
 /// instantiation (`Store[T]` → `Store`), through parens and pointers.
-fn concrete_type_name(node: Node, src: &[u8]) -> Result<Option<String>> {
+fn concrete_type_name(node: Node, src: &[u8], budget: &WalkBudget) -> Result<Option<String>> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     match node.kind() {
         "identifier" | "type_identifier" => Ok(Some(node_text(node, src)?.to_string())),
         "qualified_type" => match node.child_by_field_name("name") {
@@ -136,23 +150,23 @@ fn concrete_type_name(node: Node, src: &[u8]) -> Result<Option<String>> {
             _ => Ok(None),
         },
         "generic_type" => match node.child_by_field_name("type") {
-            Some(t) => concrete_type_name(t, src),
+            Some(t) => concrete_type_name(t, src, budget),
             None => Ok(None),
         },
         "index_expression" => match node.child_by_field_name("operand") {
-            Some(o) => concrete_type_name(o, src),
+            Some(o) => concrete_type_name(o, src, budget),
             None => Ok(None),
         },
         "parenthesized_expression" | "parenthesized_type" | "pointer_type" => {
             let mut cursor = node.walk();
             let mut named = node.children(&mut cursor).filter(|c| c.is_named());
             match (named.next(), named.next()) {
-                (Some(only), None) => concrete_type_name(only, src),
+                (Some(only), None) => concrete_type_name(only, src, budget),
                 _ => Ok(None),
             }
         }
         "unary_expression" => match node.child_by_field_name("operand") {
-            Some(o) => concrete_type_name(o, src),
+            Some(o) => concrete_type_name(o, src, budget),
             None => Ok(None),
         },
         _ => Ok(None),
@@ -163,26 +177,28 @@ fn concrete_type_name(node: Node, src: &[u8]) -> Result<Option<String>> {
 /// (`T{}`, `&T{}`, through parens), or a parenthesized conversion
 /// (`(*T)(nil)` — the function of a conversion is a type by syntax).
 /// Bare values, derefs, and constructor calls prove nothing and stay out.
-fn assertion_value_type(node: Node, src: &[u8]) -> Result<Option<String>> {
+fn assertion_value_type(node: Node, src: &[u8], budget: &WalkBudget) -> Result<Option<String>> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     match node.kind() {
         "composite_literal" => match node.child_by_field_name("type") {
-            Some(t) => concrete_type_name(t, src),
+            Some(t) => concrete_type_name(t, src, budget),
             None => Ok(None),
         },
         "unary_expression" => match node.child_by_field_name("operand") {
-            Some(o) if o.kind() == "composite_literal" => assertion_value_type(o, src),
+            Some(o) if o.kind() == "composite_literal" => assertion_value_type(o, src, budget),
             _ => Ok(None),
         },
         "parenthesized_expression" => {
             let mut cursor = node.walk();
             let mut named = node.children(&mut cursor).filter(|c| c.is_named());
             match (named.next(), named.next()) {
-                (Some(only), None) => assertion_value_type(only, src),
+                (Some(only), None) => assertion_value_type(only, src, budget),
                 _ => Ok(None),
             }
         }
         "call_expression" => match node.child_by_field_name("function") {
-            Some(f) if f.kind() == "parenthesized_expression" => concrete_type_name(f, src),
+            Some(f) if f.kind() == "parenthesized_expression" => concrete_type_name(f, src, budget),
             _ => Ok(None),
         },
         // Assertion values sit under one `expression_list`; multi-value
@@ -191,7 +207,7 @@ fn assertion_value_type(node: Node, src: &[u8]) -> Result<Option<String>> {
             let mut cursor = node.walk();
             let mut named = node.children(&mut cursor).filter(|c| c.is_named());
             match (named.next(), named.next()) {
-                (Some(only), None) => assertion_value_type(only, src),
+                (Some(only), None) => assertion_value_type(only, src, budget),
                 _ => Ok(None),
             }
         }
@@ -238,13 +254,24 @@ fn qualify_scope(file_key: &str, package: &str, scope: &[String]) -> String {
     }
 }
 
-fn walk_symbols(node: Node, src: &[u8], package: &str, out: &mut Vec<Symbol>) -> Result<()> {
+fn walk_symbols(
+    node: Node,
+    src: &[u8],
+    package: &str,
+    container: &str,
+    out: &mut Vec<Symbol>,
+    budget: &WalkBudget,
+) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     match node.kind() {
         "function_declaration" => {
-            emit_named_symbol(node, SymbolKind::Function, package, out, src)?;
+            emit_named_symbol(node, SymbolKind::Function, package, "", out, src)?;
         }
         "method_declaration" => {
-            emit_named_symbol(node, SymbolKind::Function, package, out, src)?;
+            // Methods are top-level; the container is the receiver type.
+            let receiver = method_receiver(node, src, budget)?.unwrap_or_default();
+            emit_named_symbol(node, SymbolKind::Function, package, &receiver, out, src)?;
         }
         // Interface method specs (`Do(x int) int` in `type Doer
         // interface`): same Function shape as methods, so outline and
@@ -252,19 +279,26 @@ fn walk_symbols(node: Node, src: &[u8], package: &str, out: &mut Vec<Symbol>) ->
         // are `type_elem` children, never `method_elem`, so they stay
         // out.
         "method_elem" => {
-            emit_named_symbol(node, SymbolKind::Function, package, out, src)?;
+            emit_named_symbol(node, SymbolKind::Function, package, container, out, src)?;
         }
         "type_spec" => {
-            emit_type_spec(node, package, out, src)?;
+            emit_type_spec(node, package, container, out, src)?;
         }
         "type_alias" => {
             // `type A = B`
             if let Some(name) = node.child_by_field_name("name") {
-                push_symbol(name, SymbolKind::Other("type".into()), package, out, src)?;
+                push_symbol(
+                    name,
+                    SymbolKind::Other("type".into()),
+                    package,
+                    container,
+                    out,
+                    src,
+                )?;
             }
         }
         "const_spec" | "var_spec" => {
-            emit_const_var_names(node, package, out, src)?;
+            emit_const_var_names(node, package, container, out, src)?;
         }
         // Struct fields are indexed items (`field` kind), so selector
         // reads resolve to a definition. Every direct
@@ -274,22 +308,67 @@ fn walk_symbols(node: Node, src: &[u8], package: &str, out: &mut Vec<Symbol>) ->
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
                 if child.kind() == "field_identifier" {
-                    push_symbol(child, SymbolKind::Other("field".into()), package, out, src)?;
+                    push_symbol(
+                        child,
+                        SymbolKind::Other("field".into()),
+                        package,
+                        container,
+                        out,
+                        src,
+                    )?;
                 }
             }
         }
         _ => {}
     }
+    // Members of a struct/interface body carry the type name; anything
+    // else inherits the enclosing container unchanged.
+    let owned: Option<String> = match node.kind() {
+        "type_spec" => match (
+            node.child_by_field_name("name"),
+            node.child_by_field_name("type"),
+        ) {
+            (Some(name), Some(ty))
+                if name.kind() == "type_identifier"
+                    && matches!(ty.kind(), "struct_type" | "interface_type") =>
+            {
+                Some(node_text(name, src)?.to_string())
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    let next_container = owned.as_deref().unwrap_or(container);
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_symbols(child, src, package, out)?;
+        walk_symbols(child, src, package, next_container, out, budget)?;
     }
     Ok(())
+}
+
+/// Receiver base type of a `method_declaration` (`*User` → `User`,
+/// through generics and qualification), or `None` when unresolvable.
+fn method_receiver(node: Node, src: &[u8], budget: &WalkBudget) -> Result<Option<String>> {
+    let Some(receiver) = node.child_by_field_name("receiver") else {
+        return Ok(None);
+    };
+    let mut cursor = receiver.walk();
+    let Some(first) = receiver
+        .children(&mut cursor)
+        .find(|c| c.kind() == "parameter_declaration")
+    else {
+        return Ok(None);
+    };
+    match first.child_by_field_name("type") {
+        Some(ty) => concrete_type_name(ty, src, budget),
+        None => Ok(None),
+    }
 }
 
 fn emit_type_spec(
     node: Node,
     package: &str,
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
@@ -301,7 +380,7 @@ fn emit_type_spec(
         Some(ty) if ty.kind() == "interface_type" => SymbolKind::Trait,
         _ => SymbolKind::Other("type".into()),
     };
-    push_symbol(name, kind, package, out, src)
+    push_symbol(name, kind, package, container, out, src)
 }
 
 /// Emit names from a `const_spec` or `var_spec` (same shape: `name`
@@ -310,13 +389,14 @@ fn emit_type_spec(
 fn emit_const_var_names(
     node: Node,
     package: &str,
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
     // `name` field may list multiple identifiers (`const a, b = …`).
     if let Some(name_field) = node.child_by_field_name("name") {
         if name_field.kind() == "identifier" {
-            push_symbol(name_field, SymbolKind::Const, package, out, src)?;
+            push_symbol(name_field, SymbolKind::Const, package, container, out, src)?;
         }
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
@@ -330,7 +410,7 @@ fn emit_const_var_names(
                     None => true,
                 };
                 if before_value && before_type {
-                    push_symbol(child, SymbolKind::Const, package, out, src)?;
+                    push_symbol(child, SymbolKind::Const, package, container, out, src)?;
                 }
             }
         }
@@ -342,12 +422,13 @@ fn emit_named_symbol(
     node: Node,
     kind: SymbolKind,
     package: &str,
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
     if let Some(name) = node.child_by_field_name("name") {
         if matches!(name.kind(), "identifier" | "field_identifier") {
-            push_symbol(name, kind, package, out, src)?;
+            push_symbol(name, kind, package, container, out, src)?;
         }
     }
     Ok(())
@@ -357,6 +438,7 @@ fn push_symbol(
     name_node: Node,
     kind: SymbolKind,
     package: &str,
+    container: &str,
     out: &mut Vec<Symbol>,
     src: &[u8],
 ) -> Result<()> {
@@ -369,6 +451,7 @@ fn push_symbol(
         start_line: pos.row as u32 + 1,
         start_col: pos.column as u32 + 1,
         module_path: package.to_string(),
+        container: container.to_string(),
     });
     Ok(())
 }
@@ -380,7 +463,10 @@ fn walk_references(
     package: &str,
     scope: &mut Vec<String>,
     out: &mut Vec<Reference>,
+    budget: &WalkBudget,
 ) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     match node.kind() {
         "function_declaration" | "method_declaration" | "method_elem" => {
             if let Some(name) = node.child_by_field_name("name") {
@@ -389,7 +475,7 @@ fn walk_references(
                     scope.push(text.to_string());
                     let mut cursor = node.walk();
                     for child in node.children(&mut cursor) {
-                        walk_references(child, src, file_key, package, scope, out)?;
+                        walk_references(child, src, file_key, package, scope, out, budget)?;
                     }
                     scope.pop();
                     return Ok(());
@@ -511,7 +597,7 @@ fn walk_references(
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_references(child, src, file_key, package, scope, out)?;
+        walk_references(child, src, file_key, package, scope, out, budget)?;
     }
     Ok(())
 }
@@ -963,7 +1049,14 @@ fn is_compound_assignment(node: Node, src: &[u8]) -> Result<bool> {
     }
 }
 
-fn walk_imports(node: Node, src: &[u8], out: &mut Vec<Import>) -> Result<()> {
+fn walk_imports(
+    node: Node,
+    src: &[u8],
+    out: &mut Vec<Import>,
+    budget: &WalkBudget,
+) -> Result<()> {
+    let _guard = DepthGuard::enter(budget)
+        .ok_or_else(|| KeelError::TooDeeplyNested { limit: MAX_WALK_DEPTH })?;
     if node.kind() == "import_spec" {
         let path = match node.child_by_field_name("path") {
             Some(p) => strip_quotes(node_text(p, src)?),
@@ -985,7 +1078,7 @@ fn walk_imports(node: Node, src: &[u8], out: &mut Vec<Import>) -> Result<()> {
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_imports(child, src, out)?;
+        walk_imports(child, src, out, budget)?;
     }
     Ok(())
 }
@@ -1027,6 +1120,27 @@ func (u User) Login() {
 
     fn test_path() -> &'static Path {
         Path::new("auth/service.go")
+    }
+
+    #[test]
+    fn member_symbols_carry_enclosing_type_container() {
+        let plugin = GoPlugin;
+        let syms = plugin
+            .extract_symbols(
+                test_path(),
+                "package auth\n\nfunc Top() {}\n\ntype Store struct {\n\tLimit int\n}\n\nfunc (s *Store) Save() {}\n\ntype Saver interface {\n\tSave()\n}\n",
+            )
+            .unwrap();
+        let find = |n: &str| syms.iter().find(|s| s.name == n).cloned();
+        assert_eq!(find("Top").unwrap().container, "");
+        assert_eq!(find("Store").unwrap().container, "");
+        assert_eq!(find("Limit").unwrap().container, "Store");
+        let saves: Vec<&str> = syms
+            .iter()
+            .filter(|s| s.name == "Save")
+            .map(|s| s.container.as_str())
+            .collect();
+        assert_eq!(saves, vec!["Store", "Saver"]);
     }
 
     #[test]
