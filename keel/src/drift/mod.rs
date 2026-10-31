@@ -50,10 +50,10 @@ pub mod scan;
 
 use crate::db::queries;
 use crate::error::Result;
+use crate::fs::{prune_skipped_dirs, walker};
 use crate::graph::resolve::suggest_names;
 use crate::graph::types::{Symbol, SymbolKind};
 use clap::CommandFactory;
-use ignore::WalkBuilder;
 use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -138,10 +138,7 @@ const ADR_DIRS: &[&str] = &["adr", "adrs", "decisions"];
 /// agent instructions (`AGENTS.md`, `CLAUDE.md`, …) at any depth, and
 /// ADR/decision records. Sorted by `/`-separated relative path.
 pub fn discover_docs(root: &Path) -> Vec<PathBuf> {
-    let mut docs: Vec<PathBuf> = WalkBuilder::new(root)
-        .standard_filters(true)
-        .require_git(false)
-        .add_custom_ignore_filename(".keelignore")
+    let mut docs: Vec<PathBuf> = walker(root)
         .filter_entry(|entry| {
             if entry.depth() == 0 {
                 return true;
@@ -223,23 +220,9 @@ pub(crate) struct RepoFiles {
 
 impl RepoFiles {
     pub(crate) fn collect(root: &Path) -> Vec<String> {
-        let mut paths: Vec<String> = WalkBuilder::new(root)
-            .standard_filters(true)
+        let mut paths: Vec<String> = walker(root)
             .hidden(false)
-            .require_git(false)
-            .add_custom_ignore_filename(".keelignore")
-            .filter_entry(|entry| {
-                if entry.depth() == 0 {
-                    return true;
-                }
-                if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    return true;
-                }
-                entry
-                    .file_name()
-                    .to_str()
-                    .is_none_or(|name| !crate::index::worker::SKIPPED_DIRS.contains(&name))
-            })
+            .filter_entry(prune_skipped_dirs)
             .build()
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path().to_path_buf())

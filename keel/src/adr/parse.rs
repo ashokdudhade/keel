@@ -8,7 +8,7 @@
 //! line is the declared status, the first `Date:` line is the date.
 //! Anything missing stays missing — never inferred.
 
-use ignore::WalkBuilder;
+use crate::fs::walker;
 use std::path::{Path, PathBuf};
 
 /// Maximum ADRs per project; overflow is reported, not silent.
@@ -20,10 +20,7 @@ const ADR_DIRS: &[&str] = &["adr", "adrs", "decisions"];
 /// Discover ADR files under `root`, sorted. See the module docs for
 /// what counts.
 pub fn discover_adrs(root: &Path) -> Vec<PathBuf> {
-    let mut adrs: Vec<PathBuf> = WalkBuilder::new(root)
-        .standard_filters(true)
-        .require_git(false)
-        .add_custom_ignore_filename(".keelignore")
+    let mut adrs: Vec<PathBuf> = walker(root)
         .build()
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path().to_path_buf())

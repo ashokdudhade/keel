@@ -303,6 +303,13 @@ pub enum Commands {
         #[command(subcommand)]
         action: AdrCommands,
     },
+    /// Check declared dependency constraints (`.keel/rules.json`) against
+    /// the index. Exits 1 when violations remain (CI gate).
+    Rules {
+        /// Rules file (default: `.keel/rules.json` discovered by walking
+        /// up from the cwd).
+        path: Option<PathBuf>,
+    },
 }
 
 /// ADR actions.

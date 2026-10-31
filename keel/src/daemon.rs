@@ -5,6 +5,7 @@
 //! `<project>/.keel/index.db`.
 
 use crate::error::{Result, KeelError};
+use crate::http::HttpMethod;
 use crate::index;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -17,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
+use tiny_http::{Header, Request, Response, Server, StatusCode};
 
 /// Default loopback port for the global daemon control API.
 pub const DEFAULT_DAEMON_PORT: u16 = 7646;
@@ -123,9 +124,7 @@ fn open_project_db(root: &Path) -> Result<Connection> {
         source,
     })?;
     let db = dir.join(DB_FILE);
-    let conn = Connection::open(&db)?;
-    crate::db::configure_connection(&conn)?;
-    Ok(conn)
+    crate::db::open_uninitialized(&db)
 }
 
 /// Pids outside this range wrap or fail inside `kill` (e.g. `u32::MAX` becomes
@@ -243,25 +242,35 @@ pub fn run_daemon(port: u16) -> Result<()> {
     Ok(())
 }
 
+/// Transport edge: adapts `tiny_http` types, then delegates to the
+/// transport-free [`dispatch`].
 fn handle_daemon_request(mut request: Request, state: &Arc<Mutex<DaemonState>>) {
-    let method = request.method().clone();
+    let method = HttpMethod::from_tiny_http(request.method());
     let url = request.url().to_string();
     let mut body_buf = String::new();
-    if method == Method::Post {
+    if method == HttpMethod::Post {
         let _ = request.as_reader().read_to_string(&mut body_buf);
     }
     let (status, body) = match dispatch(&method, &url, &body_buf, state) {
         Ok(v) => v,
         Err(e) => (
-            StatusCode(500),
+            500,
             json!({ "error": e.to_string() }).to_string(),
         ),
     };
-    let header = Header::from_bytes("Content-Type", "application/json").unwrap();
+    // Static bytes: construction failure is unreachable, but a request
+    // path must never panic — degrade to a headerless response instead.
+    let headers: Vec<Header> = match Header::from_bytes("Content-Type", "application/json") {
+        Ok(header) => vec![header],
+        Err(()) => {
+            eprintln!("daemon respond error: invalid Content-Type header");
+            Vec::new()
+        }
+    };
     let len = body.len();
     let response = Response::new(
-        status,
-        vec![header],
+        StatusCode(status),
+        headers,
         std::io::Cursor::new(body.into_bytes()),
         Some(len),
         None,
@@ -269,22 +278,25 @@ fn handle_daemon_request(mut request: Request, state: &Arc<Mutex<DaemonState>>) 
     let _ = request.respond(response);
 }
 
+/// Route a control-plane request to a `(status, body)` pair.
+/// Transport-free: speaks only [`HttpMethod`] and `u16` statuses, so the
+/// routing table survives a transport swap untouched.
 fn dispatch(
-    method: &Method,
+    method: &HttpMethod,
     url: &str,
     body_buf: &str,
     state: &Arc<Mutex<DaemonState>>,
-) -> Result<(StatusCode, String)> {
+) -> Result<(u16, String)> {
     let path = url.split('?').next().unwrap_or(url);
 
-    if *method == Method::Get && path == "/health" {
+    if *method == HttpMethod::Get && path == "/health" {
         return Ok((
-            StatusCode(200),
+            200,
             json!({ "status": "ok", "daemon": true }).to_string(),
         ));
     }
 
-    if *method == Method::Get && path == "/status" {
+    if *method == HttpMethod::Get && path == "/status" {
         let mut projects = Vec::new();
         {
             let mut guard = state.lock().map_err(|e| KeelError::Daemon(e.to_string()))?;
@@ -298,7 +310,7 @@ fn dispatch(
         }
         persist_state(state)?;
         return Ok((
-            StatusCode(200),
+            200,
             json!({
                 "daemon": true,
                 "pid": std::process::id(),
@@ -308,7 +320,7 @@ fn dispatch(
         ));
     }
 
-    if *method == Method::Post && path == "/watch" {
+    if *method == HttpMethod::Post && path == "/watch" {
         let body: serde_json::Value =
             serde_json::from_str(body_buf).map_err(|e| KeelError::Daemon(e.to_string()))?;
         let path = body
@@ -322,7 +334,7 @@ fn dispatch(
         let pid = start_project_watch(state, &abs)?;
         persist_state(state)?;
         return Ok((
-            StatusCode(200),
+            200,
             json!({
                 "ok": true,
                 "path": abs.display().to_string(),
@@ -332,7 +344,7 @@ fn dispatch(
         ));
     }
 
-    if *method == Method::Delete && path == "/watch" {
+    if *method == HttpMethod::Delete && path == "/watch" {
         let path = url
             .split('?')
             .nth(1)
@@ -351,12 +363,12 @@ fn dispatch(
         stop_project_watch(state, &key)?;
         persist_state(state)?;
         return Ok((
-            StatusCode(200),
+            200,
             json!({ "ok": true, "path": key }).to_string(),
         ));
     }
 
-    Ok((StatusCode(404), json!({ "error": "not found" }).to_string()))
+    Ok((404, json!({ "error": "not found" }).to_string()))
 }
 
 fn persist_state(state: &Arc<Mutex<DaemonState>>) -> Result<()> {
@@ -895,8 +907,7 @@ fn mcp_tools_via_stdio(exe: &Path) -> Result<Vec<String>> {
 
 /// Open an index for read-only inspection without creating or migrating it.
 fn open_doctor_db(db: &Path) -> Result<Connection> {
-    let conn = Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    Ok(conn)
+    crate::db::open_read_only(db)
 }
 
 /// True when `path` starts with the SQLite magic header (first 16 bytes).
@@ -1054,6 +1065,25 @@ pub fn daemon_status(path: &Path) -> Result<DaemonStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_state() -> Arc<Mutex<DaemonState>> {
+        Arc::new(Mutex::new(DaemonState {
+            projects: HashMap::new(),
+        }))
+    }
+
+    #[test]
+    fn dispatch_routes_without_transport_types() {
+        let state = test_state();
+        let (status, body) = dispatch(&HttpMethod::Get, "/health", "", &state).unwrap();
+        assert_eq!(status, 200);
+        assert!(body.contains("\"daemon\":true"), "{body}");
+        let (status, _) = dispatch(&HttpMethod::Get, "/nope", "", &state).unwrap();
+        assert_eq!(status, 404);
+        // POST only serves /watch; POST /health matches nothing.
+        let (status, _) = dispatch(&HttpMethod::Post, "/health", "", &state).unwrap();
+        assert_eq!(status, 404);
+    }
 
     #[test]
     fn invalid_pids_are_never_alive_nor_signaled() {

@@ -8,7 +8,6 @@
 
 use crate::api::{DependencyDto, ImplDto, ReferenceDto, SymbolDto};
 use crate::cli::commands::PreviewCache;
-use crate::db::schema;
 use crate::error::{Result, KeelError};
 use crate::context;
 use crate::explain;
@@ -308,10 +307,7 @@ fn needs_db(method: &str) -> bool {
 }
 
 fn open_index_db(db_path: &Path) -> Result<Connection> {
-    let conn = Connection::open(db_path)?;
-    crate::db::configure_connection(&conn)?;
-    schema::initialize(&conn)?;
-    Ok(conn)
+    crate::db::open(db_path)
 }
 
 /// Handshake / discovery handlers that must not touch SQLite.

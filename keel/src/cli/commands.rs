@@ -106,7 +106,7 @@ fn find_index_from_registry(cwd: &Path) -> Option<PathBuf> {
         return Some(db);
     }
 
-    let existing: Vec<PathBuf> = roots
+    let mut existing: Vec<PathBuf> = roots
         .iter()
         .map(|root| project_index_db(root))
         .filter(|db| db.is_file())
@@ -115,7 +115,7 @@ fn find_index_from_registry(cwd: &Path) -> Option<PathBuf> {
         return None;
     }
     if existing.len() == 1 {
-        return Some(existing.into_iter().next().unwrap());
+        return existing.pop();
     }
     // Multiple registered indexes and cwd matches none — do not guess by mtime
     // (wrong-repo High-confidence answers are worse than a fresh cwd index).
@@ -146,9 +146,7 @@ fn open_db_at(root: &Path) -> Result<Connection> {
     })?;
     // Best-effort: never fail indexing/queries over a gitignore write.
     let _ = ensure_gitignored(root);
-    let conn = Connection::open(dir.join(DB_FILE))?;
-    crate::db::configure_connection(&conn)?;
-    Ok(conn)
+    crate::db::open_uninitialized(&dir.join(DB_FILE))
 }
 
 /// Keep `<root>/.keel/` out of version control.
@@ -973,6 +971,83 @@ fn print_drift_report(report: &crate::drift::DriftReport) {
             report.findings.len(),
             report.docs_checked,
             report.wiki_pages_checked
+        );
+    }
+}
+
+/// Resolve the rules file: the explicit path when given, else
+/// `.keel/rules.json` found by walking up from the cwd. Errors honestly
+/// when nothing is found instead of reporting a vacuous clean.
+fn resolve_rules_file(explicit: Option<&PathBuf>) -> Result<PathBuf> {
+    if let Some(path) = explicit {
+        return Ok(path.clone());
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    for ancestor in cwd.ancestors() {
+        let candidate = ancestor.join(".keel").join("rules.json");
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    Err(KeelError::Rules(
+        "no rules file found: pass a path or create .keel/rules.json".to_string(),
+    ))
+}
+
+/// Check architecture rules against the index (auto-index first unless
+/// disabled). The explicit path wins; otherwise the rules file is
+/// discovered by walking up from the cwd.
+pub fn build_rules_report(
+    path: Option<&PathBuf>,
+    auto_index: bool,
+) -> Result<crate::rules::RulesReport> {
+    let rules_file = resolve_rules_file(path)?;
+    let rules = crate::rules::load_rules(&rules_file)?;
+    let conn = open_sweep_db(auto_index)?;
+    crate::rules::check_rules(&conn, &rules)
+}
+
+/// Print a rules report: one row per violation with evidence, then notes
+/// and a summary line. Returns the report so the caller can set the CI
+/// exit code (1 when violations remain).
+pub fn run_rules(
+    path: Option<&PathBuf>,
+    auto_index: bool,
+) -> Result<crate::rules::RulesReport> {
+    let report = build_rules_report(path, auto_index)?;
+    print_rules_report(&report);
+    Ok(report)
+}
+
+/// Print one row per violation (`rule: from -> to`, indented evidence),
+/// then notes and a summary.
+fn print_rules_report(report: &crate::rules::RulesReport) {
+    for violation in &report.violations {
+        println!(
+            "{}: {} -> {}",
+            violation.rule, violation.from_module, violation.to_module
+        );
+        if let Some(via) = &violation.via {
+            println!("  via: {}", via.to_string_lossy().replace('\\', "/"));
+        }
+        if let Some(reason) = &violation.reason {
+            println!("  reason: {reason}");
+        }
+    }
+    for note in &report.notes {
+        println!("note: {note}");
+    }
+    if report.is_clean() {
+        println!(
+            "No rule violations ({} forbid rule(s), {} layer(s) checked).",
+            report.forbid_checked, report.layers_checked
+        );
+    } else {
+        println!(
+            "{} violation(s) ({} forbid rule(s), {} layer(s) checked).",
+            report.violations.len(),
+            report.forbid_checked,
+            report.layers_checked
         );
     }
 }

@@ -82,6 +82,10 @@ pub enum KeelError {
     #[error("invalid knowledge record: {0}")]
     KnowledgeValidation(String),
 
+    /// An architecture rules file failed to parse.
+    #[error("invalid rules file: {0}")]
+    Rules(String),
+
     /// A non-human write targeted a human-authored knowledge record.
     ///
     /// Human decisions are never silently overwritten by agent-generated or

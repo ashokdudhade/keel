@@ -7,11 +7,11 @@ use crate::graph::deps::{self, Dependency};
 use crate::graph::resolve;
 use crate::graph::query_result::QueryResult;
 use crate::graph::types::{ImplRecord, Reference, Symbol};
-use rusqlite::Connection;
+use crate::http::HttpMethod;
 use serde::Serialize;
 use std::io::Cursor;
 use std::path::Path;
-use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
+use tiny_http::{Header, Request, Response, Server, StatusCode};
 
 /// Serializable definition location (paths as strings).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -273,8 +273,10 @@ pub fn serve(addr: &str, db_path: &Path, auto_index: bool) -> Result<()> {
 }
 
 /// Always responds; never drops a [`Request`] without a response body.
+/// Transport edge: adapts `tiny_http` types, then delegates to the
+/// transport-free [`build_response`].
 fn handle_request(request: Request, db_path: &Path, auto_index: bool) {
-    let method = request.method().clone();
+    let method = HttpMethod::from_tiny_http(request.method());
     let url = request.url().to_string();
 
     let (status, body, content_type) =
@@ -283,27 +285,30 @@ fn handle_request(request: Request, db_path: &Path, auto_index: bool) {
             Err(e) => {
                 eprintln!("api request error: {e}");
                 (
-                    StatusCode(500),
+                    500,
                     format!(r#"{{"error":{}}}"#, json_string(&e.to_string())),
                     "application/json",
                 )
             }
         };
 
-    if let Err(e) = respond(request, status, &body, content_type) {
+    if let Err(e) = respond(request, StatusCode(status), &body, content_type) {
         eprintln!("api respond error: {e}");
     }
 }
 
+/// Route a request to a `(status, body, content type)` triple. Transport-free:
+/// speaks only [`HttpMethod`] and `u16` statuses, so the routing table and
+/// its tests survive a transport swap untouched.
 fn build_response(
-    method: Method,
+    method: HttpMethod,
     url: &str,
     db_path: &Path,
     auto_index: bool,
-) -> Result<(StatusCode, String, &'static str)> {
-    if method != Method::Get {
+) -> Result<(u16, String, &'static str)> {
+    if method != HttpMethod::Get {
         return Ok((
-            StatusCode(405),
+            405,
             r#"{"error":"method not allowed"}"#.to_string(),
             "application/json",
         ));
@@ -316,12 +321,12 @@ fn build_response(
             status: "ok".to_string(),
         })
         .map_err(|e| KeelError::Api(e.to_string()))?;
-        return Ok((StatusCode(200), body, "application/json"));
+        return Ok((200, body, "application/json"));
     }
 
     if path == "/insights" {
         return Ok((
-            StatusCode(200),
+            200,
             INSIGHTS_HTML.to_string(),
             "text/html; charset=utf-8",
         ));
@@ -331,7 +336,7 @@ fn build_response(
         let payload = insights_payload(db_path)?;
         let body =
             serde_json::to_string(&payload).map_err(|e| KeelError::Api(e.to_string()))?;
-        return Ok((StatusCode(200), body, "application/json"));
+        return Ok((200, body, "application/json"));
     }
 
     if let Some(pattern) = path.strip_prefix("/search/") {
@@ -339,7 +344,7 @@ fn build_response(
         let pattern = pattern.trim();
         if pattern.is_empty() {
             return Ok((
-                StatusCode(400),
+                400,
                 r#"{"error":"missing search pattern"}"#.to_string(),
                 "application/json",
             ));
@@ -356,14 +361,14 @@ fn build_response(
         }
         let body =
             serde_json::to_string(&payload).map_err(|e| KeelError::Api(e.to_string()))?;
-        return Ok((StatusCode(200), body, "application/json"));
+        return Ok((200, body, "application/json"));
     }
 
     if let Some(file) = path.strip_prefix("/outline/") {
         let file = percent_decode(file);
         if file.is_empty() {
             return Ok((
-                StatusCode(400),
+                400,
                 r#"{"error":"missing file path"}"#.to_string(),
                 "application/json",
             ));
@@ -380,7 +385,7 @@ fn build_response(
         }
         let body =
             serde_json::to_string(&payload).map_err(|e| KeelError::Api(e.to_string()))?;
-        return Ok((StatusCode(200), body, "application/json"));
+        return Ok((200, body, "application/json"));
     }
 
     if let Some(name) = path.strip_prefix("/symbol/") {
@@ -388,7 +393,7 @@ fn build_response(
         let name = name.trim();
         if name.is_empty() {
             return Ok((
-                StatusCode(400),
+                400,
                 r#"{"error":"missing symbol name"}"#.to_string(),
                 "application/json",
             ));
@@ -410,7 +415,7 @@ fn build_response(
         }
         let body =
             serde_json::to_string(&payload).map_err(|e| KeelError::Api(e.to_string()))?;
-        return Ok((StatusCode(200), body, "application/json"));
+        return Ok((200, body, "application/json"));
     }
 
     if let Some(name) = path.strip_prefix("/impact/") {
@@ -418,7 +423,7 @@ fn build_response(
         let name = name.trim();
         if name.is_empty() {
             return Ok((
-                StatusCode(400),
+                400,
                 r#"{"error":"missing symbol name"}"#.to_string(),
                 "application/json",
             ));
@@ -436,14 +441,14 @@ fn build_response(
         }
         let body =
             serde_json::to_string(&payload).map_err(|e| KeelError::Api(e.to_string()))?;
-        return Ok((StatusCode(200), body, "application/json"));
+        return Ok((200, body, "application/json"));
     }
 
     if let Some(name) = path.strip_prefix("/dependents/") {
         let name = percent_decode(name);
         if name.is_empty() {
             return Ok((
-                StatusCode(400),
+                400,
                 r#"{"error":"missing target name"}"#.to_string(),
                 "application/json",
             ));
@@ -455,11 +460,11 @@ fn build_response(
         }
         let body =
             serde_json::to_string(&payload).map_err(|e| KeelError::Api(e.to_string()))?;
-        return Ok((StatusCode(200), body, "application/json"));
+        return Ok((200, body, "application/json"));
     }
 
     Ok((
-        StatusCode(404),
+        404,
         r#"{"error":"not found"}"#.to_string(),
         "application/json",
     ))
@@ -470,9 +475,7 @@ const INSIGHTS_HTML: &str = include_str!("insights.html");
 
 /// Build the `/api/insights` payload: live index stats plus usage rollups.
 fn insights_payload(db_path: &Path) -> Result<InsightsResponse> {
-    let conn = Connection::open(db_path)?;
-    db::configure_connection(&conn)?;
-    schema::initialize(&conn)?;
+    let conn = db::open(db_path)?;
 
     let count = |table: &str| -> i64 {
         conn.query_row(
@@ -536,9 +539,7 @@ fn symbol_intelligence(
     limit: usize,
     auto_index: bool,
 ) -> Result<SymbolResponse> {
-    let mut conn = Connection::open(db_path)?;
-    db::configure_connection(&conn)?;
-    schema::initialize(&conn)?;
+    let mut conn = db::open(db_path)?;
     if auto_index {
         let root = crate::cli::commands::index_root_from_db(db_path);
         let stats = crate::index::index_repository(&root, &mut conn)?;
@@ -733,9 +734,7 @@ fn impact_response(
     limit: usize,
     auto_index: bool,
 ) -> Result<QueryResult<SymbolDto>> {
-    let mut conn = Connection::open(db_path)?;
-    db::configure_connection(&conn)?;
-    schema::initialize(&conn)?;
+    let mut conn = db::open(db_path)?;
     if auto_index {
         let root = crate::cli::commands::index_root_from_db(db_path);
         let stats = crate::index::index_repository(&root, &mut conn)?;
@@ -775,9 +774,7 @@ fn dependents_response(
     limit: usize,
     auto_index: bool,
 ) -> Result<QueryResult<DependencyDto>> {
-    let mut conn = Connection::open(db_path)?;
-    db::configure_connection(&conn)?;
-    schema::initialize(&conn)?;
+    let mut conn = db::open(db_path)?;
     if auto_index {
         let root = crate::cli::commands::index_root_from_db(db_path);
         let stats = crate::index::index_repository(&root, &mut conn)?;
@@ -816,9 +813,7 @@ fn search_response(
     limit: usize,
     auto_index: bool,
 ) -> Result<QueryResult<SymbolDto>> {
-    let mut conn = Connection::open(db_path)?;
-    db::configure_connection(&conn)?;
-    schema::initialize(&conn)?;
+    let mut conn = db::open(db_path)?;
     if auto_index {
         let root = crate::cli::commands::index_root_from_db(db_path);
         let stats = crate::index::index_repository(&root, &mut conn)?;
@@ -857,9 +852,7 @@ fn outline_response(
     limit: usize,
     auto_index: bool,
 ) -> Result<QueryResult<SymbolDto>> {
-    let mut conn = Connection::open(db_path)?;
-    db::configure_connection(&conn)?;
-    schema::initialize(&conn)?;
+    let mut conn = db::open(db_path)?;
     if auto_index {
         let root = crate::cli::commands::index_root_from_db(db_path);
         let stats = crate::index::index_repository(&root, &mut conn)?;
@@ -993,9 +986,7 @@ mod tests {
     fn seeded_db(dir: &std::path::Path) -> std::path::PathBuf {
         use crate::graph::types::{FileNode, Symbol, SymbolKind};
         let db_path = dir.join("test_outline_http.db");
-        let conn = Connection::open(&db_path).expect("open db");
-        crate::db::configure_connection(&conn).expect("configure");
-        crate::db::schema::initialize(&conn).expect("init schema");
+        let conn = db::open(&db_path).expect("open db");
         let file_id = crate::db::queries::insert_file(
             &conn,
             &FileNode {
@@ -1039,9 +1030,9 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("mkdir");
         let db_path = seeded_db(&dir);
         let (status, body, ctype) =
-            build_response(Method::Get, "/outline/src/lib.rs", &db_path, false)
+            build_response(HttpMethod::Get, "/outline/src/lib.rs", &db_path, false)
                 .expect("build response");
-        assert_eq!(status, StatusCode(200));
+        assert_eq!(status, 200);
         assert_eq!(ctype, "application/json");
         let v: serde_json::Value = serde_json::from_str(&body).expect("parse json");
         let names: Vec<&str> = v["results"]
@@ -1062,9 +1053,9 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("mkdir");
         let db_path = seeded_db(&dir);
         let (status, body, _) =
-            build_response(Method::Get, "/outline/src/lib.rs?limit=1", &db_path, false)
+            build_response(HttpMethod::Get, "/outline/src/lib.rs?limit=1", &db_path, false)
                 .expect("build response");
-        assert_eq!(status, StatusCode(200));
+        assert_eq!(status, 200);
         let v: serde_json::Value = serde_json::from_str(&body).expect("parse json");
         assert_eq!(
             v["results"].as_array().expect("results array").len(),
@@ -1091,9 +1082,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("mkdir");
         let db_path = dir.join("test_symbol_http.db");
         {
-            let conn = Connection::open(&db_path).expect("open db");
-            crate::db::configure_connection(&conn).expect("configure");
-            crate::db::schema::initialize(&conn).expect("init schema");
+            let conn = db::open(&db_path).expect("open db");
             for path in ["src/a.rs", "src/b.rs"] {
                 let file_id = crate::db::queries::insert_file(
                     &conn,
@@ -1120,9 +1109,9 @@ mod tests {
             }
         }
         let (status, body, _) =
-            build_response(Method::Get, "/symbol/dup?limit=1", &db_path, false)
+            build_response(HttpMethod::Get, "/symbol/dup?limit=1", &db_path, false)
                 .expect("build response");
-        assert_eq!(status, StatusCode(200));
+        assert_eq!(status, 200);
         let v: serde_json::Value = serde_json::from_str(&body).expect("parse json");
         assert_eq!(
             v["definition"].as_array().expect("definition array").len(),
@@ -1147,17 +1136,17 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("mkdir");
         let db_path = seeded_db(&dir);
         let (status, body, _) =
-            build_response(Method::Get, "/search/alpha", &db_path, false)
+            build_response(HttpMethod::Get, "/search/alpha", &db_path, false)
                 .expect("build response");
-        assert_eq!(status, StatusCode(200));
+        assert_eq!(status, 200);
         let v: serde_json::Value = serde_json::from_str(&body).expect("parse json");
         assert_eq!(v["results"].as_array().expect("array").len(), 1);
         assert_eq!(v["results"][0]["name"], "alpha");
 
         let (status, body, _) =
-            build_response(Method::Get, "/search/a?limit=1", &db_path, false)
+            build_response(HttpMethod::Get, "/search/a?limit=1", &db_path, false)
                 .expect("build response");
-        assert_eq!(status, StatusCode(200));
+        assert_eq!(status, 200);
         let v: serde_json::Value = serde_json::from_str(&body).expect("parse json");
         assert_eq!(v["results"].as_array().expect("array").len(), 1);
         assert!(
@@ -1178,17 +1167,17 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("mkdir");
         let db_path = seeded_db(&dir);
         let (status, body, _) =
-            build_response(Method::Get, "/symbol/%20alpha%20", &db_path, false)
+            build_response(HttpMethod::Get, "/symbol/%20alpha%20", &db_path, false)
                 .expect("build response");
-        assert_eq!(status, StatusCode(200));
+        assert_eq!(status, 200);
         let v: serde_json::Value = serde_json::from_str(&body).expect("parse json");
         assert_eq!(v["definition"].as_array().expect("array").len(), 1);
         assert_eq!(v["definition"][0]["name"], "alpha");
 
         let (status, body, _) =
-            build_response(Method::Get, "/search/%20beta%20", &db_path, false)
+            build_response(HttpMethod::Get, "/search/%20beta%20", &db_path, false)
                 .expect("build response");
-        assert_eq!(status, StatusCode(200));
+        assert_eq!(status, 200);
         let v: serde_json::Value = serde_json::from_str(&body).expect("parse json");
         assert_eq!(v["results"].as_array().expect("array").len(), 1);
         assert_eq!(v["results"][0]["name"], "beta");
@@ -1201,9 +1190,9 @@ mod tests {
             std::env::temp_dir().join(format!("keel_search_empty_{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("mkdir");
         let db_path = seeded_db(&dir);
-        let (status, _, _) = build_response(Method::Get, "/search/", &db_path, false)
+        let (status, _, _) = build_response(HttpMethod::Get, "/search/", &db_path, false)
             .expect("build response");
-        assert_eq!(status, StatusCode(400));
+        assert_eq!(status, 400);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1253,9 +1242,9 @@ mod tests {
             std::env::temp_dir().join(format!("keel_outline_empty_{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("mkdir");
         let db_path = seeded_db(&dir);
-        let (status, _, _) = build_response(Method::Get, "/outline/", &db_path, false)
+        let (status, _, _) = build_response(HttpMethod::Get, "/outline/", &db_path, false)
             .expect("build response");
-        assert_eq!(status, StatusCode(400));
+        assert_eq!(status, 400);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1263,9 +1252,7 @@ mod tests {
     fn seeded_dep_db(dir: &std::path::Path) -> std::path::PathBuf {
         use crate::graph::types::{FileNode, Import, Symbol, SymbolKind};
         let db_path = dir.join("test_dep_http.db");
-        let conn = Connection::open(&db_path).expect("open db");
-        crate::db::configure_connection(&conn).expect("configure");
-        crate::db::schema::initialize(&conn).expect("init schema");
+        let conn = db::open(&db_path).expect("open db");
         let a_id = crate::db::queries::insert_file(
             &conn,
             &FileNode {
@@ -1330,9 +1317,9 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("mkdir");
         let db_path = seeded_dep_db(&dir);
         let (status, body, ctype) =
-            build_response(Method::Get, "/dependents/a", &db_path, false)
+            build_response(HttpMethod::Get, "/dependents/a", &db_path, false)
                 .expect("build response");
-        assert_eq!(status, StatusCode(200));
+        assert_eq!(status, 200);
         assert_eq!(ctype, "application/json");
         let v: serde_json::Value = serde_json::from_str(&body).expect("parse json");
         let modules: Vec<&str> = v["results"]
@@ -1355,7 +1342,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("mkdir");
         let db_path = seeded_dep_db(&dir);
         {
-            let conn = Connection::open(&db_path).expect("open db");
+            let conn = db::open(&db_path).expect("open db");
             let c_id = crate::db::queries::insert_file(
                 &conn,
                 &FileNode {
@@ -1376,9 +1363,9 @@ mod tests {
             .expect("insert import");
         }
         let (status, body, _) =
-            build_response(Method::Get, "/dependents/a?limit=1", &db_path, false)
+            build_response(HttpMethod::Get, "/dependents/a?limit=1", &db_path, false)
                 .expect("build response");
-        assert_eq!(status, StatusCode(200));
+        assert_eq!(status, 200);
         let v: serde_json::Value = serde_json::from_str(&body).expect("parse json");
         assert_eq!(
             v["results"].as_array().expect("results array").len(),
@@ -1403,9 +1390,9 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("mkdir");
         let db_path = seeded_dep_db(&dir);
         let (status, body, _) =
-            build_response(Method::Get, "/impact/alpha?module=a", &db_path, false)
+            build_response(HttpMethod::Get, "/impact/alpha?module=a", &db_path, false)
                 .expect("build response");
-        assert_eq!(status, StatusCode(200));
+        assert_eq!(status, 200);
         let v: serde_json::Value = serde_json::from_str(&body).expect("parse json");
         assert!(v["results"].is_array(), "results array, got {body}");
         assert!(v.get("confidence").is_some(), "trust envelope present");
@@ -1420,9 +1407,9 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("mkdir");
         let db_path = seeded_dep_db(&dir);
         for route in ["/impact/", "/dependents/"] {
-            let (status, _, _) = build_response(Method::Get, route, &db_path, false)
+            let (status, _, _) = build_response(HttpMethod::Get, route, &db_path, false)
                 .expect("build response");
-            assert_eq!(status, StatusCode(400), "route {route}");
+            assert_eq!(status, 400, "route {route}");
         }
         std::fs::remove_dir_all(&dir).ok();
     }

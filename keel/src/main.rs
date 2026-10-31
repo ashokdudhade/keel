@@ -607,6 +607,23 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Rules { path } => {
+            // Same gate shape as drift: violations exit 1 so CI fails.
+            if json {
+                let report = commands::build_rules_report(path.as_ref(), auto_index)
+                    .context("checking architecture rules")?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                if !report.is_clean() {
+                    std::process::exit(1);
+                }
+            } else {
+                let report = commands::run_rules(path.as_ref(), auto_index)
+                    .context("checking architecture rules")?;
+                if !report.is_clean() {
+                    std::process::exit(1);
+                }
+            }
+        }
     }
     Ok(())
 }

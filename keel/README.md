@@ -336,6 +336,27 @@ index_repository_with(root, &mut conn, &registry)?;
 Implement `LanguagePlugin` (`Sync`) with `extensions`, `extract_symbols`,
 `extract_references`, and optionally `extract_imports` / `extract_impls`.
 
+## Third-party seams (contributor)
+
+Third-party crates are usable only through these seams, so each one can be
+replaced by touching a single module:
+
+| Crate | Seam | Rule |
+|---|---|---|
+| `rusqlite` | `db::open` / `open_in_memory` / `open_uninitialized` / `open_read_only` | Construct connections only via the factories; SQL lives in `db::queries`. Raw `Connection::open` is reserved for tests that need unmigrated databases. |
+| `ignore` | `fs::walker` + `fs::prune_skipped_dirs` | All traversal builds on the shared walker (gitignore without `.git`, `.keelignore`, `SKIPPED_DIRS`). |
+| `sha2` + `hex` | `hash::sha256_hex` | The only digest function; hashes are persisted, so changing it requires an index-format bump. |
+| `tiny_http` | `http::HttpMethod` + integer statuses | Routing (`api::build_response`, `daemon::dispatch`) is transport-free; `tiny_http` types appear only at each server's accept/respond edge. |
+| `tree-sitter` + grammars | `LanguagePlugin` + `Registry` | No `tree_sitter` use outside `languages/`. |
+| `notify` / `rayon` | `index::watch` / `index::worker` | Single-module use; no seam needed. |
+| `clap` / `anyhow` | CLI boundary (`cli/`, `main.rs`) | Standard boundary use; `anyhow` only at `main.rs`. |
+| `serde` / `serde_json` | Deliberately direct | The ecosystem-standard codec; wrapping it would add indirection without a plausible replacement. |
+
+Production code never panics: no `.unwrap()`/`.expect()` outside tests
+(the one exception is a `OnceLock` static init of a compile-time-known
+query in `languages/rust.rs`, which cannot propagate errors). New code
+keeps it that way; `too_many_arguments` and friends are clippy-denied.
+
 ## Releasing
 
 Do not tag from every push. Use GitHub Actions → **Tag and release** → **Run

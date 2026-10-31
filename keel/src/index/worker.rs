@@ -2,11 +2,11 @@
 //! database writes are serialized by the orchestrator in `index::index_repository`.
 
 use crate::error::{Result, KeelError};
+use crate::fs::{prune_skipped_dirs, walker};
 use crate::graph::types::{FileNode, ImplRecord, Import, Reference, Symbol};
+use crate::hash::sha256_hex;
 use crate::languages::Registry;
-use ignore::WalkBuilder;
 use rayon::prelude::*;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,64 +37,17 @@ pub fn normalize_path(root: &Path, path: &Path) -> PathBuf {
         .unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Directory names that never hold hand-written source: dependency vendors,
-/// build outputs, and tool caches. Pruned even when no `.gitignore` covers
-/// them (fresh checkouts, ad-hoc `npm install`), so vendored copies cannot
-/// pollute definitions or references. Deliberately excludes `build/` and
-/// `out/`, which sometimes hold hand-written build scripts.
-pub(crate) const SKIPPED_DIRS: &[&str] = &[
-    ".git",
-    ".hg",
-    ".svn",
-    ".eggs",
-    ".mypy_cache",
-    ".next",
-    ".nox",
-    ".nuxt",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".tox",
-    ".venv",
-    "__pycache__",
-    "dist",
-    "node_modules",
-    "target",
-    "vendor",
-    "venv",
-];
-
 /// Collect all source files under `root` whose extension has a registered
 /// plugin, honoring `.gitignore` plus Keel's own `.keelignore` (same
 /// gitignore syntax, for generated/checked-in code worth skipping without
-/// touching version control) and pruning [`SKIPPED_DIRS`].
+/// touching version control) and pruning `SKIPPED_DIRS` (`crate::fs`).
 ///
-/// Returned paths are absolute WalkBuilder paths; callers should
+/// Returned paths are absolute walker paths; callers should
 /// [`normalize_path`] before persisting.
 pub fn collect_source_files(root: &Path, registry: &Registry) -> Vec<PathBuf> {
     let exts = registry.extensions();
-    let mut files: Vec<PathBuf> = WalkBuilder::new(root)
-        .standard_filters(true)
-        // Honor `.gitignore` even when `root` is not inside a git repository;
-        // by default the `ignore` crate only applies gitignore rules when a
-        // `.git` dir is present.
-        .require_git(false)
-        // Keel-only exclusions (generated code, fixtures) in the same syntax.
-        .add_custom_ignore_filename(".keelignore")
-        // Prune junk dirs before descending (perf) — `filter_entry(false)`
-        // skips the whole subtree. Depth 0 is the walk root itself: never
-        // prune it, so a project rooted in `target/` still indexes.
-        .filter_entry(|entry| {
-            if entry.depth() == 0 {
-                return true;
-            }
-            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                return true;
-            }
-            entry
-                .file_name()
-                .to_str()
-                .is_none_or(|name| !SKIPPED_DIRS.contains(&name))
-        })
+    let mut files: Vec<PathBuf> = walker(root)
+        .filter_entry(prune_skipped_dirs)
         .build()
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.file_type().map(|t| t.is_file()).unwrap_or(false))
@@ -159,7 +112,7 @@ pub fn parse_file(abs_path: &Path, rel_path: &Path, registry: &Registry) -> Resu
         path: abs_path.to_path_buf(),
         source,
     })?;
-    let content_hash = hex::encode(Sha256::digest(&bytes));
+    let content_hash = sha256_hex(&bytes);
     let source = std::str::from_utf8(&bytes).map_err(|_| KeelError::Parse)?;
     parse_file_contents(rel_path, source, content_hash, registry)
 }
@@ -376,7 +329,7 @@ fn process_one(
         path: abs_path.to_path_buf(),
         source,
     })?;
-    let hash = hex::encode(Sha256::digest(&bytes));
+    let hash = sha256_hex(&bytes);
 
     if existing.get(key).is_some_and(|prev| prev == &hash) {
         return Ok(FileOutcome::Skipped);

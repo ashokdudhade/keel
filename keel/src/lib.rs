@@ -15,11 +15,15 @@ pub mod explain;
 pub mod wiki;
 pub mod error;
 pub mod facade;
+pub mod fs;
 pub mod graph;
+pub mod hash;
+pub mod http;
 pub mod index;
 pub mod knowledge;
 pub mod languages;
 pub mod mcp;
+pub mod rules;
 pub mod usage;
 
 pub use error::{Result, KeelError};
@@ -36,6 +40,7 @@ pub use explain::{
 pub use wiki::{PageState, PageStatus, WikiReport, WikiStatusReport};
 pub use drift::{DriftFinding, DriftReport, DriftVerdict};
 pub use adr::{AdrDeclared, AdrDetail, AdrLink, AdrList, AdrSummary, AdrVerdict, HistoryEntry};
+pub use rules::{ForbidRule, Layer, Rules, RulesReport, RulesViolation};
 pub use knowledge::{
     InvalidationReport, KnowledgeEvidence, KnowledgeOrigin, KnowledgeRecord, KnowledgeStatus,
     KnowledgeType, MarkedStale, RecordFreshness, ValidationOutcome,

@@ -12,10 +12,9 @@ use crate::wiki::render::{
     self, FlowData, IndexData, KnowledgeRow, ModuleData, ModuleEntry, SymbolRow, MAX_ARCH_EDGES,
     MAX_ARCH_EXTERNALS, MAX_FLOW_EDGES, MAX_MODULE_DEPS, MAX_MODULE_SYMBOLS,
 };
+use crate::hash::sha256_hex;
 use crate::wiki::{WikiReport, MANIFEST_FILE, WikiManifest, PinnedPage};
-use hex::encode as hex_encode;
 use rusqlite::Connection;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -43,7 +42,7 @@ impl GeneratedPage {
         for (id, state) in &self.knowledge {
             canonical.push_str(&format!("k:{id}:{state}\n"));
         }
-        hex_encode(Sha256::digest(canonical.as_bytes()))
+        sha256_hex(canonical.as_bytes())
     }
 
     /// Short pin for page footers.

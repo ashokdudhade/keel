@@ -95,6 +95,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `keel knowledge status --agent` let agents find what each other
   learned; `knowledge_validate` stays the reuse handshake (re-pin and
   promote on confirm).
+- Third-party seams (internal, no behavior change): `db::open` family of
+  connection factories (all construction sites migrated), `fs::walker` +
+  `prune_skipped_dirs` (sole `ignore` users), `hash::sha256_hex` (sole
+  `sha2`/`hex` user), and `http::HttpMethod` (API + daemon routing is now
+  transport-free; `tiny_http` lives only at the accept/respond edges).
+  Fixed two production `.unwrap()`s (daemon header, single-index pick);
+  contributor rules are documented under "Third-party seams" in the
+  crate README.
+- Architecture rules (roadmap §8): `keel rules [PATH] [--json]` checks
+  declared dependency constraints in the .keel/rules.json file against the
+  indexed graph and exits 1 on violations (CI gate). The file holds
+  `forbid` edges (optional reasons) plus an ordered `layers` stack where
+  each layer may only depend downward. Patterns match a module and its
+  submodules across separator styles (`::`, `.`, `/`); every violation
+  cites a real import/path edge with the importing file when an import
+  row evidences it, and constrained modules matching nothing indexed
+  surface as notes instead of silent passes. Library entry point:
+  `Index::rules_check`; parsing errors surface as `KeelError::Rules`.
 - `dependencies`/`dependents` follow qualified paths: a `Path` qualifier
   that resolves to an indexed module (`crate::facade` in
   `crate::facade::f()`) is import-strength edge evidence, so consumers

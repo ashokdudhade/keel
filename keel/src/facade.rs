@@ -16,6 +16,7 @@ use crate::context;
 use crate::drift;
 use crate::explain;
 use crate::index::{self, IndexStats};
+use crate::rules;
 use crate::wiki;
 use crate::knowledge::{self, KnowledgeRecord};
 use crate::languages::Registry;
@@ -33,18 +34,16 @@ pub struct Index {
 impl Index {
     /// Open (or create) an on-disk index database at `path`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let conn = Connection::open(path.as_ref())?;
-        crate::db::configure_connection(&conn)?;
-        schema::initialize(&conn)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn: crate::db::open(path.as_ref())?,
+        })
     }
 
     /// Open an in-memory index (useful for tests and ephemeral analysis).
     pub fn open_in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory()?;
-        crate::db::configure_connection(&conn)?;
-        schema::initialize(&conn)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn: crate::db::open_in_memory()?,
+        })
     }
 
     /// Index every registered-language source file under `root`.
@@ -396,6 +395,14 @@ impl Index {
     ) -> Result<Option<adr::AdrDetail>> {
         ensure_index_current(&self.conn)?;
         adr::show_adr(&self.conn, project_root, id_or_path)
+    }
+
+    /// Check declared architecture `rules` against the indexed dependency
+    /// graph. Violations name real import/path edges; constrained modules
+    /// matching nothing indexed surface as notes rather than silent passes.
+    pub fn rules_check(&self, rules: &rules::Rules) -> Result<rules::RulesReport> {
+        ensure_index_current(&self.conn)?;
+        rules::check_rules(&self.conn, rules)
     }
 }
 

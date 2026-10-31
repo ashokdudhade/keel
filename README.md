@@ -302,7 +302,14 @@ keel wiki generate [--dir PATH]   # architecture wiki (default docs/keel)
 keel wiki update | status   # refresh stale pages / report freshness
 keel drift [--path P]... [--json]   # KnowledgeCI: docs vs index, exits 1 on findings
 keel adr list | show <id> [--json]   # ADRs with links, knowledge, file history
+keel rules [PATH] [--json]   # declared dependency constraints (.keel/rules.json), exits 1 on violations
 ```
+
+Declare constraints in `.keel/rules.json` (`forbid` edges with optional
+reasons, plus an ordered `layers` stack where each layer may only depend
+downward). Patterns match a module and its submodules; run
+`keel dependencies <module>` to see the exact ids rules match, since
+rules match resolved ids exactly.
 
 Hit-list flags: `--limit N` caps results (1-100000, default 500;
 `search`: 1-200, default 50) with the true total on stderr; `--json`

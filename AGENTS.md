@@ -10,7 +10,7 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
 | Path | What it is |
 |---|---|
 | `keel/` | The Rust crate (binary + library in one package). All engine work happens here. |
-| `keel/src/` | `lib.rs`, `main.rs`, `facade.rs` (`Index`), `cli/`, `db/`, `graph/`, `index/`, `languages/`, `daemon.rs`, `mcp/`, `api/`, `usage.rs` (Insights telemetry), `knowledge/` (records/store/freshness), `context/` (task packages), `explain/` (evidence packages), `wiki/` (generate/render/update), `drift/` (scan/check), `adr/` (parse/link/history) |
+| `keel/src/` | `lib.rs`, `main.rs`, `facade.rs` (`Index`), `cli/`, `db/`, `graph/`, `index/`, `languages/`, `daemon.rs`, `mcp/`, `api/`, `usage.rs` (Insights telemetry), `knowledge/` (records/store/freshness), `context/` (task packages), `explain/` (evidence packages), `wiki/` (generate/render/update), `drift/` (scan/check), `adr/` (parse/link/history), `rules/` (constraints/check), `fs.rs` (walker seam), `hash.rs` (digest seam), `http.rs` (HTTP vocabulary) |
 | `keel/tests/` | `integration.rs`, `common_path.rs`, `languages.rs`, `service.rs` + inline unit tests |
 | `benchmarks/` | `accuracy/` + `impact/` + `references/` fixtures + `gold.json`; `realworld/` gold files + `repos.json` |
 | `scripts/` | Benchmark runners, `keel-mcp.sh`, `mcp-trust-smoke.py`, `test-install.sh` |
@@ -148,6 +148,11 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
   (`supported`/`stale`/`unlinked`) describe link freshness, never the
   declared `Status:` line. `list` skips history (one subprocess per ADR
   is too slow); `show` misses suggest substring ids.
+- **Rules:** `rules/` + `Index::rules_check` + `keel rules [PATH] [--json]`
+  (exits 1 on violations). `.keel/rules.json` holds `forbid` edges and an
+  ordered `layers` stack; checks run on `find_dependencies` edges, so ids
+  match `keel dependencies` output exactly (including `module::name`
+  external edges from from-imports).
 - **HTTP:** `api/mod.rs` via `keel serve` on `127.0.0.1:7645`:
   `GET /health`, `GET /symbol/{name}[?limit=N]`, `GET /outline/{path}[?limit=N]`,
   `GET /search/{pattern}[?limit=N]`, `GET /impact/{name}[?module=M]`,
