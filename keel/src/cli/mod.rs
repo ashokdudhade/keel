@@ -250,4 +250,88 @@ pub enum Commands {
     },
     /// Serve the MCP stdio server (NDJSON or Content-Length JSON-RPC).
     Mcp,
+    /// Explain a symbol, file, or module with a source-linked evidence package.
+    Explain {
+        /// Symbol name to explain (with optional --module filter).
+        #[arg(value_parser = non_empty_name)]
+        name: Option<String>,
+        /// Explain a file instead of a symbol.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Explain a module instead of a symbol (or filter NAME when given).
+        #[arg(long, value_parser = trim_module)]
+        module: Option<String>,
+    },
+    /// Generate, update, and inspect the living architecture wiki.
+    Wiki {
+        /// The wiki action to run.
+        #[command(subcommand)]
+        action: WikiCommands,
+    },
+    /// Build a ranked, cited context package for a task description.
+    Context {
+        /// Free-form task text (e.g. "Add refund support to payments").
+        #[arg(value_parser = non_empty_name)]
+        task: String,
+        /// Token budget the package must fit (default 8000).
+        #[arg(long)]
+        budget: Option<usize>,
+        /// Exclude test files referencing matched symbols.
+        #[arg(long)]
+        no_tests: bool,
+        /// Exclude linked knowledge records.
+        #[arg(long)]
+        no_knowledge: bool,
+    },
+    /// Inspect and revalidate source-linked knowledge records.
+    Knowledge {
+        /// The knowledge action to run.
+        #[command(subcommand)]
+        action: KnowledgeCommands,
+    },
+    /// Sweep docs, agent instructions, and ADRs for claims that no longer
+    /// match the index. Exits 1 when findings remain (CI gate).
+    Drift {
+        /// Check only these files (repeatable; default: discover docs under
+        /// the project root). Missing paths are reported, never silent.
+        #[arg(long = "path")]
+        path: Vec<PathBuf>,
+    },
+}
+
+/// Wiki actions.
+#[derive(Subcommand)]
+pub enum WikiCommands {
+    /// Generate the full wiki tree (default output `<root>/docs/keel`).
+    Generate {
+        /// Output directory (default: `<root>/docs/keel`).
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// Rewrite only stale or missing wiki pages.
+    Update {
+        /// Wiki directory (default: `<root>/docs/keel`).
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// Report per-page freshness without writing anything.
+    Status {
+        /// Wiki directory (default: `<root>/docs/keel`).
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+}
+
+/// Knowledge actions.
+#[derive(Subcommand)]
+pub enum KnowledgeCommands {
+    /// Show the stored status plus the live freshness verdict per record.
+    Status,
+    /// Re-check one record: refresh pins and promote to supported when its
+    /// anchors resolve, else mark stale.
+    Validate {
+        /// Knowledge record id to validate.
+        #[arg(value_parser = non_empty_name)]
+        id: String,
+    },
 }

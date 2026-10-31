@@ -317,6 +317,42 @@ pub fn find_definition(conn: &Connection, name: &str) -> Result<Vec<Symbol>> {
     Ok(out)
 }
 
+/// Distinct symbol names matching `name` case-insensitively, ordered.
+/// Lets doc citations (`high`) resolve to definitions (`High`) when the
+/// match is unique; ambiguous case matches stay on the normal miss path.
+pub fn symbol_names_matching_nocase(conn: &Connection, name: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT s.name FROM symbols s WHERE s.name = ?1 COLLATE NOCASE ORDER BY s.name",
+    )?;
+    let rows = stmt.query_map(params![name], |row| row.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// True when `name` is referenced anywhere (exact match): used but
+/// externally defined (`Sync`, `Vec`). Lets the drift checker treat
+/// cited names that are live code vocabulary as resolved.
+pub fn name_is_referenced(conn: &Connection, name: &str) -> Result<bool> {
+    let mut stmt = conn.prepare("SELECT 1 FROM \"references\" WHERE name = ?1 LIMIT 1")?;
+    Ok(stmt.exists(params![name])?)
+}
+
+/// Distinct imported module paths across the index, ordered. The drift
+/// checker treats these as external names: a doc citing `rusqlite` is
+/// backed by the `use rusqlite::…` rows, not a definition.
+pub fn distinct_import_modules(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT DISTINCT module_path FROM imports ORDER BY module_path")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 /// Substring search over symbol names (case-insensitive), ordered
 /// deterministically by location. `limit` is clamped to 1..=200; returns the
 /// hits plus whether more matches exist beyond `limit`.
@@ -509,6 +545,33 @@ pub fn all_reference_names_with_containers(
 }
 
 /// Find all references matching `name`, ordered deterministically.
+/// All references recorded in one indexed file, ordered by position.
+/// Powers call-graph views (wiki flows) without per-symbol fan-out.
+pub fn references_in_file(conn: &Connection, path: &str) -> Result<Vec<Reference>> {
+    let mut stmt = conn.prepare(
+        r#"SELECT r.name, f.path, r.start_line, r.start_col, r.kind, r.container, r.qualifier
+           FROM "references" r JOIN files f ON r.file_id = f.id
+           WHERE f.path = ?1
+           ORDER BY r.start_line, r.start_col"#,
+    )?;
+    let rows = stmt.query_map(params![path], |row| {
+        Ok(Reference {
+            name: row.get::<_, String>(0)?,
+            file: PathBuf::from(row.get::<_, String>(1)?),
+            start_line: row.get::<_, i64>(2)? as u32,
+            start_col: row.get::<_, i64>(3)? as u32,
+            kind: ReferenceKind::from_db(&row.get::<_, String>(4)?),
+            container: row.get::<_, String>(5)?,
+            qualifier: row.get::<_, String>(6)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 pub fn find_references(conn: &Connection, name: &str) -> Result<Vec<Reference>> {
     let mut stmt = conn.prepare(
         r#"SELECT r.name, f.path, r.start_line, r.start_col, r.kind, r.container, r.qualifier
@@ -628,6 +691,30 @@ pub fn reference_names_in_file(conn: &Connection, path: &str) -> Result<Vec<Stri
            ORDER BY r.name"#,
     )?;
     let rows = stmt.query_map(params![path], |row| row.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// Distinct non-empty qualifiers of `Path` references in a file, ordered.
+///
+/// A qualifier is the path prefix as written (`crate::facade` in
+/// `crate::facade::f()`), so a qualifier that resolves to an indexed module
+/// is import-strength evidence for dependency edges — including consumers
+/// that qualify paths instead of importing them. Method/Value qualifiers
+/// are receiver text, never module paths, and are excluded here.
+pub fn path_qualifiers_in_file(conn: &Connection, path: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        r#"SELECT DISTINCT r.qualifier
+           FROM "references" r JOIN files f ON r.file_id = f.id
+           WHERE f.path = ?1 AND r.kind = ?2 AND r.qualifier != ''
+           ORDER BY r.qualifier"#,
+    )?;
+    let rows = stmt.query_map(params![path, ReferenceKind::Path.as_db()], |row| {
+        row.get::<_, String>(0)
+    })?;
     let mut out = Vec::new();
     for r in rows {
         out.push(r?);

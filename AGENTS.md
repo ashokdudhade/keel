@@ -10,7 +10,7 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
 | Path | What it is |
 |---|---|
 | `keel/` | The Rust crate (binary + library in one package). All engine work happens here. |
-| `keel/src/` | `lib.rs`, `main.rs`, `facade.rs` (`Index`), `cli/`, `db/`, `graph/`, `index/`, `languages/`, `daemon.rs`, `mcp/`, `api/`, `usage.rs` (Insights telemetry) |
+| `keel/src/` | `lib.rs`, `main.rs`, `facade.rs` (`Index`), `cli/`, `db/`, `graph/`, `index/`, `languages/`, `daemon.rs`, `mcp/`, `api/`, `usage.rs` (Insights telemetry), `knowledge/` (records/store/freshness), `context/` (task packages), `explain/` (evidence packages), `wiki/` (generate/render/update), `drift/` (scan/check) |
 | `keel/tests/` | `integration.rs`, `common_path.rs`, `languages.rs`, `service.rs` + inline unit tests |
 | `benchmarks/` | `accuracy/` + `impact/` + `references/` fixtures + `gold.json`; `realworld/` gold files + `repos.json` |
 | `scripts/` | Benchmark runners, `keel-mcp.sh`, `mcp-trust-smoke.py`, `test-install.sh` |
@@ -29,7 +29,11 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
 
 - **Public API:** `Index` in `keel/src/facade.rs` — `open` / `open_in_memory`,
   `index_path` / `index_path_with`, plus `definition`, `references`, `callers`,
-  `implementations`, `dependencies`, `impact` and `*_with_meta` variants.
+  `implementations`, `dependencies`, `impact` and `*_with_meta` variants,
+  `knowledge_put`/`knowledge_get`/`knowledge_list`/`knowledge_check`/
+  `knowledge_invalidate`/`knowledge_validate`, `task_context`,
+  `explain_symbol`/`explain_file`/`explain_module`, and
+  `wiki_generate`/`wiki_update`/`wiki_status`.
   Prefer it over reaching into `db`/`graph`/`index` directly.
 - **Languages:** `LanguagePlugin` trait + `Registry` (`languages/mod.rs`).
   Built-ins: Rust (`.rs`), TS/TSX (`.ts/.tsx/.mts/.cts`), JS/JSX
@@ -49,9 +53,10 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
   Parsing runs on a dedicated 64 MiB-stack rayon pool, and every
   extraction walk enforces `MAX_WALK_DEPTH` (1024; real max observed: 89):
   deeper files fail loudly per file instead of overflowing a stack.
-- **Storage:** `rusqlite` bundled SQLite, `PRAGMA user_version = 6`
-  (`db/schema.rs` migrates v0–v5 → v6 idempotently in one transaction;
-  v6 adds the `symbols.container` column + index and forces one rebuild).
+- **Storage:** `rusqlite` bundled SQLite, `PRAGMA user_version = 7`
+  (`db/schema.rs` migrates v0–v6 → v7 idempotently in one transaction;
+  v6 adds the `symbols.container` column + index and forces one rebuild;
+  v7 adds the `knowledge` + `knowledge_evidence` tables, no rebuild).
   Tables: `files`, `symbols` (+`module_path`, +`container`), `"references"` (+`kind`,
   +`container`, +`qualifier`), `imports`, `impls`, `meta` (writer stamps).
   `INDEX_FORMAT_VERSION` (=2) tracks content semantics separately from schema:
@@ -71,8 +76,8 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
   symbols found" is a confident miss (high/0), not a failure. Non-empty `impact`
   is always a candidate blast radius (medium/low) — never high.
 - **Module identity per language:** Rust `crate::…` derived from `src/` layout
-  (`src/mcp/mod.rs` → `crate::mcp`); TS/JS path-based (`src/auth/service`),
-  relative imports (`./x`) normalized to the same ids; Python dotted packages,
+  (`src/mcp/mod.rs` → `crate::mcp`); TS/JS path-based (e.g. `src/<area>/<service>`),
+  relative imports (`./<name>`) normalized to the same ids; Python dotted packages,
   relative (`.util`) normalized; Go package names, `package main` path-qualified,
   import paths matched by final segment. `implementations` covers Rust traits,
   TS interfaces/`extends` (declarations and class expressions),
@@ -83,17 +88,27 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
   `projects.json`). `keel start` indexes into `<project>/.keel/index.db` and
   spawns `keel watch <root>` (logs to `.keel/watch.log`); `stop`/`status` manage it.
 - **MCP:** `mcp/mod.rs` — stdio JSON-RPC 2.0, accepts NDJSON (Cursor 2025-11+)
-  and Content-Length framing; stdout is protocol-only, logs to stderr. Ten
-  tools: `definition`, `references`, `callers`, `implementations`,
+  and Content-Length framing; stdout is protocol-only, logs to stderr.
+  Eighteen tools: `definition`, `references`, `callers`, `implementations`,
   `dependencies`, `dependents`, `impact`, `outline`, `search`, `unused`
-  (+`index`). The eight hit tools take `limit` and `preview`
-  (source line per hit).
+  (+`index`) plus knowledge tools `knowledge_search`, `knowledge_get`,
+  `knowledge_status` (read-only) and `knowledge_add`, `knowledge_validate`
+  (writes; no readOnlyHint), plus `get_task_context` (read-only context
+  package) and `explain` (read-only evidence package; exactly one of
+  name/file/module). The eight hit tools take `limit` and `preview`
+  (source line per hit). Knowledge hits carry the full record plus a live
+  `fresh` verdict; `knowledge_get` misses return `{"record": null}` + notes.
   `definition`/`references`/`callers`/`impact`/`implementations`
   accept optional `module` or qualified `name` (`crate::mcp::serve`); when both
   are passed, `module` wins and `name` is stripped to bare symbol.
   `definition`/`search` also take member form (`Type.member` and
   single-segment `Type::member`; `definition` tries the module reading
-  of `::` first, `search` is case-insensitive).
+  of `::` first, `search` is case-insensitive). `references`/`callers`
+  take member form too (only container-naming receivers attribute —
+  `C()`/`C` + module evidence, `self`/`this` via the enclosing class;
+  locals/bare sites are counted, never claimed); `impact` seeds from
+  the member but covers the module-level name with a sibling note (Low)
+  when siblings share it.
 - **Index resolution** (`cli/commands.rs::resolve_index_db`, MCP): 1. `KEEL_INDEX_DB`
   if set → 2. walk up from cwd for `.keel/index.db` → 3. daemon registry
   (project containing cwd, else sole registered index; never guess among many)
@@ -107,6 +122,21 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
   resolve; runs after module/dir steps, `/`-boundary required, ambiguous
   tails miss honestly with suggestions, extensionless identifiers pass
   through to symbol resolution.
+- **Drift (KnowledgeCI):** `drift/` (`scan.rs` extraction, `mod.rs` checks) +
+  `Index::drift_check` + `keel drift [--path P]... [--json]`. Sweeps
+  `docs/` (minus the generated wiki tree), agent instructions
+  (`AGENTS.md`, `CLAUDE.md`, …), and ADRs for backticked claims outside
+  fenced blocks, plus wiki pages via manifest pins; exits 1
+  on findings (the one CLI gate that fails — deliberate). Verdicts:
+  `potentially stale` (rename candidate / wiki inputs moved),
+  `unsupported` (resolves nowhere), `contradicted` (adjacent kind word
+  vs indexed kind, `impl` rows excluded). Miss ladder before flagging:
+  keywords/shorthands/toolchain, live schema + `meta` keys, external
+  imports, unique case-insensitive matches, `KEEL_*`, project/MCP/CLI
+  names, referenced-but-undefined names; receiver samples (`self.save`)
+  and ambiguous paths skip honestly with a counted note. Suggestions
+  are human-reviewed, never applied. Doc conventions the checker
+  honors: fence samples, quote prose, `<placeholder>` hypotheticals.
 - **HTTP:** `api/mod.rs` via `keel serve` on `127.0.0.1:7645`:
   `GET /health`, `GET /symbol/{name}[?limit=N]`, `GET /outline/{path}[?limit=N]`,
   `GET /search/{pattern}[?limit=N]`, `GET /impact/{name}[?module=M]`,
@@ -137,10 +167,11 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
   design: imports, bindings/writes, labels,
   dict/object-literal keys, other string contents, `macro_rules!`
   templates). Path refs store their qualifier
-  (`mcp` in `mcp::serve`); Method refs store receiver text (`db` in
-  `db.get()`) — all five languages — so module-scoped callers can break
+  (`mcp` in `mcp::serve`); Method refs store receiver text (the `db`
+  in a "db.get()"-style call) — all five languages — so module-scoped
+  callers can break
   import-tier ties; undecided ties stay dropped with an honest note.
-  Schema v6, index format 3 (migrations via `schema::initialize`). Member
+  Schema v7, index format 3 (migrations via `schema::initialize`). Member
   symbols record their enclosing type in `symbols.container`, so
   `definition` accepts `Type.member` (and single-segment `Type::member`
   as a fallback when the module reading misses).
@@ -177,7 +208,7 @@ cargo install --path ./keel                 # contributor install from source
 - Pushing to `main` does **not** release. Cut releases via GitHub Actions →
   **Tag and release** (patch/minor/major or exact version) → tags `vX.Y.Z` →
   triggers **Release** (runs tests + clippy, builds 4 targets
-  macOS/Linux × arm64/x86_64, publishes archives + `SHA256SUMS`, updates
+  macOS/Linux × arm64/x86_64, publishes archives + SHA256SUMS, updates
   `Formula/keel.rb` checksums).
 - After releases that change module identity or index format, users must
   `rm -rf .keel && keel start` and refresh MCP in the IDE.

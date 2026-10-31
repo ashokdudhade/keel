@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use keel::api::{DependencyDto, ImplDto, ReferenceDto, SymbolDto};
-use keel::cli::{commands, Cli, Commands};
+use keel::cli::{commands, Cli, Commands, KnowledgeCommands, WikiCommands};
 use std::path::Path;
 
 /// Record one CLI query for the Insights portal (best-effort, local only).
@@ -445,6 +445,131 @@ fn main() -> Result<()> {
         }
         Commands::Mcp => {
             commands::run_mcp(auto_index).context("serving MCP")?;
+        }
+        Commands::Explain { name, file, module } => {
+            // Exactly one target: NAME (+ optional --module filter), or
+            // --file, or --module alone.
+            let explanation = match (name, file, module) {
+                (Some(_), Some(_), _) | (None, Some(_), Some(_)) => {
+                    anyhow::bail!("pass exactly one of NAME, --file, or --module")
+                }
+                (None, None, None) => {
+                    anyhow::bail!("pass exactly one of NAME, --file, or --module")
+                }
+                (Some(name), None, module) => {
+                    commands::build_explanation_symbol(&name, module.as_deref(), auto_index)
+                        .with_context(|| format!("explaining {name}"))?
+                }
+                (None, Some(file), None) => commands::build_explanation_file(&file, auto_index)
+                    .with_context(|| format!("explaining {}", file.display()))?,
+                (None, None, Some(module)) => {
+                    commands::build_explanation_module(&module, auto_index)
+                        .with_context(|| format!("explaining module {module}"))?
+                }
+            };
+            if json {
+                println!(
+                    "{}",
+                    commands::explanation_json(&explanation).context("rendering explanation")?
+                );
+            } else {
+                commands::print_explanation(&explanation);
+            }
+        }
+        Commands::Wiki { action } => match action {
+            WikiCommands::Generate { dir } => {
+                if json {
+                    println!(
+                        "{}",
+                        commands::wiki_report_json(dir, auto_index, false)
+                            .context("generating wiki")?
+                    );
+                } else {
+                    commands::run_wiki_generate(dir, auto_index).context("generating wiki")?;
+                }
+            }
+            WikiCommands::Update { dir } => {
+                if json {
+                    println!(
+                        "{}",
+                        commands::wiki_report_json(dir, auto_index, true)
+                            .context("updating wiki")?
+                    );
+                } else {
+                    commands::run_wiki_update(dir, auto_index).context("updating wiki")?;
+                }
+            }
+            WikiCommands::Status { dir } => {
+                if json {
+                    println!(
+                        "{}",
+                        commands::wiki_status_json(dir, auto_index)
+                            .context("checking wiki status")?
+                    );
+                } else {
+                    commands::run_wiki_status(dir, auto_index).context("checking wiki status")?;
+                }
+            }
+        },
+        Commands::Context {
+            task,
+            budget,
+            no_tests,
+            no_knowledge,
+        } => {
+            if json {
+                println!(
+                    "{}",
+                    commands::context_json(&task, budget, !no_tests, !no_knowledge, auto_index)
+                        .context("building task context")?
+                );
+            } else {
+                commands::run_context(&task, budget, !no_tests, !no_knowledge, auto_index)
+                    .context("building task context")?;
+            }
+        }
+        Commands::Knowledge { action } => match action {
+            KnowledgeCommands::Status => {
+                if json {
+                    println!(
+                        "{}",
+                        commands::knowledge_status_json(auto_index)
+                            .context("checking knowledge freshness")?
+                    );
+                } else {
+                    commands::run_knowledge_status(auto_index)
+                        .context("checking knowledge freshness")?;
+                }
+            }
+            KnowledgeCommands::Validate { id } => {
+                if json {
+                    println!(
+                        "{}",
+                        commands::knowledge_validate_json(&id, auto_index)
+                            .with_context(|| format!("validating knowledge {id}"))?
+                    );
+                } else {
+                    commands::run_knowledge_validate(&id, auto_index)
+                        .with_context(|| format!("validating knowledge {id}"))?;
+                }
+            }
+        },
+        Commands::Drift { path } => {
+            // KnowledgeCI gate: findings exit 1 so CI fails. The report
+            // prints first in both modes; JSON stays machine-readable.
+            if json {
+                let report =
+                    commands::build_drift_report(&path, auto_index).context("checking drift")?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                if !report.is_clean() {
+                    std::process::exit(1);
+                }
+            } else {
+                let report = commands::run_drift(&path, auto_index).context("checking drift")?;
+                if !report.is_clean() {
+                    std::process::exit(1);
+                }
+            }
         }
     }
     Ok(())

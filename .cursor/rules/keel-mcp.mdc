@@ -21,6 +21,8 @@ user to say “use keel” or “via MCP”.
 - What does F define? → `outline` (file, module, or directory)
 - What symbols mention P? → `search` (substring, case-insensitive, exact first)
 - What code is dead? → `unused` (optional file/module/dir scope; candidates only)
+- Starting a task? → `get_task_context` (ranked symbols + tests + knowledge in one call, token-budgeted)
+- What is X / how does M work? → `explain` (name, file, or module evidence package with callers + deps)
 
 Pass the **exact, case-sensitive** symbol or module name. Prefer Keel over
 Cursor `Grep` / codebase search for these intents.

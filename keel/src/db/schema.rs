@@ -14,7 +14,7 @@ use crate::error::{Result, KeelError};
 use rusqlite::Connection;
 
 /// The latest schema version this build understands.
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 /// Content-format version stamped into each index by the writer.
 ///
@@ -27,17 +27,18 @@ pub const INDEX_FORMAT_VERSION: i64 = 3;
 /// Create or migrate the schema to the latest version. Idempotent.
 ///
 /// Reads `PRAGMA user_version` and:
-/// - version 0 with no `files` table (truly fresh): creates all v6 tables and
+/// - version 0 with no `files` table (truly fresh): creates all v7 tables and
 ///   indexes, stamped current (nothing stale to rebuild);
 /// - version 0 with an existing `files` table (unstamped legacy v0.1 database):
-///   runs the v0.1 → v6 upgrade in place, preserving existing data; content is
+///   runs the v0.1 → v7 upgrade in place, preserving existing data; content is
 ///   stamped format 0 so the next index pass rebuilds it;
 /// - version 1 (stamped v0.1 database): runs the same chained upgrade;
-/// - version 2: adds the writer stamp (format 0, forcing one rebuild), then v6;
+/// - version 2: adds the writer stamp (format 0, forcing one rebuild), then v7;
 /// - version 3: adds the reference qualifier column, then forces one rebuild;
 /// - version 4: adds `file_id` indexes (no rebuild: content is unchanged);
 /// - version 5: adds the symbol container column, then forces one rebuild;
-/// - version 6: no-op;
+/// - version 6: adds the knowledge tables (no rebuild: content is unchanged);
+/// - version 7: no-op;
 /// - version > `SCHEMA_VERSION`: returns [`KeelError::UnsupportedSchema`]
 ///   without stamping.
 ///
@@ -85,8 +86,9 @@ fn migrate(conn: &Connection, version: i64) -> Result<()> {
                 upgrade_to_v4(conn)?;
                 upgrade_to_v5(conn)?;
                 upgrade_to_v6(conn)?;
+                upgrade_to_v7(conn)?;
             } else {
-                create_v6(conn)?;
+                create_v7(conn)?;
             }
         }
         1 => {
@@ -95,23 +97,31 @@ fn migrate(conn: &Connection, version: i64) -> Result<()> {
             upgrade_to_v4(conn)?;
             upgrade_to_v5(conn)?;
             upgrade_to_v6(conn)?;
+            upgrade_to_v7(conn)?;
         }
         2 => {
             upgrade_to_v3(conn)?;
             upgrade_to_v4(conn)?;
             upgrade_to_v5(conn)?;
             upgrade_to_v6(conn)?;
+            upgrade_to_v7(conn)?;
         }
         3 => {
             upgrade_to_v4(conn)?;
             upgrade_to_v5(conn)?;
             upgrade_to_v6(conn)?;
+            upgrade_to_v7(conn)?;
         }
         4 => {
             upgrade_to_v5(conn)?;
             upgrade_to_v6(conn)?;
+            upgrade_to_v7(conn)?;
         }
-        5 => upgrade_to_v6(conn)?,
+        5 => {
+            upgrade_to_v6(conn)?;
+            upgrade_to_v7(conn)?;
+        }
+        6 => upgrade_to_v7(conn)?,
         _ => {}
     }
 
@@ -277,6 +287,77 @@ fn upgrade_to_v5(conn: &Connection) -> Result<()> {
 fn create_v6(conn: &Connection) -> Result<()> {
     create_v5(conn)?;
     add_symbols_container(conn)?;
+    Ok(())
+}
+
+/// Create the full v7 schema on a fresh database.
+fn create_v7(conn: &Connection) -> Result<()> {
+    create_v6(conn)?;
+    create_knowledge_tables(conn)?;
+    Ok(())
+}
+
+/// Create the knowledge tables plus their lookup indexes. Idempotent (`IF NOT
+/// EXISTS`), so both fresh creation and the v6 → v7 upgrade share it.
+///
+/// `knowledge_evidence.symbol` stores the symbol *name*, not the `symbols` row
+/// id: row ids are reassigned on every re-index, while names survive. Hashes
+/// mirror `files.content_hash` (raw lowercase SHA-256 hex) so invalidation can
+/// compare directly.
+fn create_knowledge_tables(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS knowledge (
+            id         TEXT PRIMARY KEY,
+            type       TEXT NOT NULL,
+            title      TEXT NOT NULL,
+            content    TEXT NOT NULL,
+            origin     TEXT NOT NULL,
+            status     TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS knowledge_evidence (
+            id           INTEGER PRIMARY KEY,
+            knowledge_id TEXT NOT NULL REFERENCES knowledge(id),
+            source_path  TEXT NOT NULL,
+            symbol       TEXT,
+            source_hash  TEXT,
+            commit_hash  TEXT
+        );
+        "#,
+    )?;
+    for (table, index, column) in [
+        ("knowledge", "idx_knowledge_type", "type"),
+        ("knowledge", "idx_knowledge_status", "status"),
+        (
+            "knowledge_evidence",
+            "idx_knowledge_evidence_id",
+            "knowledge_id",
+        ),
+        (
+            "knowledge_evidence",
+            "idx_knowledge_evidence_path",
+            "source_path",
+        ),
+    ] {
+        if !table_exists(conn, table)? {
+            continue;
+        }
+        // Table, index, and column names are trusted constants, so formatting
+        // them into the statement is safe.
+        conn.execute_batch(&format!(
+            "CREATE INDEX IF NOT EXISTS {index} ON \"{table}\"({column});"
+        ))?;
+    }
+    Ok(())
+}
+
+/// Upgrade a v6 database to v7: add the knowledge tables. Index content
+/// semantics are unchanged, so no rebuild is forced — the writer stamp is
+/// left alone and existing rows stay queryable.
+fn upgrade_to_v7(conn: &Connection) -> Result<()> {
+    create_knowledge_tables(conn)?;
     Ok(())
 }
 
@@ -503,11 +584,11 @@ mod tests {
     }
 
     #[test]
-    fn fresh_db_initializes_to_v6() {
+    fn fresh_db_initializes_to_v7() {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         initialize(&conn).expect("init schema");
 
-        assert_eq!(user_version(&conn), 6);
+        assert_eq!(user_version(&conn), 7);
         assert!(table_has_column(&conn, "symbols", "module_path"));
         assert!(table_has_column(&conn, "symbols", "container"));
         assert!(table_has_column(&conn, "references", "kind"));
@@ -521,6 +602,12 @@ mod tests {
         assert!(index_exists(&conn, "idx_imports_file"));
         assert!(index_exists(&conn, "idx_impls_file"));
         assert!(index_exists(&conn, "idx_symbols_container"));
+        assert!(table_exists(&conn, "knowledge"));
+        assert!(table_exists(&conn, "knowledge_evidence"));
+        assert!(index_exists(&conn, "idx_knowledge_type"));
+        assert!(index_exists(&conn, "idx_knowledge_status"));
+        assert!(index_exists(&conn, "idx_knowledge_evidence_id"));
+        assert!(index_exists(&conn, "idx_knowledge_evidence_path"));
         assert_eq!(index_format_version(&conn), INDEX_FORMAT_VERSION);
     }
 
@@ -529,11 +616,11 @@ mod tests {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         initialize(&conn).expect("init schema");
         initialize(&conn).expect("re-init schema");
-        assert_eq!(user_version(&conn), 6);
+        assert_eq!(user_version(&conn), 7);
     }
 
     #[test]
-    fn legacy_v0_unstamped_db_upgrades_to_v6_preserving_files() {
+    fn legacy_v0_unstamped_db_upgrades_to_v7_preserving_files() {
         // Simulate a REAL on-disk v0.1 database: the v0.1 tables exist and hold
         // data, but `user_version` was never stamped, so it still reports 0.
         let conn = Connection::open_in_memory().expect("open in-memory db");
@@ -548,7 +635,7 @@ mod tests {
 
         initialize(&conn).expect("migrate legacy v0 db");
 
-        assert_eq!(user_version(&conn), 6);
+        assert_eq!(user_version(&conn), 7);
         assert!(table_has_column(&conn, "symbols", "module_path"));
         assert!(table_has_column(&conn, "references", "kind"));
         assert!(table_has_column(&conn, "references", "container"));
@@ -565,11 +652,11 @@ mod tests {
 
         // Re-running must stay green (idempotent) on a migrated legacy db.
         initialize(&conn).expect("re-init migrated legacy db");
-        assert_eq!(user_version(&conn), 6);
+        assert_eq!(user_version(&conn), 7);
     }
 
     #[test]
-    fn v1_db_upgrades_to_v6_preserving_files() {
+    fn v1_db_upgrades_to_v7_preserving_files() {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         conn.execute_batch(V1_SCHEMA).expect("create v1 schema");
         conn.execute_batch("PRAGMA user_version = 1;")
@@ -582,7 +669,7 @@ mod tests {
 
         initialize(&conn).expect("upgrade schema");
 
-        assert_eq!(user_version(&conn), 6);
+        assert_eq!(user_version(&conn), 7);
         assert!(table_has_column(&conn, "symbols", "module_path"));
         assert!(table_has_column(&conn, "references", "kind"));
         assert!(table_has_column(&conn, "references", "container"));
@@ -598,7 +685,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_db_upgrades_to_v6_marking_content_stale() {
+    fn v2_db_upgrades_to_v7_marking_content_stale() {
         // Simulate a v2 database: stamped 2 with content rows present.
         let conn = Connection::open_in_memory().expect("open in-memory db");
         conn.execute_batch(
@@ -618,7 +705,7 @@ mod tests {
 
         initialize(&conn).expect("upgrade schema");
 
-        assert_eq!(user_version(&conn), 6);
+        assert_eq!(user_version(&conn), 7);
         assert!(table_exists(&conn, "meta"));
         assert_eq!(index_format_version(&conn), 0);
         let path: String = conn
@@ -628,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn v3_db_upgrades_to_v6_adding_qualifier() {
+    fn v3_db_upgrades_to_v7_adding_qualifier() {
         // Simulate a v3 database: full v3 tables stamped 3 with a reference row.
         let conn = Connection::open_in_memory().expect("open in-memory db");
         conn.execute_batch(
@@ -654,7 +741,7 @@ mod tests {
 
         initialize(&conn).expect("upgrade schema");
 
-        assert_eq!(user_version(&conn), 6);
+        assert_eq!(user_version(&conn), 7);
         assert!(table_has_column(&conn, "references", "qualifier"));
         // Legacy rows default to the empty (unattributable) qualifier.
         let qualifier: String = conn
@@ -665,16 +752,17 @@ mod tests {
         assert_eq!(index_format_version(&conn), 0);
 
         initialize(&conn).expect("re-init stays green");
-        assert_eq!(user_version(&conn), 6);
+        assert_eq!(user_version(&conn), 7);
     }
 
     #[test]
-    fn v4_db_upgrades_to_v6_adding_indexes_and_container() {
+    fn v4_db_upgrades_to_v7_adding_indexes_and_container() {
         // Simulate a v4 database: current tables stamped 4 with content.
-        // The chain runs v5 (file_id indexes, no rebuild) then v6
-        // (container column, rebuild forced).
+        // The chain runs v5 (file_id indexes, no rebuild), then v6
+        // (container column, rebuild forced), then v7 (knowledge tables,
+        // no rebuild).
         let conn = Connection::open_in_memory().expect("open in-memory db");
-        initialize(&conn).expect("create v6 schema");
+        initialize(&conn).expect("create current schema");
         conn.execute_batch("PRAGMA user_version = 4;")
             .expect("downgrade stamp to v4");
         // A real v4 database has no file_id indexes yet.
@@ -690,7 +778,7 @@ mod tests {
 
         initialize(&conn).expect("upgrade schema");
 
-        assert_eq!(user_version(&conn), 6);
+        assert_eq!(user_version(&conn), 7);
         assert!(index_exists(&conn, "idx_symbols_file"));
         assert!(index_exists(&conn, "idx_references_file"));
         assert!(index_exists(&conn, "idx_imports_file"));
@@ -706,7 +794,7 @@ mod tests {
     }
 
     #[test]
-    fn v5_db_upgrades_to_v6_adding_symbol_container() {
+    fn v5_db_upgrades_to_v7_adding_symbol_container() {
         // Simulate a v5 database: full v5 tables (symbols without the
         // container column) stamped 5 with a symbol row.
         let conn = Connection::open_in_memory().expect("open in-memory db");
@@ -736,7 +824,7 @@ mod tests {
 
         initialize(&conn).expect("upgrade schema");
 
-        assert_eq!(user_version(&conn), 6);
+        assert_eq!(user_version(&conn), 7);
         assert!(table_has_column(&conn, "symbols", "container"));
         assert!(index_exists(&conn, "idx_symbols_container"));
         // Legacy rows default to the empty (top-level) container.
@@ -748,7 +836,46 @@ mod tests {
         assert_eq!(index_format_version(&conn), 0);
 
         initialize(&conn).expect("re-init stays green");
-        assert_eq!(user_version(&conn), 6);
+        assert_eq!(user_version(&conn), 7);
+    }
+
+    #[test]
+    fn v6_db_upgrades_to_v7_adding_knowledge_tables_without_rebuild() {
+        // Simulate a v6 database: full v6 tables (no knowledge tables yet)
+        // stamped 6 with indexed content and a current writer stamp.
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        initialize(&conn).expect("create v7 schema");
+        conn.execute_batch(
+            "DROP TABLE knowledge_evidence; DROP TABLE knowledge;",
+        )
+        .expect("drop v7 tables");
+        conn.execute(
+            "INSERT INTO files (path, content_hash) VALUES ('src/a.rs', 'h')",
+            [],
+        )
+        .expect("seed files");
+        conn.execute_batch("PRAGMA user_version = 6;")
+            .expect("downgrade stamp to v6");
+        assert_eq!(index_format_version(&conn), INDEX_FORMAT_VERSION);
+
+        initialize(&conn).expect("upgrade schema");
+
+        assert_eq!(user_version(&conn), 7);
+        assert!(table_exists(&conn, "knowledge"));
+        assert!(table_exists(&conn, "knowledge_evidence"));
+        assert!(index_exists(&conn, "idx_knowledge_type"));
+        assert!(index_exists(&conn, "idx_knowledge_status"));
+        assert!(index_exists(&conn, "idx_knowledge_evidence_id"));
+        assert!(index_exists(&conn, "idx_knowledge_evidence_path"));
+        let path: String = conn
+            .query_row("SELECT path FROM files", [], |row| row.get(0))
+            .expect("file preserved");
+        assert_eq!(path, "src/a.rs");
+        // New tables only: the writer stamp is untouched, so no rebuild.
+        assert_eq!(index_format_version(&conn), INDEX_FORMAT_VERSION);
+
+        initialize(&conn).expect("re-init stays green");
+        assert_eq!(user_version(&conn), 7);
     }
 
     #[test]

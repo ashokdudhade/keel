@@ -172,6 +172,19 @@ pub fn index_repository_with(
     schema::stamp_last_indexed(&tx)?;
     tx.commit()?;
 
+    // Knowledge invalidation runs after the index commit, never inside it: a
+    // freshness failure warns but must never fail or roll back the index pass.
+    match crate::knowledge::invalidate_stale(conn) {
+        Ok(report) if !report.marked_stale.is_empty() => {
+            eprintln!(
+                "keel: {} knowledge record(s) marked stale; run `keel knowledge status` for details.",
+                report.marked_stale.len()
+            );
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("keel: knowledge invalidation skipped: {e}"),
+    }
+
     Ok(IndexStats {
         indexed: parsed.len(),
         skipped,

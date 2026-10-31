@@ -293,6 +293,14 @@ keel impact <name> [--module M] [--limit N]
 keel outline <file|module|dir> [--limit N]   # symbols in source order
 keel search <pattern> [--limit N]   # substring symbol-name search
 keel unused [file|module|dir] [--limit N] [--transitive]   # candidate dead code (default: project)
+keel context "task text" [--budget N] [--no-tests] [--no-knowledge]   # ranked context package (default budget 8000)
+keel knowledge status   # stored + live freshness per knowledge record
+keel knowledge validate <id>   # re-pin + promote, or mark stale
+keel explain <name> [--module M]   # evidence package: def, callers, deps, knowledge
+keel explain --file <path> | --module <mod>   # file / module evidence package
+keel wiki generate [--dir PATH]   # architecture wiki (default docs/keel)
+keel wiki update | status   # refresh stale pages / report freshness
+keel drift [--path P]... [--json]   # KnowledgeCI: docs vs index, exits 1 on findings
 ```
 
 Hit-list flags: `--limit N` caps results (1-100000, default 500;

@@ -11,11 +11,16 @@ use crate::graph::query_result::QueryResult;
 use crate::graph::resolve;
 use crate::graph::target;
 use crate::graph::types::{ImplRecord, Reference, Symbol};
+use crate::context;
+use crate::drift;
+use crate::explain;
 use crate::index::{self, IndexStats};
+use crate::wiki;
+use crate::knowledge::{self, KnowledgeRecord};
 use crate::languages::Registry;
 use rusqlite::Connection;
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Opened Keel index (SQLite-backed).
 ///
@@ -220,6 +225,151 @@ impl Index {
     ) -> Result<QueryResult<Symbol>> {
         search_with_meta(&self.conn, pattern, limit)
     }
+
+    /// Insert or update a knowledge record with its evidence set.
+    ///
+    /// Timestamps are store-owned (inserts stamp both, updates preserve
+    /// `created_at`). A human-authored record rejects non-human overwrites
+    /// with [`KeelError::KnowledgeProvenance`].
+    ///
+    /// [`KeelError::KnowledgeProvenance`]: crate::error::KeelError::KnowledgeProvenance
+    pub fn knowledge_put(&mut self, record: &KnowledgeRecord) -> Result<()> {
+        knowledge::put_record(&mut self.conn, record)
+    }
+
+    /// Fetch one knowledge record with its evidence, or `None`.
+    ///
+    /// Knowledge reads are not gated on the index-format check: a record's
+    /// freshness is tracked by its own evidence hashes and status, so a
+    /// stale code index must not hide stored knowledge.
+    pub fn knowledge_get(&self, id: &str) -> Result<Option<KnowledgeRecord>> {
+        knowledge::get_record(&self.conn, id)
+    }
+
+    /// List every knowledge record ordered by id, each with its evidence.
+    pub fn knowledge_list(&self) -> Result<Vec<KnowledgeRecord>> {
+        knowledge::list_records(&self.conn)
+    }
+
+    /// Check every record's evidence against the current index (read-only).
+    ///
+    /// Like [`Index::knowledge_get`], not gated on the index-format check:
+    /// staleness verdicts stay available precisely when the index is mid-drift.
+    pub fn knowledge_check(&self) -> Result<Vec<knowledge::RecordFreshness>> {
+        knowledge::check_freshness(&self.conn)
+    }
+
+    /// Mark stale every `supported` record whose evidence no longer matches.
+    ///
+    /// This also runs automatically at the end of every [`Index::index_path`]
+    /// pass; call it directly after out-of-band database changes.
+    pub fn knowledge_invalidate(&mut self) -> Result<knowledge::InvalidationReport> {
+        knowledge::invalidate_stale(&mut self.conn)
+    }
+
+    /// Selectively revalidate one record: refresh pins and promote to
+    /// `supported` when its anchors resolve, else mark `stale`.
+    pub fn knowledge_validate(&mut self, id: &str) -> Result<knowledge::ValidationOutcome> {
+        knowledge::validate_record(&mut self.conn, id)
+    }
+
+    /// Build a ranked, cited, budget-fitted context package for `task`.
+    ///
+    /// Deterministic: identical task text, options, and index state yield
+    /// identical packages. Pass `source_root` in `options` for code
+    /// excerpts; without it items cite `path:line` with no text.
+    pub fn task_context(
+        &self,
+        task: &str,
+        options: &context::ContextOptions,
+    ) -> Result<context::ContextPackage> {
+        ensure_index_current(&self.conn)?;
+        context::build_package(&self.conn, task, options)
+    }
+
+    /// Explain one symbol: definition, excerpt, callers, dependencies,
+    /// linked knowledge. Ambiguous names yield disambiguation candidates.
+    pub fn explain_symbol(
+        &self,
+        name: &str,
+        module: Option<&str>,
+        options: &explain::ExplainOptions,
+    ) -> Result<explain::Explanation> {
+        ensure_index_current(&self.conn)?;
+        explain::explain_symbol(&self.conn, name, module, options)
+    }
+
+    /// Explain one file: outline, imports, dependents, linked knowledge.
+    pub fn explain_file(&self, path: &str) -> Result<explain::Explanation> {
+        ensure_index_current(&self.conn)?;
+        explain::explain_file(&self.conn, path)
+    }
+
+    /// Explain one module: files, symbols, dependencies, linked knowledge.
+    pub fn explain_module(&self, module: &str) -> Result<explain::Explanation> {
+        ensure_index_current(&self.conn)?;
+        explain::explain_module(&self.conn, module)
+    }
+
+    /// Generate the full wiki page tree under `out_dir` (creating it),
+    /// region-merging human edits and refreshing the manifest.
+    pub fn wiki_generate(&self, out_dir: &Path) -> Result<wiki::WikiReport> {
+        ensure_index_current(&self.conn)?;
+        wiki::generate_all(&self.conn, out_dir)
+    }
+
+    /// Rewrite only stale or missing wiki pages under `out_dir`.
+    pub fn wiki_update(&self, out_dir: &Path) -> Result<wiki::WikiReport> {
+        ensure_index_current(&self.conn)?;
+        wiki::update_stale(&self.conn, out_dir)
+    }
+
+    /// Report per-page wiki freshness without writing anything.
+    pub fn wiki_status(&self, out_dir: &Path) -> Result<wiki::WikiStatusReport> {
+        ensure_index_current(&self.conn)?;
+        wiki::status_report(&self.conn, out_dir)
+    }
+
+    /// Sweep the project's docs for claims that no longer match the index.
+    ///
+    /// With `paths` unset, [`drift::discover_docs`] picks up `docs/`,
+    /// agent instructions, and ADRs under `project_root`; with `paths`
+    /// set, exactly those files (absolute or `project_root`-relative)
+    /// are checked. Missing scoped paths are reported in
+    /// [`drift::DriftReport::notes`], never silent.
+    pub fn drift_check(
+        &self,
+        project_root: &Path,
+        paths: Option<&[PathBuf]>,
+    ) -> Result<drift::DriftReport> {
+        ensure_index_current(&self.conn)?;
+        let docs: Vec<PathBuf> = match paths {
+            None => drift::discover_docs(project_root),
+            Some(wanted) => wanted
+                .iter()
+                .map(|p| {
+                    if p.is_absolute() {
+                        p.clone()
+                    } else {
+                        project_root.join(p)
+                    }
+                })
+                .collect(),
+        };
+        let mut report = drift::check_docs(&self.conn, project_root, &docs)?;
+        if paths.is_some() {
+            for doc in &docs {
+                if !doc.is_file() {
+                    report.notes.push(format!(
+                        "scoped path not found; skipped: {}",
+                        doc.to_string_lossy().replace('\\', "/")
+                    ));
+                }
+            }
+            report.notes.sort();
+        }
+        Ok(report)
+    }
 }
 
 /// Split `module::…::symbol` into `(module_path, symbol)` when unambiguous.
@@ -252,6 +402,62 @@ fn resolve_symbol_target<'a>(
         return (Some(m), sym);
     }
     (None, name)
+}
+
+/// A member-qualified target (`C.method`, or `Type::member` via fallback).
+struct MemberTarget {
+    container: String,
+    sym: String,
+    /// True when single-segment `Type::member` fell back to the container
+    /// reading (the module reading missed).
+    fell_back: bool,
+}
+
+/// Definitions honoring member form: `C.method` reads the container first
+/// (with an optional module retain), and single-segment `Type::member`
+/// falls back to the container when the module reading misses — module
+/// paths always win ties. Returns the defs plus the member target when a
+/// member form applied.
+fn defs_with_member_fallback(
+    conn: &Connection,
+    name: &str,
+    bare: &str,
+    mod_path: Option<&str>,
+    module: Option<&str>,
+) -> Result<(Vec<Symbol>, Option<MemberTarget>)> {
+    let member = target::split_member_name(bare);
+    let mut defs = if let Some((container, sym)) = member {
+        let mut hits = queries::find_definition_by_container(conn, container, sym)?;
+        if let Some(m) = mod_path {
+            hits.retain(|s| s.module_path == m);
+        }
+        hits
+    } else if let Some(m) = mod_path {
+        queries::find_definition_by_qualified(conn, m, bare)?
+    } else {
+        queries::find_definition(conn, bare)?
+    };
+    let mut target = member.map(|(container, sym)| MemberTarget {
+        container: container.to_string(),
+        sym: sym.to_string(),
+        fell_back: false,
+    });
+    if defs.is_empty() && target.is_none() && module.filter(|m| !m.is_empty()).is_none() {
+        if let Some((m, sym)) = split_qualified_name(name) {
+            if !m.contains("::") {
+                let hits = queries::find_definition_by_container(conn, m, sym)?;
+                if !hits.is_empty() {
+                    target = Some(MemberTarget {
+                        container: m.to_string(),
+                        sym: sym.to_string(),
+                        fell_back: true,
+                    });
+                    defs = hits;
+                }
+            }
+        }
+    }
+    Ok((defs, target))
 }
 
 /// Refuse reads against content an older Keel wrote.
@@ -317,30 +523,8 @@ pub fn definition_with_meta_opts(
 ) -> Result<QueryResult<Symbol>> {
     ensure_index_current(conn)?;
     let (mod_path, bare) = resolve_symbol_target(name, module);
-    let member = target::split_member_name(bare);
-    let mut results = if let Some((container, sym)) = member {
-        // Dotted member form, with or without an explicit module filter.
-        let mut hits = queries::find_definition_by_container(conn, container, sym)?;
-        if let Some(m) = mod_path {
-            hits.retain(|s| s.module_path == m);
-        }
-        hits
-    } else if let Some(m) = mod_path {
-        queries::find_definition_by_qualified(conn, m, bare)?
-    } else {
-        queries::find_definition(conn, bare)?
-    };
-    // `Type::member` reads as module `Type` first; when that misses and
-    // the head is a single segment, retry as a member lookup.
-    let mut member_fallback = false;
-    if results.is_empty() && member.is_none() && module.filter(|m| !m.is_empty()).is_none() {
-        if let Some((m, sym)) = split_qualified_name(name) {
-            if !m.contains("::") {
-                results = queries::find_definition_by_container(conn, m, sym)?;
-                member_fallback = !results.is_empty();
-            }
-        }
-    }
+    let (results, member_target) = defs_with_member_fallback(conn, name, bare, mod_path, module)?;
+    let member_fallback = member_target.as_ref().is_some_and(|t| t.fell_back);
     let multi = results.len() > 1;
     let tiers: Vec<u8> = if results.is_empty() {
         vec![]
@@ -372,12 +556,96 @@ pub fn definition_with_meta_opts(
     Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
 }
 
+/// Member-qualified references/callers: attribute only container-naming
+/// receiver sites; count the rest honestly.
+///
+/// `verb` is `references` or `callers` (note wording only). Alias uses of
+/// the bare name are deliberately NOT merged: an aliased free symbol
+/// sharing the member's name is a different symbol.
+fn member_references(
+    conn: &Connection,
+    name: &str,
+    target: &MemberTarget,
+    defs: &[Symbol],
+    verb: &str,
+) -> Result<QueryResult<Reference>> {
+    let sites_noun = if verb == "callers" {
+        "call sites"
+    } else {
+        "reference sites"
+    };
+    let mut notes = Vec::new();
+    if target.fell_back {
+        notes.push(format!(
+            "Resolved `{name}` as member `{}` of type `{}`.",
+            target.sym, target.container
+        ));
+    }
+    if defs.is_empty() {
+        notes.push(format!(
+            "No member `{}` of `{}` defined in the index.",
+            target.sym, target.container
+        ));
+        push_empty_index_note(conn, &mut notes);
+        push_suggestion_note(conn, &target.sym, &mut notes);
+        return Ok(QueryResult::from_tiers(Vec::new(), &[], false, notes));
+    }
+    let mut def_modules: Vec<String> =
+        defs.iter().map(|d| d.module_path.clone()).collect();
+    def_modules.sort();
+    def_modules.dedup();
+    let attributed = resolve::find_callers_by_container(
+        conn,
+        &target.container,
+        &target.sym,
+        &def_modules,
+    )?;
+    let total = queries::find_references(conn, &target.sym)?.len();
+    let unattributed = total.saturating_sub(attributed.len());
+    let (results, tiers): (Vec<Reference>, Vec<u8>) = attributed.into_iter().unzip();
+    let multi = defs.len() > 1;
+    if multi {
+        notes.push(
+            "Multiple definitions share this member; sites attribute per receiver evidence. Pass module to narrow."
+                .into(),
+        );
+    }
+    if results.is_empty() {
+        notes.push(format!(
+            "No `{}`-qualified {sites_noun} recorded for `{}`.",
+            target.container, target.sym
+        ));
+    }
+    if unattributed > 0 {
+        let (sites, them) = if unattributed == 1 {
+            ("site", "it")
+        } else {
+            ("sites", "them")
+        };
+        notes.push(format!(
+            "{unattributed} {sites} name-match `{}` but no receiver names `{}` (locals like `x.{}` stay invisible); query the bare name to see {them}.",
+            target.sym, target.container, target.sym
+        ));
+    }
+    if tiers.contains(&2) {
+        notes.push(
+            "Tier-2 hits name the container through an unresolved qualifier head (`mod.C()`); verify the receiver before edits."
+                .into(),
+        );
+    }
+    Ok(QueryResult::from_tiers(results, &tiers, multi, notes))
+}
+
 /// References plus confidence metadata.
 pub fn references_with_meta(conn: &Connection, name: &str) -> Result<QueryResult<Reference>> {
     references_with_meta_opts(conn, name, None)
 }
 
 /// References with optional module disambiguation for the defining symbol.
+///
+/// Member-qualified names (`C.method`, single-segment `Type::member` as a
+/// fallback) attribute only sites whose receiver names the container;
+/// local-receiver and bare sites are counted honestly, never claimed.
 pub fn references_with_meta_opts(
     conn: &Connection,
     name: &str,
@@ -385,11 +653,11 @@ pub fn references_with_meta_opts(
 ) -> Result<QueryResult<Reference>> {
     ensure_index_current(conn)?;
     let (mod_path, bare) = resolve_symbol_target(name, module);
-    let defs = if let Some(m) = mod_path {
-        queries::find_definition_by_qualified(conn, m, bare)?
-    } else {
-        queries::find_definition(conn, bare)?
-    };
+    let (defs, member_target) =
+        defs_with_member_fallback(conn, name, bare, mod_path, module)?;
+    if let Some(target) = member_target {
+        return member_references(conn, name, &target, &defs, "references");
+    }
     let multi = defs.len() > 1;
     let target_module = mod_path
         .map(str::to_owned)
@@ -461,6 +729,9 @@ pub fn callers_with_meta(conn: &Connection, name: &str) -> Result<QueryResult<Re
 }
 
 /// Callers with optional module disambiguation.
+///
+/// Member-qualified names behave like [`references_with_meta_opts`]: only
+/// container-naming receivers attribute; the rest are counted, not claimed.
 pub fn callers_with_meta_opts(
     conn: &Connection,
     name: &str,
@@ -468,11 +739,11 @@ pub fn callers_with_meta_opts(
 ) -> Result<QueryResult<Reference>> {
     ensure_index_current(conn)?;
     let (mod_path, bare) = resolve_symbol_target(name, module);
-    let defs = if let Some(m) = mod_path {
-        queries::find_definition_by_qualified(conn, m, bare)?
-    } else {
-        queries::find_definition(conn, bare)?
-    };
+    let (defs, member_target) =
+        defs_with_member_fallback(conn, name, bare, mod_path, module)?;
+    if let Some(target) = member_target {
+        return member_references(conn, name, &target, &defs, "callers");
+    }
     let multi = defs.len() > 1;
     let target_module = mod_path
         .map(str::to_owned)
@@ -720,16 +991,14 @@ fn is_unused_exempt(symbol: &Symbol) -> bool {
     if is_test_path(&path) {
         return true;
     }
-    // Go implicit entries: package initializers plus the testing
-    // harness conventions (`go test`/`go run` call these by name shape,
-    // never through a recorded reference).
-    if path.ends_with(".go")
-        && (symbol.name == "init"
-            || symbol.name.starts_with("Test")
-            || symbol.name.starts_with("Benchmark")
-            || symbol.name.starts_with("Example")
-            || symbol.name.starts_with("Fuzz"))
-    {
+    // Go implicit entries: package initializers plus every exported
+    // (uppercase-initial) identifier — package API whose callers may live
+    // outside the indexed repo. This subsumes the testing-harness
+    // conventions (`Test`/`Benchmark`/`Example`/`Fuzz`), which are all
+    // uppercase. In `package main` it also hides unreferenced uppercase
+    // helpers, which cannot be imported; missing those is the safe
+    // direction for a delete list.
+    if path.ends_with(".go") && (symbol.name == "init" || is_go_exported(&symbol.name)) {
         return true;
     }
     if path.ends_with(".py") && is_python_dunder(&symbol.name) {
@@ -752,6 +1021,11 @@ fn is_unused_exempt(symbol: &Symbol) -> bool {
 /// True for `__name__`-style dunder hooks (`__init__`, `__main__`, …).
 fn is_python_dunder(name: &str) -> bool {
     name.len() > 4 && name.starts_with("__") && name.ends_with("__")
+}
+
+/// True for Go exported (uppercase-initial) identifiers.
+fn is_go_exported(name: &str) -> bool {
+    name.chars().next().is_some_and(|c| c.is_uppercase())
 }
 
 /// True when `path` lives under a test directory or is a test file by
@@ -1107,6 +1381,11 @@ pub fn impact_with_meta(conn: &Connection, name: &str) -> Result<QueryResult<Sym
 }
 
 /// Impact with optional module disambiguation.
+///
+/// Member-qualified names (`C.method`, single-segment `Type::member` as a
+/// fallback) seed the radius from the member; when sibling definers share
+/// the name in a def module, call sites can't be attributed to one member,
+/// so the radius covers the module-level name and says so (Low).
 pub fn impact_with_meta_opts(
     conn: &Connection,
     name: &str,
@@ -1116,16 +1395,27 @@ pub fn impact_with_meta_opts(
     ensure_index_current(conn)?;
 
     let (mod_path, bare) = resolve_symbol_target(name, module);
-    let defs = if let Some(m) = mod_path {
-        queries::find_definition_by_qualified(conn, m, bare)?
-    } else {
-        queries::find_definition(conn, bare)?
-    };
+    let (defs, member_target) =
+        defs_with_member_fallback(conn, name, bare, mod_path, module)?;
     let multi = defs.len() > 1;
     let mut notes = Vec::new();
 
     if defs.is_empty() {
-        if let Some(m) = mod_path {
+        if let Some(target) = &member_target {
+            if let Some(m) = mod_path {
+                notes.push(format!(
+                    "No member `{}` of `{}` in module `{m}`.",
+                    target.sym, target.container
+                ));
+            } else {
+                notes.push(format!(
+                    "No member `{}` of `{}` defined in the index.",
+                    target.sym, target.container
+                ));
+            }
+            push_empty_index_note(conn, &mut notes);
+            push_suggestion_note(conn, &target.sym, &mut notes);
+        } else if let Some(m) = mod_path {
             notes.push(format!("No definition for `{bare}` in module `{m}`."));
             push_empty_index_note(conn, &mut notes);
             push_suggestion_note(conn, bare, &mut notes);
@@ -1135,6 +1425,15 @@ pub fn impact_with_meta_opts(
         return Ok(QueryResult::from_tiers(Vec::new(), &[], false, notes));
     }
 
+    if let Some(target) = &member_target {
+        if target.fell_back {
+            notes.push(format!(
+                "Resolved `{name}` as member `{}` of type `{}`.",
+                target.sym, target.container
+            ));
+        }
+    }
+
     let (results, file_hits) = impact::find_impact_from_defs_with_file_hits(conn, &defs)?;
 
     if multi {
@@ -1142,6 +1441,50 @@ pub fn impact_with_meta_opts(
             "Multiple definitions; impact expands each qualified identity and may over-approximate. Pass module or a qualified name to narrow."
                 .into(),
         );
+    }
+    // Sibling definers (other containers, or the module top level) sharing
+    // the member name in a def module: the module-level BFS cannot tell
+    // their call sites apart.
+    let mut conflated = false;
+    if let Some(target) = &member_target {
+        let all = queries::find_definition(conn, &target.sym)?;
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        for d in &defs {
+            for s in &all {
+                if s.module_path == d.module_path && s.container != target.container {
+                    let label = if s.container.is_empty() {
+                        "the module top level".to_string()
+                    } else {
+                        format!("`{}`", s.container)
+                    };
+                    let pair = (d.module_path.clone(), label);
+                    if !pairs.contains(&pair) {
+                        pairs.push(pair);
+                    }
+                }
+            }
+        }
+        if !pairs.is_empty() {
+            conflated = true;
+            let mut modules: Vec<String> =
+                pairs.iter().map(|(m, _)| format!("`{m}`")).collect();
+            modules.sort();
+            modules.dedup();
+            let mut labels: Vec<String> =
+                pairs.iter().map(|(_, l)| l.clone()).collect();
+            labels.sort();
+            labels.dedup();
+            let scope = if modules.len() == 1 {
+                format!("in module {}", modules[0])
+            } else {
+                format!("in modules {}", modules.join(", "))
+            };
+            notes.push(format!(
+                "Member `{}` is also defined by {} {scope}; call sites can't be attributed to one member, so impact covers the module-level name.",
+                target.sym,
+                labels.join(", ")
+            ));
+        }
     }
     if !file_hits.is_empty() {
         notes.push(file_scope_note(bare, &file_hits));
@@ -1159,12 +1502,14 @@ pub fn impact_with_meta_opts(
     notes.push(
         "Impact is a candidate blast radius and may over-approximate; verify before edits.".into(),
     );
-    let confidence = if multi {
+    // Sibling conflation over-approximates like multi-def: same Low/Mixed.
+    let effective_multi = multi || conflated;
+    let confidence = if effective_multi {
         Confidence::Low
     } else {
         Confidence::Medium
     };
-    let tier = if multi {
+    let tier = if effective_multi {
         ResolutionTier::Mixed
     } else {
         ResolutionTier::Single(2)
@@ -1683,6 +2028,208 @@ mod tests {
         );
     }
 
+    /// Two classes sharing a method name, with constructor-style, `self`,
+    /// and local-receiver call sites (1-based lines noted at use).
+    fn write_member_refs_fixture(root: &std::path::Path) {
+        fs::write(
+            root.join("svc.py"),
+            "class Alpha:\n    def save(self):\n        pass\n\n    def run(self):\n        self.save()\n\nclass Beta:\n    def save(self):\n        pass\n\ndef main():\n    print(Alpha().save())\n\nhelper = Beta()\nhelper.save()\n",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn references_member_form_attributes_container_qualified_sites() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        write_member_refs_fixture(root);
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        // `self.save()` (line 6) attributes via the enclosing class;
+        // `Alpha().save()` (line 13) via the constructor receiver.
+        let refs = index.references_with_meta("Alpha.save").unwrap();
+        assert_eq!(refs.results.len(), 2, "{refs:?}");
+        assert_eq!(refs.results[0].start_line, 6);
+        assert_eq!(refs.results[0].qualifier, "self");
+        assert_eq!(refs.results[1].start_line, 13);
+        assert_eq!(refs.results[1].qualifier, "Alpha()");
+        assert_eq!(refs.confidence, Confidence::High, "{refs:?}");
+        // `helper.save()` (line 16) names no type: counted, not claimed.
+        assert!(
+            refs.notes.iter().any(|n| n.contains("1 site")),
+            "unattributed count missing: {refs:?}"
+        );
+        assert!(
+            refs.notes.iter().any(|n| n.contains("bare name")),
+            "bare-name pointer missing: {refs:?}"
+        );
+
+        let beta = index.references_with_meta("Beta.save").unwrap();
+        assert!(beta.results.is_empty(), "{beta:?}");
+        assert!(
+            beta.notes.iter().any(|n| n.contains("No `Beta`-qualified")),
+            "empty-member note missing: {beta:?}"
+        );
+    }
+
+    #[test]
+    fn callers_member_form_matches_references_attribution() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        write_member_refs_fixture(root);
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        let callers = index.callers_with_meta("Alpha.save").unwrap();
+        assert_eq!(callers.results.len(), 2, "{callers:?}");
+        assert_eq!(callers.results[0].start_line, 6);
+        assert_eq!(callers.results[1].start_line, 13);
+    }
+
+    #[test]
+    fn references_member_form_misses_honestly_and_stays_exact() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        write_member_refs_fixture(root);
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        let miss = index.references_with_meta("Alpha.nope").unwrap();
+        assert!(miss.results.is_empty(), "{miss:?}");
+        assert!(
+            miss.notes.iter().any(|n| n.contains("No member `nope` of `Alpha`")),
+            "member miss note missing: {miss:?}"
+        );
+
+        // Member form stays exact-case like `definition` (search folds).
+        let folded = index.references_with_meta("alpha.save").unwrap();
+        assert!(folded.results.is_empty(), "{folded:?}");
+    }
+
+    #[test]
+    fn references_member_form_uses_import_evidence_cross_module() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("svc.py"),
+            "class Alpha:\n    def save(self):\n        pass\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("use.py"),
+            "from svc import Alpha\nprint(Alpha().save())\n",
+        )
+        .unwrap();
+        fs::write(root.join("evo.py"), "print(Alpha().save())\n").unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        // Same receiver spelling, but only the importing file attributes.
+        let refs = index.references_with_meta("Alpha.save").unwrap();
+        assert_eq!(refs.results.len(), 1, "{refs:?}");
+        assert_eq!(
+            refs.results[0].file,
+            std::path::PathBuf::from("use.py"),
+            "{refs:?}"
+        );
+        assert!(
+            refs.notes.iter().any(|n| n.contains("1 site")),
+            "unattributed count missing: {refs:?}"
+        );
+    }
+
+    #[test]
+    fn references_member_form_marks_unresolved_heads_tier_two() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("svc.py"),
+            "class Alpha:\n    def save(self):\n        pass\n\ndef main():\n    print(mod.Alpha().save())\n",
+        )
+        .unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        // `mod.Alpha()` names the container through an unresolved head:
+        // plausible (tier 2), flagged, still same-module evidence.
+        let refs = index.references_with_meta("Alpha.save").unwrap();
+        assert_eq!(refs.results.len(), 1, "{refs:?}");
+        assert_eq!(refs.results[0].start_line, 6);
+        assert!(
+            refs.notes.iter().any(|n| n.contains("Tier-2")),
+            "tier-2 caution missing: {refs:?}"
+        );
+    }
+
+    #[test]
+    fn references_type_colon_member_falls_back_to_container() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        write_member_refs_fixture(root);
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        // No module named `Alpha`: falls back to the class member.
+        let refs = index.references_with_meta("Alpha::save").unwrap();
+        assert_eq!(refs.results.len(), 2, "{refs:?}");
+        assert!(
+            refs.notes.iter().any(|n| n.contains("as member")),
+            "fallback must say so: {refs:?}"
+        );
+    }
+
+    #[test]
+    fn impact_member_form_notes_sibling_conflation() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("svc.py"),
+            "class Alpha:\n    def save(self):\n        pass\n\n    def run(self):\n        self.save()\n\nclass Beta:\n    def save(self):\n        pass\n\ndef save():\n    pass\n\ndef main():\n    print(Alpha().save())\n\nhelper = Beta()\nhelper.save()\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("solo.py"),
+            "class Solo:\n    def act(self):\n        pass\n\ndef main():\n    print(Solo().act())\n",
+        )
+        .unwrap();
+
+        let mut index = Index::open_in_memory().unwrap();
+        index.index_path(root).unwrap();
+
+        // `save` also lives on `Beta` and at module top level: the radius
+        // covers the module-level name and says so (Low, not Medium).
+        let conflated = index.impact_with_meta("Alpha.save").unwrap();
+        assert!(
+            conflated.results.iter().any(|s| s.name == "main"),
+            "{conflated:?}"
+        );
+        assert!(
+            conflated
+                .notes
+                .iter()
+                .any(|n| n.contains("Beta") && n.contains("top level")),
+            "sibling note missing: {conflated:?}"
+        );
+        assert_eq!(conflated.confidence, Confidence::Low, "{conflated:?}");
+
+        // Unique member: same confidence as a module-scoped query.
+        let unique = index.impact_with_meta("Solo.act").unwrap();
+        assert_eq!(unique.results.len(), 1, "{unique:?}");
+        assert_eq!(unique.results[0].name, "main");
+        assert_eq!(unique.confidence, Confidence::Medium, "{unique:?}");
+        assert!(
+            !unique.notes.iter().any(|n| n.contains("also defined")),
+            "no siblings, no note: {unique:?}"
+        );
+    }
+
     #[test]
     fn search_accepts_member_qualified_pattern() {
         let dir = tempdir().unwrap();
@@ -2045,7 +2592,7 @@ mod tests {
 
         fs::write(
             root.join("pkg.go"),
-            "package main\n\nfunc init() {}\nfunc BenchmarkX(b int) {}\nfunc dead_go() {}\nfunc main() {}\n",
+            "package main\n\nfunc init() {}\nfunc BenchmarkX(b int) {}\nfunc dead_go() {}\nfunc main() {}\nfunc Exported() {}\n",
         )
         .unwrap();
 

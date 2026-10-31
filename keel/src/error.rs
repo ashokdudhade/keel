@@ -77,6 +77,22 @@ pub enum KeelError {
         /// Content-format version this build writes.
         current: i64,
     },
+
+    /// A knowledge record failed validation.
+    #[error("invalid knowledge record: {0}")]
+    KnowledgeValidation(String),
+
+    /// A non-human write targeted a human-authored knowledge record.
+    ///
+    /// Human decisions are never silently overwritten by agent-generated or
+    /// inferred content; a human-origin write is required to change them.
+    #[error("refusing to overwrite human-authored knowledge '{id}' with {origin} content")]
+    KnowledgeProvenance {
+        /// Id of the protected record.
+        id: String,
+        /// Origin of the rejected write.
+        origin: String,
+    },
 }
 
 /// Convenience `Result` alias used throughout the library.

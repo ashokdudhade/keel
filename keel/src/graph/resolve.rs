@@ -187,6 +187,103 @@ pub fn find_callers(
     Ok(out)
 }
 
+/// Callers of member `name` of container `container`, attributed per site.
+///
+/// A reference attributes when the receiver names the container outright
+/// (`C`/`C()`, exact after stripping one trailing `()`) and the use file
+/// is in, or imports, a defining module — or when a `self`/`this`
+/// receiver sits in a method whose enclosing `module::…::Class::method`
+/// names the container (second-to-last segment) under a defining module.
+/// Returns attributed refs with per-hit tiers (1 exact, 2 plausible
+/// last-segment receiver match like `mod.C()`); everything else stays
+/// out for the caller to count honestly. Never attributes bare or
+/// local-receiver sites (`x.name()`, `super().name()`): the receiver's
+/// type is invisible to the index.
+pub fn find_callers_by_container(
+    conn: &Connection,
+    container: &str,
+    name: &str,
+    def_modules: &[String],
+) -> Result<Vec<(Reference, u8)>> {
+    let refs = queries::find_references(conn, name)?;
+    let mut out = Vec::new();
+    for r in refs {
+        if let Some(tier) = member_site_tier(conn, &r, container, def_modules)? {
+            out.push((r, tier));
+        }
+    }
+    Ok(out)
+}
+
+fn member_site_tier(
+    conn: &Connection,
+    r: &Reference,
+    container: &str,
+    def_modules: &[String],
+) -> Result<Option<u8>> {
+    let receiver = r.qualifier.strip_suffix("()").unwrap_or(&r.qualifier);
+    if receiver == container {
+        if member_module_evidence(conn, &r.file, def_modules)? {
+            return Ok(Some(1));
+        }
+        return Ok(None);
+    }
+    if matches!(r.qualifier.as_str(), "self" | "this")
+        && enclosing_names_container(&r.container, container, def_modules)
+    {
+        return Ok(Some(1));
+    }
+    // Last-segment receiver (`mod.C()`, `a.C`): names the container but
+    // the head is unresolved, so plausible rather than exact.
+    let last = receiver.rsplit(['.', ':']).next().unwrap_or("");
+    if !last.is_empty()
+        && last == container
+        && member_module_evidence(conn, &r.file, def_modules)?
+    {
+        return Ok(Some(2));
+    }
+    Ok(None)
+}
+
+/// True when the use file is in, or imports, a defining module.
+fn member_module_evidence(
+    conn: &Connection,
+    file: &Path,
+    def_modules: &[String],
+) -> Result<bool> {
+    let from = file.to_string_lossy();
+    let from = from.as_ref();
+    let file_modules = queries::module_paths_in_file(conn, from)?;
+    if file_modules
+        .iter()
+        .any(|m| def_modules.iter().any(|d| d == m))
+    {
+        return Ok(true);
+    }
+    let imports = queries::imports_for_file(conn, from)?;
+    Ok(imports
+        .iter()
+        .any(|(p, _)| def_modules.iter().any(|d| import_row_matches_module(p, d))))
+}
+
+/// True when a `self`/`this` site's enclosing `module::…::Class::method`
+/// names `container` as its class under a defining module (nested-class
+/// tails allowed). Free functions (two segments) never qualify.
+fn enclosing_names_container(
+    enclosing: &str,
+    container: &str,
+    def_modules: &[String],
+) -> bool {
+    let segs: Vec<&str> = enclosing.split("::").collect();
+    if segs.len() < 3 || segs[segs.len() - 2] != container {
+        return false;
+    }
+    let module_prefix = segs[..segs.len() - 2].join("::");
+    def_modules.iter().any(|m| {
+        module_prefix == *m || module_prefix.starts_with(&format!("{m}::"))
+    })
+}
+
 /// Find uses of `bare` through import aliases (`serveA()` for `a::serve`).
 ///
 /// Each hit names the exact module the alias maps to, so attribution stays
@@ -463,8 +560,9 @@ fn module_path_prefix(module_path: &str) -> &str {
 /// Suggest up to `limit` indexed symbol names near `name` for miss recovery.
 ///
 /// Ranking: case-insensitive exact match, then case-insensitive substring,
-/// then Levenshtein within a length-scaled threshold; ties break by name so
-/// output is deterministic. Returns empty for blank or single-char input.
+/// then typo distance (Levenshtein with adjacent transposition) within a
+/// length-scaled threshold; ties break by name so output is deterministic.
+/// Returns empty for blank or single-char input.
 /// Runs on the miss path only (empty results), never on hits.
 pub fn suggest_names(
     conn: &Connection,
@@ -501,7 +599,7 @@ pub(crate) fn rank_candidates(query: &str, candidates: &[String], limit: usize) 
         {
             scored.push((1, 0, candidate));
         } else {
-            let distance = levenshtein(&query_lower, &lower);
+            let distance = typo_distance(&query_lower, &lower);
             if distance <= max_distance {
                 scored.push((2, distance, candidate));
             }
@@ -515,8 +613,10 @@ pub(crate) fn rank_candidates(query: &str, candidates: &[String], limit: usize) 
         .collect()
 }
 
-/// Edit distance over chars (two-row DP; queries are short).
-fn levenshtein(a: &str, b: &str) -> usize {
+/// Typo distance over chars: Levenshtein where one adjacent transposition
+/// costs a single edit (optimal string alignment). Three-row DP; queries
+/// are short, so this stays cheap.
+fn typo_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     if a.is_empty() {
@@ -525,6 +625,7 @@ fn levenshtein(a: &str, b: &str) -> usize {
     if b.is_empty() {
         return a.len();
     }
+    let mut prev2: Vec<usize> = (0..=b.len()).collect();
     let mut prev: Vec<usize> = (0..=b.len()).collect();
     let mut curr = vec![0; b.len() + 1];
     for (i, ca) in a.iter().enumerate() {
@@ -532,7 +633,11 @@ fn levenshtein(a: &str, b: &str) -> usize {
         for (j, cb) in b.iter().enumerate() {
             let cost = usize::from(ca != cb);
             curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+            if i > 0 && j > 0 && *ca == b[j - 1] && a[i - 1] == *cb {
+                curr[j + 1] = curr[j + 1].min(prev2[j - 1] + 1);
+            }
         }
+        std::mem::swap(&mut prev2, &mut prev);
         std::mem::swap(&mut prev, &mut curr);
     }
     prev[b.len()]
@@ -1409,6 +1514,18 @@ mod tests {
         assert_eq!(
             rank_candidates("craete_order", &candidates, 3),
             vec!["create_order".to_string()]
+        );
+    }
+
+    #[test]
+    fn rank_recovers_short_transposition() {
+        // An adjacent swap is one typo, so short swapped queries recover
+        // even when the length-scaled threshold is at its strictest.
+        assert_eq!(typo_distance("inedx", "index"), 1);
+        let candidates = names(&["Index", "open", "close"]);
+        assert_eq!(
+            rank_candidates("Inedx", &candidates, 3),
+            vec!["Index".to_string()]
         );
     }
 

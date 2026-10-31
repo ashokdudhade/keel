@@ -42,7 +42,7 @@ pub fn normalize_path(root: &Path, path: &Path) -> PathBuf {
 /// them (fresh checkouts, ad-hoc `npm install`), so vendored copies cannot
 /// pollute definitions or references. Deliberately excludes `build/` and
 /// `out/`, which sometimes hold hand-written build scripts.
-const SKIPPED_DIRS: &[&str] = &[
+pub(crate) const SKIPPED_DIRS: &[&str] = &[
     ".git",
     ".hg",
     ".svn",

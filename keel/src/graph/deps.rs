@@ -21,9 +21,10 @@ pub struct Dependency {
 /// Find modules the `target` depends on.
 ///
 /// `target` may be a module path (`crate::a`) or a symbol name. Dependencies
-/// are derived from `imports` on the target's files and from references that
-/// resolve to symbols in other files. Results are de-duplicated and ordered
-/// by `module_path`.
+/// are derived from `imports` on the target's files, from `Path` qualifiers
+/// that resolve to indexed modules (`crate::facade` in `crate::facade::f()`),
+/// and from references that resolve to symbols in other files. Results are
+/// de-duplicated and ordered by `module_path`.
 pub fn find_dependencies(conn: &Connection, target: &str) -> Result<Vec<Dependency>> {
     let files = files_for_target(conn, target)?;
     let mut deps: BTreeMap<String, Option<PathBuf>> = BTreeMap::new();
@@ -32,6 +33,28 @@ pub fn find_dependencies(conn: &Connection, target: &str) -> Result<Vec<Dependen
         for (module_path, _) in queries::imports_for_file(conn, file)? {
             let dep_mod = normalize_import_module(conn, &module_path)?;
             if deps.contains_key(&dep_mod) {
+                continue;
+            }
+            let dep_file = queries::first_file_for_module_path(conn, &dep_mod)?;
+            deps.insert(dep_mod, dep_file);
+        }
+
+        // Qualified-path consumers (`crate::facade::f()` with no `use` row)
+        // name their dependency outright: a qualifier resolving to an
+        // indexed module is import-strength evidence. Unresolved qualifiers
+        // (type names, receivers-as-paths, unindexed modules) add nothing —
+        // unlike imports, uses never become external edges.
+        let own_modules: BTreeSet<String> = queries::module_paths_in_file(conn, file)?
+            .into_iter()
+            .collect();
+        for qualifier in queries::path_qualifiers_in_file(conn, file)? {
+            let Some(dep_mod) = qualifier_module(conn, &qualifier)? else {
+                continue;
+            };
+            if dep_mod.is_empty()
+                || own_modules.contains(&dep_mod)
+                || deps.contains_key(&dep_mod)
+            {
                 continue;
             }
             let dep_file = queries::first_file_for_module_path(conn, &dep_mod)?;
@@ -76,9 +99,10 @@ pub fn find_dependencies(conn: &Connection, target: &str) -> Result<Vec<Dependen
 ///
 /// `target` may be a module path (`crate::b`), a file path, or a symbol name.
 /// A module counts as a dependent when one of its files imports a target
-/// module (normalized like [`find_dependencies`]) or holds a reference that
-/// resolves to a target-module symbol at tier ≤ 2 — the same evidence bar as
-/// forward edges, so the tier-3 single-name fallback can't fabricate edges.
+/// module (normalized like [`find_dependencies`]), holds a `Path` qualifier
+/// resolving to a target module, or holds a reference that resolves to a
+/// target-module symbol at tier ≤ 2 — the same evidence bar as forward
+/// edges, so the tier-3 single-name fallback can't fabricate edges.
 /// The target's own modules never list themselves. Results are de-duplicated
 /// and ordered by `module_path`.
 pub fn find_dependents(conn: &Connection, target: &str) -> Result<Vec<Dependency>> {
@@ -102,6 +126,16 @@ pub fn find_dependents(conn: &Connection, target: &str) -> Result<Vec<Dependency
             if target_modules.contains(&dep_mod) {
                 evidence = true;
                 break;
+            }
+        }
+        if !evidence {
+            for qualifier in queries::path_qualifiers_in_file(conn, &file)? {
+                if let Some(dep_mod) = qualifier_module(conn, &qualifier)? {
+                    if target_modules.contains(&dep_mod) {
+                        evidence = true;
+                        break;
+                    }
+                }
             }
         }
         if !evidence {
@@ -183,6 +217,29 @@ fn normalize_import_module(conn: &Connection, import: &str) -> Result<String> {
         candidate = parent;
     }
     Ok(import.to_string())
+}
+
+/// Resolve a `Path` qualifier to an indexed module, if it names one.
+///
+/// Exact hits count in every language (dotted, slash, and `::` module ids
+/// alike); the `::`-prefix walk additionally collapses Rust item paths like
+/// `crate::b::Assoc` to `crate::b`. Anything else — type names (`Commands`),
+/// `self`/`super`, receivers-as-paths, unindexed modules — is `None`, never
+/// an external edge: a use must resolve to count.
+fn qualifier_module(conn: &Connection, qualifier: &str) -> Result<Option<String>> {
+    if queries::first_file_for_module_path(conn, qualifier)?.is_some() {
+        return Ok(Some(qualifier.to_string()));
+    }
+    if qualifier.contains("::") {
+        let mut candidate = qualifier;
+        while let Some((parent, _)) = candidate.rsplit_once("::") {
+            if queries::first_file_for_module_path(conn, parent)?.is_some() {
+                return Ok(Some(parent.to_string()));
+            }
+            candidate = parent;
+        }
+    }
+    Ok(None)
 }
 
 fn same_path(a: &Path, b: &str) -> bool {
@@ -598,5 +655,126 @@ mod tests {
         let b = deps.iter().find(|d| d.module_path == "crate::b").unwrap();
         assert!(!b.external);
         assert_eq!(b.file, Some(PathBuf::from("src/b.rs")));
+    }
+
+    /// `q` calls `crate::b::serve()` with no `use` row at all; its other
+    /// qualifiers name a type (`Ghost`), an unindexed module
+    /// (`crate::ghost`), and its own module (`crate::q`).
+    fn fixture_qualified_path_no_import(conn: &Connection) {
+        let q = queries::insert_file(
+            conn,
+            &FileNode {
+                path: PathBuf::from("src/q.rs"),
+                content_hash: "hq".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            conn,
+            q,
+            &[Symbol {
+                name: "run".into(),
+                kind: SymbolKind::Function,
+                file: PathBuf::new(),
+                start_line: 1,
+                start_col: 1,
+                module_path: "crate::q".into(),
+                container: String::new(),
+            }],
+        )
+        .unwrap();
+        queries::insert_references(
+            conn,
+            q,
+            &[
+                Reference {
+                    name: "serve".into(),
+                    file: PathBuf::new(),
+                    start_line: 2,
+                    start_col: 5,
+                    kind: ReferenceKind::Path,
+                    container: "crate::q::run".into(),
+                    qualifier: "crate::b".into(),
+                },
+                Reference {
+                    name: "new".into(),
+                    file: PathBuf::new(),
+                    start_line: 3,
+                    start_col: 5,
+                    kind: ReferenceKind::Path,
+                    container: "crate::q::run".into(),
+                    qualifier: "Ghost".into(),
+                },
+                Reference {
+                    name: "missing".into(),
+                    file: PathBuf::new(),
+                    start_line: 4,
+                    start_col: 5,
+                    kind: ReferenceKind::Path,
+                    container: "crate::q::run".into(),
+                    qualifier: "crate::ghost".into(),
+                },
+                Reference {
+                    name: "run".into(),
+                    file: PathBuf::new(),
+                    start_line: 5,
+                    start_col: 5,
+                    kind: ReferenceKind::Path,
+                    container: "crate::q::run".into(),
+                    qualifier: "crate::q".into(),
+                },
+            ],
+        )
+        .unwrap();
+
+        let b = queries::insert_file(
+            conn,
+            &FileNode {
+                path: PathBuf::from("src/b.rs"),
+                content_hash: "hb".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            conn,
+            b,
+            &[Symbol {
+                name: "serve".into(),
+                kind: SymbolKind::Function,
+                file: PathBuf::new(),
+                start_line: 1,
+                start_col: 1,
+                module_path: "crate::b".into(),
+                container: String::new(),
+            }],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn find_dependencies_follows_qualified_paths_without_imports() {
+        let conn = setup();
+        fixture_qualified_path_no_import(&conn);
+
+        let deps = find_dependencies(&conn, "crate::q").unwrap();
+        let paths: Vec<&str> = deps.iter().map(|d| d.module_path.as_str()).collect();
+        assert_eq!(paths, vec!["crate::b"], "got {paths:?}");
+        let b = &deps[0];
+        assert!(!b.external);
+        assert_eq!(b.file, Some(PathBuf::from("src/b.rs")));
+    }
+
+    #[test]
+    fn find_dependents_follows_qualified_paths_without_imports() {
+        let conn = setup();
+        fixture_qualified_path_no_import(&conn);
+
+        let deps = find_dependents(&conn, "crate::b").unwrap();
+        let paths: Vec<&str> = deps.iter().map(|d| d.module_path.as_str()).collect();
+        assert_eq!(paths, vec!["crate::q"], "got {paths:?}");
+
+        // Nobody qualifies the qualifier-only consumer itself.
+        let deps = find_dependents(&conn, "crate::q").unwrap();
+        assert!(deps.is_empty(), "must not self-list: {deps:?}");
     }
 }

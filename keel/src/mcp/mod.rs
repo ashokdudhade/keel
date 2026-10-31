@@ -10,8 +10,11 @@ use crate::api::{DependencyDto, ImplDto, ReferenceDto, SymbolDto};
 use crate::cli::commands::PreviewCache;
 use crate::db::schema;
 use crate::error::{Result, KeelError};
+use crate::context;
+use crate::explain;
 use crate::facade;
 use crate::index::{self, IndexStats};
+use crate::knowledge::{self, KnowledgeRecord};
 use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -414,7 +417,10 @@ fn initialize_result(msg: &Value) -> Value {
     })
 }
 
-fn tools_list_result() -> Value {
+/// Full `tools/list` payload. `pub(crate)` so the drift checker can
+/// resolve doc citations of tool names against the live list instead of
+/// a hardcoded copy that would rot.
+pub(crate) fn tools_list_result() -> Value {
     let trust = " Returns JSON with results, confidence (high|medium|low), resolution_tier (1=strongest evidence, 3=weakest, mixed, or 0 when nothing resolved), and notes. If confidence is low or notes warn of ambiguity, disambiguate with module / a qualified name (e.g. crate::mcp::serve) or fall back to Grep. Empty results with “No matching symbols found” means a confident miss — try another name, not Grep-for-noise first. Non-empty impact is always a candidate blast radius (medium/low) — verify before edits.";
     json!({
         "tools": [
@@ -496,6 +502,135 @@ fn tools_list_result() -> Value {
                     "Find modules that depend on a module, file, or symbol (reverse dependencies). Pass a module path (e.g. crate::mcp), directory, file path, symbol, qualified symbol (e.g. crate::mcp::serve), or member (e.g. Type.member).{trust}"
                 ),
                 capped_target_schema(),
+                true,
+            ),
+            tool_def(
+                "knowledge_search",
+                "Search source-linked knowledge records (architecture facts, decisions, explanations, patterns, constraints) by substring over id, title, and content. Each hit carries the full record (provenance in `origin`, freshness in `status`, source pins in `evidence`) plus a live `fresh` verdict: `fresh: false` means the pinned code verifiably drifted — re-verify before relying on the claim. `supported` + `fresh` is the strongest signal; `stale` or `unverified` records are leads, not facts.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Substring to match against record id, title, and content (case-insensitive)"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum matches to return (1-200, default 20). Capped responses carry a note with the true total."
+                        }
+                    },
+                    "required": ["query"]
+                }),
+                true,
+            ),
+            tool_def(
+                "knowledge_get",
+                "Fetch one knowledge record by exact id, with its provenance (`origin`), freshness (`status`), source `evidence`, and a live `fresh` verdict. A `null` record with a note means unknown id — never invent record contents. `supported` + `fresh` is the strongest signal; `stale` means the pinned code changed since verification.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "Exact knowledge record id (e.g. auth.jwt.validation)"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+                true,
+            ),
+            tool_def(
+                "knowledge_status",
+                "Report stored status plus the live freshness verdict per knowledge record. Omit `id` for all records, or pass one id for a single verdict. `drifted` means pinned evidence verifiably changed; `unverifiable` means entries lack hash pins and cannot be judged. Informational only — use `knowledge_validate` to re-check and re-pin one record.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "Optional knowledge record id; omit to check all records"
+                        }
+                    },
+                    "required": []
+                }),
+                true,
+            ),
+            tool_def(
+                "knowledge_add",
+                "Create or update a knowledge record with source evidence (WRITES the project index). Provide the full record object: `id`, `type` (architecture_fact|decision|explanation|pattern|constraint), `title`, `content` (the claim), `origin` (human|agent_generated|inferred|deterministic), and `evidence` ([{source_path, symbol?, source_hash?, commit_hash?}] with indexed-relative file paths). New records should start `unverified` and earn `supported` via `knowledge_validate`; human-authored records reject non-human overwrites. Timestamps are stamped by the store.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "record": {
+                            "type": "object",
+                            "description": "Full knowledge record (id, type, title, content, origin, status, evidence[])"
+                        }
+                    },
+                    "required": ["record"]
+                }),
+                false,
+            ),
+            tool_def(
+                "knowledge_validate",
+                "Re-check one knowledge record against the current code (WRITES pins and status): when its evidence anchors (files indexed, named symbols defined) resolve, refreshes hash pins to current revisions and promotes to `supported`; else marks `stale` with reasons. Promotion is your explicit act — only validate claims you have actually re-verified.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "Knowledge record id to validate"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+                false,
+            ),
+            tool_def(
+                "get_task_context",
+                "Build a ranked, cited context package for a task description: matching symbols with definition excerpts, path-matched files, test references, and linked knowledge records — fitted to a token budget. Deterministic: identical task text and index state yield identical packages. Scores cite their signals in `reasons`; `estimated_tokens` never exceeds the budget except for a single over-budget top hit (noted). Prefer this over repeated `definition`/`search` exploration at the start of a task.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "task": {
+                            "type": "string",
+                            "description": "Free-form task text (e.g. Add refund support to payments)"
+                        },
+                        "token_budget": {
+                            "type": "integer",
+                            "description": "Token budget the package must fit (100-100000, default 8000)"
+                        },
+                        "include_tests": {
+                            "type": "boolean",
+                            "description": "Include test files referencing matched symbols (default true)"
+                        },
+                        "include_knowledge": {
+                            "type": "boolean",
+                            "description": "Include linked knowledge records (default true)"
+                        }
+                    },
+                    "required": ["task"]
+                }),
+                true,
+            ),
+            tool_def(
+                "explain",
+                "Explain a symbol, file, or module with a deterministic source-linked evidence package: definition + excerpt, callers, dependencies, dependents, implementations, and linked knowledge records with freshness verdicts — plus content-hash pins so cached copies can detect drift. Pass exactly one of `name` (with optional `module` filter), `file`, or `module`. Ambiguous names return `candidates` to narrow; `generated` is always false from this tool (an LLM renderer sets it with its model id).",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Symbol name to explain (exact, case-sensitive; Type.member supported)"
+                        },
+                        "file": {
+                            "type": "string",
+                            "description": "Indexed file path to explain instead of a symbol (e.g. src/auth.ts)"
+                        },
+                        "module": {
+                            "type": "string",
+                            "description": "Module to explain (when name is absent), or to disambiguate name (e.g. crate::mcp)"
+                        }
+                    },
+                    "required": []
+                }),
                 true,
             ),
             tool_def(
@@ -703,6 +838,9 @@ fn call_tool(
         .ok_or_else(|| KeelError::Mcp("tools/call missing name".into()))?;
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
+    // Tools whose correctness depends on index freshness auto-index first.
+    // `knowledge_validate` reads anchors; `knowledge_add` is a pure store
+    // write with no index dependency, so it stays out.
     let is_query = matches!(
         name,
         "definition"
@@ -714,6 +852,12 @@ fn call_tool(
             | "impact"
             | "outline"
             | "search"
+            | "knowledge_search"
+            | "knowledge_get"
+            | "knowledge_status"
+            | "knowledge_validate"
+            | "get_task_context"
+            | "explain"
     );
     if auto_index && is_query {
         let stats = index::index_repository(root, conn)?;
@@ -909,6 +1053,160 @@ fn call_tool(
             log_tool_query(conn, name, path.as_deref().unwrap_or("project"), None, &qr, start);
             json_text(qr)?
         }
+        "knowledge_search" => {
+            let query = require_symbol_arg(&arguments, "query")?;
+            let effective = optional_limit_arg(&arguments)
+                .unwrap_or(knowledge::DEFAULT_SEARCH_LIMIT)
+                .clamp(1, knowledge::MAX_SEARCH_LIMIT);
+            let hits = knowledge::search_records(conn, &query, Some(effective))?;
+            let freshness: std::collections::HashMap<String, (bool, Vec<String>)> =
+                knowledge::check_freshness(conn)?
+                    .into_iter()
+                    .map(|f| (f.id, (f.fresh, f.reasons)))
+                    .collect();
+            let results: Vec<Value> = hits
+                .iter()
+                .map(|r| {
+                    let (fresh, reasons) =
+                        freshness.get(&r.id).cloned().unwrap_or((true, Vec::new()));
+                    json!({"record": r, "fresh": fresh, "reasons": reasons})
+                })
+                .collect();
+            let mut notes = Vec::new();
+            // Exact total when uncapped; a recount (only in the capped case)
+            // keeps the cap note honest instead of guessing.
+            let total = if hits.len() < effective {
+                hits.len()
+            } else {
+                let full =
+                    knowledge::search_records(conn, &query, Some(knowledge::MAX_SEARCH_LIMIT))?;
+                if full.len() < knowledge::MAX_SEARCH_LIMIT {
+                    notes.push(format!(
+                        "Showing {effective} of {} matches; narrow the query or raise `limit`.",
+                        full.len()
+                    ));
+                } else {
+                    notes.push(format!(
+                        "At the {}-match cap; narrow the query.",
+                        knowledge::MAX_SEARCH_LIMIT
+                    ));
+                }
+                full.len()
+            };
+            json_text(json!({"results": results, "total": total, "notes": notes}))?
+        }
+        "knowledge_get" => {
+            let id = require_symbol_arg(&arguments, "id")?;
+            match knowledge::get_record(conn, &id)? {
+                Some(record) => {
+                    let (fresh, reasons) = knowledge::check_one(conn, &id)?
+                        .map(|f| (f.fresh, f.reasons))
+                        .unwrap_or((true, Vec::new()));
+                    json_text(json!({"record": record, "fresh": fresh, "reasons": reasons}))?
+                }
+                None => {
+                    let mut notes = vec![format!("No knowledge record with id `{id}`.")];
+                    if let Some(hint) = suggest_knowledge_id(conn, &id)? {
+                        notes.push(hint);
+                    }
+                    json_text(json!({"record": Value::Null, "notes": notes}))?
+                }
+            }
+        }
+        "knowledge_status" => {
+            let id = arguments
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty());
+            match id {
+                Some(id) => match knowledge::check_one(conn, &id)? {
+                    Some(verdict) => json_text(json!({"records": [verdict], "notes": []}))?,
+                    None => json_text(
+                        json!({"records": [], "notes": [format!("No knowledge record with id `{id}`.")]}),
+                    )?,
+                },
+                None => {
+                    let records = knowledge::check_freshness(conn)?;
+                    json_text(json!({"records": records, "notes": []}))?
+                }
+            }
+        }
+        "knowledge_add" => {
+            let raw = arguments.get("record").cloned().ok_or_else(|| {
+                KeelError::Mcp("missing required argument: record".into())
+            })?;
+            let record: KnowledgeRecord = serde_json::from_value(raw)
+                .map_err(|e| KeelError::Mcp(format!("invalid record: {e}")))?;
+            let created = knowledge::get_record(conn, &record.id)?.is_none();
+            knowledge::put_record(conn, &record)?;
+            let stored = knowledge::get_record(conn, &record.id)?.ok_or_else(|| {
+                KeelError::Mcp(format!("record `{}` lost after write", record.id))
+            })?;
+            let verb = if created { "Created" } else { "Updated" };
+            json_text(json!({
+                "record": stored,
+                "created": created,
+                "notes": [format!("{verb} knowledge record `{}`.", stored.id)],
+            }))?
+        }
+        "knowledge_validate" => {
+            let id = require_symbol_arg(&arguments, "id")?;
+            let outcome = knowledge::validate_record(conn, &id)?;
+            json_text(outcome)?
+        }
+        "explain" => {
+            let name = arguments
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty());
+            let file = arguments
+                .get("file")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+                .filter(|s| !s.is_empty());
+            let module = optional_module_arg(&arguments);
+            let options = explain::ExplainOptions {
+                source_root: Some(root.to_path_buf()),
+            };
+            let explanation = match (name, file, module) {
+                (Some(_), Some(_), _) | (None, Some(_), Some(_)) | (None, None, None) => {
+                    return Err(KeelError::Mcp(
+                        "pass exactly one of name, file, or module".into(),
+                    ))
+                }
+                (Some(name), None, module) => {
+                    explain::explain_symbol(conn, &name, module.as_deref(), &options)?
+                }
+                (None, Some(file), None) => explain::explain_file(conn, &file)?,
+                (None, None, Some(module)) => explain::explain_module(conn, &module)?,
+            };
+            json_text(explanation)?
+        }
+        "get_task_context" => {
+            let task = require_symbol_arg(&arguments, "task")?;
+            let budget = arguments
+                .get("token_budget")
+                .and_then(|v| v.as_u64())
+                .and_then(|n| usize::try_from(n).ok());
+            let include_tests = arguments
+                .get("include_tests")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let include_knowledge = arguments
+                .get("include_knowledge")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let options = context::ContextOptions {
+                token_budget: budget.unwrap_or(context::DEFAULT_TOKEN_BUDGET),
+                include_tests,
+                include_knowledge,
+                source_root: Some(root.to_path_buf()),
+            };
+            let package = context::build_package(conn, &task, &options)?;
+            json_text(package)?
+        }
         "index" => {
             let path = require_string_arg(&arguments, "path")?;
             // The target's own `<path>/.keel/index.db` — never the server
@@ -956,6 +1254,23 @@ fn log_tool_query<T>(
         &summary,
         start.elapsed().as_millis() as u64,
     );
+}
+
+/// Up to 3 known record ids containing the missed id (case-insensitive),
+/// ordered by id. `None` when nothing resembles the miss.
+fn suggest_knowledge_id(conn: &Connection, id: &str) -> Result<Option<String>> {
+    let q = id.to_lowercase();
+    let hits: Vec<String> = knowledge::list_records(conn)?
+        .into_iter()
+        .map(|r| r.id)
+        .filter(|known| known.to_lowercase().contains(&q))
+        .take(3)
+        .collect();
+    if hits.is_empty() {
+        return Ok(None);
+    }
+    let quoted: Vec<String> = hits.iter().map(|s| format!("`{s}`")).collect();
+    Ok(Some(format!("Did you mean {}?", quoted.join(", "))))
 }
 
 fn require_string_arg(arguments: &Value, key: &str) -> Result<String> {
@@ -1154,10 +1469,45 @@ mod tests {
             "outline",
             "search",
             "index",
+            "knowledge_search",
+            "knowledge_get",
+            "knowledge_status",
+            "knowledge_add",
+            "knowledge_validate",
+            "get_task_context",
+            "explain",
         ] {
             assert!(
                 names.contains(&expected),
                 "missing tool {expected}; have {names:?}"
+            );
+        }
+        // Read-only knowledge tools advertise it; write tools must not.
+        for tool_name in [
+            "knowledge_search",
+            "knowledge_get",
+            "knowledge_status",
+            "get_task_context",
+            "explain",
+        ] {
+            let tool = tools
+                .iter()
+                .find(|t| t["name"] == tool_name)
+                .unwrap_or_else(|| panic!("{tool_name} tool"));
+            assert_eq!(
+                tool["annotations"]["readOnlyHint"],
+                true,
+                "{tool_name} should be readOnly for agent approval UX"
+            );
+        }
+        for tool_name in ["knowledge_add", "knowledge_validate"] {
+            let tool = tools
+                .iter()
+                .find(|t| t["name"] == tool_name)
+                .unwrap_or_else(|| panic!("{tool_name} tool"));
+            assert!(
+                tool.get("annotations").is_none(),
+                "{tool_name} writes and must not claim readOnly"
             );
         }
         let definition = tools
@@ -1868,5 +2218,478 @@ mod tests {
             payload["results"][0].get("preview").is_none(),
             "got: {payload}"
         );
+    }
+
+    /// Call one tool and parse its text payload as JSON.
+    fn call_tool_payload(
+        conn: &mut Connection,
+        root: &Path,
+        name: &str,
+        arguments: Value,
+        id: i64,
+    ) -> Value {
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}
+        });
+        let resp = handle_message_with(conn, &msg, false, root)
+            .expect("tool call")
+            .expect("tool must return a response");
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text payload");
+        serde_json::from_str(text).unwrap()
+    }
+
+    /// Call one tool and return the raw JSON-RPC response (for error cases).
+    fn call_tool_raw(
+        conn: &mut Connection,
+        root: &Path,
+        name: &str,
+        arguments: Value,
+        id: i64,
+    ) -> Value {
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}
+        });
+        handle_message_with(conn, &msg, false, root)
+            .expect("handler runs")
+            .expect("response")
+    }
+
+    fn knowledge_db() -> (tempfile::TempDir, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        (dir, conn)
+    }
+
+    fn sample_record_json(id: &str, origin: &str) -> Value {
+        json!({
+            "id": id,
+            "type": "architecture_fact",
+            "title": format!("Title for {id}"),
+            "content": format!("Claim about {id}"),
+            "origin": origin,
+            "status": "unverified",
+            "evidence": [{
+                "source_path": "src/a.rs",
+                "symbol": "alpha",
+            }],
+        })
+    }
+
+    #[test]
+    fn knowledge_add_get_roundtrip_with_provenance_and_freshness() {
+        let (dir, mut conn) = knowledge_db();
+        let root = dir.path();
+
+        let added = call_tool_payload(
+            &mut conn,
+            root,
+            "knowledge_add",
+            json!({"record": sample_record_json("auth.jwt", "agent_generated")}),
+            1,
+        );
+        assert_eq!(added["created"], true, "got: {added}");
+        assert_eq!(added["record"]["id"], "auth.jwt");
+        assert_eq!(added["record"]["origin"], "agent_generated");
+        // Store-stamped timestamps, not caller values.
+        assert!(!added["record"]["created_at"].as_str().unwrap_or("").is_empty());
+
+        let got = call_tool_payload(
+            &mut conn,
+            root,
+            "knowledge_get",
+            json!({"id": "auth.jwt"}),
+            2,
+        );
+        assert_eq!(got["record"]["id"], "auth.jwt");
+        assert_eq!(got["record"]["origin"], "agent_generated");
+        assert_eq!(got["record"]["status"], "unverified");
+        assert_eq!(got["record"]["evidence"][0]["symbol"], "alpha");
+        // Every response carries freshness metadata.
+        assert!(got.get("fresh").is_some(), "got: {got}");
+        assert!(got.get("reasons").is_some(), "got: {got}");
+    }
+
+    #[test]
+    fn knowledge_get_miss_is_null_with_suggestion() {
+        let (dir, mut conn) = knowledge_db();
+        let root = dir.path();
+        call_tool_payload(
+            &mut conn,
+            root,
+            "knowledge_add",
+            json!({"record": sample_record_json("auth.jwt.validation", "agent_generated")}),
+            1,
+        );
+
+        let miss = call_tool_payload(&mut conn, root, "knowledge_get", json!({"id": "auth"}), 2);
+        assert!(miss["record"].is_null(), "got: {miss}");
+        assert_eq!(miss["notes"][0], "No knowledge record with id `auth`.");
+        assert!(
+            miss["notes"][1].as_str().unwrap_or("").contains("auth.jwt.validation"),
+            "got: {miss}"
+        );
+
+        let cold = call_tool_payload(&mut conn, root, "knowledge_get", json!({"id": "zzz"}), 3);
+        assert!(cold["record"].is_null());
+        assert_eq!(cold["notes"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn knowledge_search_ranks_and_notes_caps() {
+        let (dir, mut conn) = knowledge_db();
+        let root = dir.path();
+        for id in ["my.jwt.store", "jwt.suffix", "jwt"] {
+            call_tool_payload(
+                &mut conn,
+                root,
+                "knowledge_add",
+                json!({"record": sample_record_json(id, "agent_generated")}),
+                1,
+            );
+        }
+
+        let payload = call_tool_payload(
+            &mut conn,
+            root,
+            "knowledge_search",
+            json!({"query": "jwt"}),
+            2,
+        );
+        let ids: Vec<&str> = payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h["record"]["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["jwt", "jwt.suffix", "my.jwt.store"]);
+        assert_eq!(payload["total"], 3);
+        assert!(payload["notes"].as_array().unwrap().is_empty());
+        assert!(payload["results"][0].get("fresh").is_some());
+
+        let capped = call_tool_payload(
+            &mut conn,
+            root,
+            "knowledge_search",
+            json!({"query": "jwt", "limit": 1}),
+            3,
+        );
+        assert_eq!(capped["results"].as_array().unwrap().len(), 1);
+        assert_eq!(capped["total"], 3);
+        assert!(
+            capped["notes"][0].as_str().unwrap_or("").contains("Showing 1 of 3"),
+            "got: {capped}"
+        );
+    }
+
+    #[test]
+    fn knowledge_status_all_one_and_unknown() {
+        let (dir, mut conn) = knowledge_db();
+        let root = dir.path();
+        call_tool_payload(
+            &mut conn,
+            root,
+            "knowledge_add",
+            json!({"record": sample_record_json("k1", "human")}),
+            1,
+        );
+
+        let all = call_tool_payload(&mut conn, root, "knowledge_status", json!({}), 2);
+        assert_eq!(all["records"].as_array().unwrap().len(), 1);
+        assert_eq!(all["records"][0]["id"], "k1");
+
+        let one = call_tool_payload(&mut conn, root, "knowledge_status", json!({"id": "k1"}), 3);
+        assert_eq!(one["records"].as_array().unwrap().len(), 1);
+
+        let unknown =
+            call_tool_payload(&mut conn, root, "knowledge_status", json!({"id": "nope"}), 4);
+        assert!(unknown["records"].as_array().unwrap().is_empty());
+        assert_eq!(unknown["notes"][0], "No knowledge record with id `nope`.");
+    }
+
+    #[test]
+    fn knowledge_validate_promotes_when_anchors_resolve() {
+        use crate::db::queries;
+        use crate::graph::types::{FileNode, Symbol, SymbolKind};
+
+        let (dir, mut conn) = knowledge_db();
+        let root = dir.path();
+        let hash = "b".repeat(64);
+        let file_id = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/a.rs"),
+                content_hash: hash.clone(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            file_id,
+            &[Symbol {
+                name: "alpha".into(),
+                kind: SymbolKind::Function,
+                file: PathBuf::new(),
+                start_line: 1,
+                start_col: 1,
+                module_path: String::new(),
+                container: String::new(),
+            }],
+        )
+        .unwrap();
+        call_tool_payload(
+            &mut conn,
+            root,
+            "knowledge_add",
+            json!({"record": sample_record_json("k1", "agent_generated")}),
+            1,
+        );
+
+        let outcome = call_tool_payload(
+            &mut conn,
+            root,
+            "knowledge_validate",
+            json!({"id": "k1"}),
+            2,
+        );
+        assert_eq!(outcome["outcome"], "validated", "got: {outcome}");
+        assert_eq!(outcome["repinned"], 1);
+
+        // Pins now match the live index: get reports supported + fresh.
+        let got = call_tool_payload(&mut conn, root, "knowledge_get", json!({"id": "k1"}), 3);
+        assert_eq!(got["record"]["status"], "supported");
+        assert_eq!(got["record"]["evidence"][0]["source_hash"], hash);
+        assert_eq!(got["fresh"], true);
+    }
+
+    #[test]
+    fn get_task_context_returns_cited_budgeted_package() {
+        use crate::db::queries;
+        use crate::graph::types::{
+            FileNode, Reference, ReferenceKind, Symbol, SymbolKind,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("tests")).unwrap();
+        std::fs::write(
+            root.join("src/a.py"),
+            "def refund(x):\n    return -x\n\ndef refund_all(xs):\n    return [-x for x in xs]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("tests/test_a.py"),
+            "from src.a import refund\nassert refund(1)\n",
+        )
+        .unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        let src_id = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("src/a.py"),
+                content_hash: "h".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_symbols(
+            &conn,
+            src_id,
+            &[
+                Symbol {
+                    name: "refund".into(),
+                    kind: SymbolKind::Function,
+                    file: PathBuf::new(),
+                    start_line: 1,
+                    start_col: 1,
+                    module_path: String::new(),
+                    container: String::new(),
+                },
+                Symbol {
+                    name: "refund_all".into(),
+                    kind: SymbolKind::Function,
+                    file: PathBuf::new(),
+                    start_line: 4,
+                    start_col: 1,
+                    module_path: String::new(),
+                    container: String::new(),
+                },
+            ],
+        )
+        .unwrap();
+        let test_id = queries::insert_file(
+            &conn,
+            &FileNode {
+                path: PathBuf::from("tests/test_a.py"),
+                content_hash: "h".into(),
+            },
+        )
+        .unwrap();
+        queries::insert_references(
+            &conn,
+            test_id,
+            &[Reference {
+                name: "refund".into(),
+                file: PathBuf::new(),
+                start_line: 2,
+                start_col: 8,
+                kind: ReferenceKind::Call,
+                container: String::new(),
+                qualifier: String::new(),
+            }],
+        )
+        .unwrap();
+
+        let payload = call_tool_payload(
+            &mut conn,
+            root,
+            "get_task_context",
+            json!({"task": "Add refund support"}),
+            1,
+        );
+        assert_eq!(payload["task"], "Add refund support");
+        assert!(payload["estimated_tokens"].as_u64().unwrap() <= 8000);
+        let items = payload["items"].as_array().unwrap();
+        assert!(!items.is_empty());
+        assert_eq!(items[0]["kind"], "symbol");
+        assert_eq!(items[0]["name"], "refund");
+        assert!(
+            items[0]["text"].as_str().unwrap_or("").contains("def refund"),
+            "got: {payload}"
+        );
+        assert!(items.iter().any(|i| i["kind"] == "test"), "got: {payload}");
+
+        // Toggles and budgets are honored.
+        let no_tests = call_tool_payload(
+            &mut conn,
+            root,
+            "get_task_context",
+            json!({"task": "Add refund support", "include_tests": false}),
+            2,
+        );
+        assert!(no_tests["items"].as_array().unwrap().iter().all(|i| i["kind"] != "test"));
+
+        let tight = call_tool_payload(
+            &mut conn,
+            root,
+            "get_task_context",
+            json!({"task": "Add refund support", "token_budget": 100}),
+            3,
+        );
+        assert_eq!(tight["token_budget"], 100);
+        assert!(tight["omitted"].as_u64().unwrap() > 0, "got: {tight}");
+    }
+
+    #[test]
+    fn explain_tool_returns_package_disambiguation_and_conflicts() {
+        use crate::db::queries;
+        use crate::graph::types::{FileNode, Symbol, SymbolKind};
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.py"), "def solo(x):\n    return x\n").unwrap();
+        std::fs::write(root.join("src/b.py"), "def solo(y):\n    return y\n").unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::initialize(&conn).unwrap();
+        for (path, line) in [("src/a.py", 1), ("src/b.py", 1)] {
+            let file_id = queries::insert_file(
+                &conn,
+                &FileNode {
+                    path: PathBuf::from(path),
+                    content_hash: "h".into(),
+                },
+            )
+            .unwrap();
+            queries::insert_symbols(
+                &conn,
+                file_id,
+                &[Symbol {
+                    name: "solo".into(),
+                    kind: SymbolKind::Function,
+                    file: PathBuf::new(),
+                    start_line: line,
+                    start_col: 1,
+                    module_path: String::new(),
+                    container: String::new(),
+                }],
+            )
+            .unwrap();
+        }
+
+        // Ambiguous without a filter: candidates, no definition.
+        let ambiguous = call_tool_payload(
+            &mut conn,
+            root,
+            "explain",
+            json!({"name": "solo"}),
+            1,
+        );
+        assert_eq!(ambiguous["disambiguation"].as_array().unwrap().len(), 2);
+        assert!(ambiguous["definition"].is_null());
+        assert_eq!(ambiguous["generated"], false);
+
+        // Conflicting targets fail loudly.
+        let resp = call_tool_raw(
+            &mut conn,
+            root,
+            "explain",
+            json!({"name": "solo", "file": "src/a.py"}),
+            2,
+        );
+        assert!(
+            resp["error"]["message"].as_str().unwrap_or("").contains("exactly one"),
+            "got: {resp}"
+        );
+
+        // File form carries the outline + pins.
+        let file = call_tool_payload(&mut conn, root, "explain", json!({"file": "src/a.py"}), 3);
+        assert_eq!(file["file"]["path"], "src/a.py");
+        assert_eq!(file["file"]["symbols_total"], 1);
+        assert!(file["source_hashes"].get("src/a.py").is_some());
+    }
+
+    #[test]
+    fn knowledge_add_rejects_human_overwrite_and_invalid_records() {
+        let (dir, mut conn) = knowledge_db();
+        let root = dir.path();
+        call_tool_payload(
+            &mut conn,
+            root,
+            "knowledge_add",
+            json!({"record": sample_record_json("adr.1", "human")}),
+            1,
+        );
+
+        let resp = call_tool_raw(
+            &mut conn,
+            root,
+            "knowledge_add",
+            json!({"record": sample_record_json("adr.1", "agent_generated")}),
+            2,
+        );
+        let message = resp["error"]["message"].as_str().unwrap_or("");
+        assert!(message.contains("refusing"), "got: {resp}");
+
+        let mut bad = sample_record_json("has space", "agent_generated");
+        bad["title"] = json!("");
+        let resp = call_tool_raw(
+            &mut conn,
+            root,
+            "knowledge_add",
+            json!({"record": bad}),
+            3,
+        );
+        let message = resp["error"]["message"].as_str().unwrap_or("");
+        assert!(message.contains("invalid"), "got: {resp}");
     }
 }

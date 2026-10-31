@@ -6,6 +6,7 @@ use crate::error::{Result, KeelError};
 use crate::graph::deps::Dependency;
 use crate::graph::types::{ImplRecord, Reference, Symbol};
 use crate::index::{self, IndexStats};
+use crate::knowledge::{self, RecordFreshness, ValidationOutcome};
 use crate::mcp;
 use rusqlite::Connection;
 use std::collections::HashMap;
@@ -379,6 +380,584 @@ pub fn doctor_checks_json(path: &Path) -> Result<String> {
     let checks = crate::daemon::doctor_checks(path);
     serde_json::to_string_pretty(&serde_json::json!({ "checks": checks }))
         .map_err(|e| KeelError::Watch(e.to_string()))
+}
+
+/// Open the project index for knowledge commands, auto-indexing first unless
+/// disabled. The schema is initialized so a fresh project reports "no
+/// records" instead of erroring on missing tables.
+fn open_knowledge_db(auto_index: bool) -> Result<Connection> {
+    maybe_ensure_index(auto_index)?;
+    let conn = open_db()?;
+    schema::initialize(&conn)?;
+    Ok(conn)
+}
+
+/// Print one `id:\tstored-status\tlive-verdict` row per knowledge record.
+///
+/// Verdicts are informational (doctor-style): drifted records print, they
+/// don't fail — automation should parse `--json`.
+pub fn run_knowledge_status(auto_index: bool) -> Result<()> {
+    let conn = open_knowledge_db(auto_index)?;
+    let records = knowledge::check_freshness(&conn)?;
+    if records.is_empty() {
+        println!("No knowledge records.");
+        return Ok(());
+    }
+    for f in &records {
+        println!("{}:\t{}\t{}", f.id, f.status.as_db(), freshness_verdict(f));
+    }
+    Ok(())
+}
+
+/// One-line live verdict for a freshness check.
+fn freshness_verdict(f: &RecordFreshness) -> String {
+    if !f.fresh {
+        return format!("drifted: {}", f.reasons.join("; "));
+    }
+    if f.unverifiable_evidence > 0 {
+        return format!("unverifiable: {}", f.reasons.join("; "));
+    }
+    "fresh".to_string()
+}
+
+/// Knowledge freshness as JSON (`{"records": [{id, status, fresh, …}, …]}`).
+pub fn knowledge_status_json(auto_index: bool) -> Result<String> {
+    let conn = open_knowledge_db(auto_index)?;
+    let records = knowledge::check_freshness(&conn)?;
+    serde_json::to_string_pretty(&serde_json::json!({ "records": records }))
+        .map_err(|e| KeelError::Watch(e.to_string()))
+}
+
+/// Validate one record and print the outcome (exit 0 in all cases: a stale
+/// verdict is information, like a confident miss — not a failure).
+pub fn run_knowledge_validate(id: &str, auto_index: bool) -> Result<()> {
+    let mut conn = open_knowledge_db(auto_index)?;
+    match knowledge::validate_record(&mut conn, id)? {
+        ValidationOutcome::Validated { id, repinned } => {
+            println!("Validated {id} (repinned {repinned})");
+        }
+        ValidationOutcome::Stale { id, reasons } => {
+            println!("Stale {id}: {}", reasons.join("; "));
+        }
+        ValidationOutcome::UnknownId { id } => {
+            println!("Unknown knowledge id: {id}");
+        }
+    }
+    Ok(())
+}
+
+/// One-record validation as JSON (tagged `{"outcome": …}` object).
+pub fn knowledge_validate_json(id: &str, auto_index: bool) -> Result<String> {
+    let mut conn = open_knowledge_db(auto_index)?;
+    let outcome = knowledge::validate_record(&mut conn, id)?;
+    serde_json::to_string_pretty(&outcome).map_err(|e| KeelError::Watch(e.to_string()))
+}
+
+/// Build a task context package against the project index (auto-indexing
+/// first unless disabled). Excerpts resolve against the query root.
+pub fn build_context_package(
+    task: &str,
+    budget: Option<usize>,
+    include_tests: bool,
+    include_knowledge: bool,
+    auto_index: bool,
+) -> Result<crate::context::ContextPackage> {
+    maybe_ensure_index(auto_index)?;
+    let conn = open_db()?;
+    schema::initialize(&conn)?;
+    let options = crate::context::ContextOptions {
+        token_budget: budget.unwrap_or(crate::context::DEFAULT_TOKEN_BUDGET),
+        include_tests,
+        include_knowledge,
+        source_root: Some(query_root()),
+    };
+    crate::context::build_package(&conn, task, &options)
+}
+
+/// Print a context package: header row, one tab-separated row per item with
+/// indented excerpts, notes to stderr.
+pub fn run_context(
+    task: &str,
+    budget: Option<usize>,
+    include_tests: bool,
+    include_knowledge: bool,
+    auto_index: bool,
+) -> Result<()> {
+    let package = build_context_package(task, budget, include_tests, include_knowledge, auto_index)?;
+    println!(
+        "# keel context: {} (~{} tokens of {} budget, {} items, {} omitted)",
+        package.task,
+        package.estimated_tokens,
+        package.token_budget,
+        package.items.len(),
+        package.omitted
+    );
+    for item in &package.items {
+        print_context_item(item);
+    }
+    for note in &package.notes {
+        eprintln!("{note}");
+    }
+    Ok(())
+}
+
+fn print_context_item(item: &crate::context::ContextItem) {
+    use crate::context::ContextItem;
+    match item {
+        ContextItem::Symbol {
+            path,
+            name,
+            start_line,
+            text,
+            score,
+            reasons,
+            ..
+        } => {
+            println!(
+                "{path}:{start_line}\tsymbol\t{name}\tscore {score}\t{}",
+                reasons.join("; ")
+            );
+            print_indented(text.as_deref());
+        }
+        ContextItem::File {
+            path,
+            text,
+            score,
+            reasons,
+            ..
+        } => {
+            println!("{path}\tfile\t\tscore {score}\t{}", reasons.join("; "));
+            print_indented(text.as_deref());
+        }
+        ContextItem::Test {
+            path,
+            start_line,
+            text,
+            symbol,
+            score,
+            reasons,
+        } => {
+            println!(
+                "{path}:{start_line}\ttest\t{symbol}\tscore {score}\t{}",
+                reasons.join("; ")
+            );
+            print_indented(text.as_deref());
+        }
+        ContextItem::Knowledge {
+            record,
+            score,
+            reasons,
+        } => {
+            println!(
+                "{}\tknowledge\t{}\tscore {score}\t{}",
+                record.id,
+                record.title,
+                reasons.join("; ")
+            );
+            // Text mode truncates long claims; `--json` carries the full
+            // record including evidence hashes.
+            let content = truncate_chars(&record.content, 500);
+            for line in content.lines() {
+                println!("    {line}");
+            }
+            for e in &record.evidence {
+                match &e.symbol {
+                    Some(symbol) => println!(
+                        "    evidence: {path} ({symbol}) [{}]",
+                        record.status.as_db(),
+                        path = e.source_path,
+                    ),
+                    None => println!(
+                        "    evidence: {} [{}]",
+                        e.source_path,
+                        record.status.as_db()
+                    ),
+                }
+            }
+        }
+    }
+}
+
+fn print_indented(text: Option<&str>) {
+    if let Some(text) = text {
+        for line in text.lines() {
+            println!("    {line}");
+        }
+    }
+}
+
+fn truncate_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
+/// Open the project index for explain commands, auto-indexing first unless
+/// disabled, with excerpt options rooted at the query root.
+fn open_explain_db(auto_index: bool) -> Result<(Connection, crate::explain::ExplainOptions)> {
+    maybe_ensure_index(auto_index)?;
+    let conn = open_db()?;
+    schema::initialize(&conn)?;
+    let options = crate::explain::ExplainOptions {
+        source_root: Some(query_root()),
+    };
+    Ok((conn, options))
+}
+
+/// Explain one symbol (see [`crate::explain::explain_symbol`]).
+pub fn build_explanation_symbol(
+    name: &str,
+    module: Option<&str>,
+    auto_index: bool,
+) -> Result<crate::explain::Explanation> {
+    let (conn, options) = open_explain_db(auto_index)?;
+    crate::explain::explain_symbol(&conn, name, module, &options)
+}
+
+/// Explain one file (see [`crate::explain::explain_file`]).
+pub fn build_explanation_file(path: &Path, auto_index: bool) -> Result<crate::explain::Explanation> {
+    let (conn, _) = open_explain_db(auto_index)?;
+    crate::explain::explain_file(&conn, &path.to_string_lossy())
+}
+
+/// Explain one module (see [`crate::explain::explain_module`]).
+pub fn build_explanation_module(
+    module: &str,
+    auto_index: bool,
+) -> Result<crate::explain::Explanation> {
+    let (conn, _) = open_explain_db(auto_index)?;
+    crate::explain::explain_module(&conn, module)
+}
+
+/// An explanation as pretty JSON (the deterministic package an LLM renderer
+/// would consume; `generated` stays false from the core engine).
+pub fn explanation_json(explanation: &crate::explain::Explanation) -> Result<String> {
+    serde_json::to_string_pretty(explanation).map_err(|e| KeelError::Watch(e.to_string()))
+}
+
+/// Resolve the wiki directory (explicit `--dir`, else `<root>/docs/keel`).
+fn wiki_out_dir(dir: Option<PathBuf>) -> PathBuf {
+    dir.unwrap_or_else(|| query_root().join("docs").join("keel"))
+}
+
+/// Open the project index for wiki commands (auto-index first unless
+/// disabled) with the schema initialized for empty projects.
+fn open_wiki_db(auto_index: bool) -> Result<Connection> {
+    maybe_ensure_index(auto_index)?;
+    let conn = open_db()?;
+    schema::initialize(&conn)?;
+    Ok(conn)
+}
+
+/// Generate the full wiki tree and print what changed.
+pub fn run_wiki_generate(dir: Option<PathBuf>, auto_index: bool) -> Result<()> {
+    let conn = open_wiki_db(auto_index)?;
+    let out_dir = wiki_out_dir(dir);
+    let report = crate::wiki::generate_all(&conn, &out_dir)?;
+    print_wiki_report(&report);
+    Ok(())
+}
+
+/// Rewrite stale wiki pages and print what changed.
+pub fn run_wiki_update(dir: Option<PathBuf>, auto_index: bool) -> Result<()> {
+    let conn = open_wiki_db(auto_index)?;
+    let out_dir = wiki_out_dir(dir);
+    let report = crate::wiki::update_stale(&conn, &out_dir)?;
+    print_wiki_report(&report);
+    Ok(())
+}
+
+fn print_wiki_report(report: &crate::wiki::WikiReport) {
+    for path in &report.written {
+        println!("wrote {path}");
+    }
+    for path in &report.deleted {
+        println!("deleted {path}");
+    }
+    for kept in &report.kept {
+        println!("kept {kept}");
+    }
+    if !report.skipped_current.is_empty() {
+        println!("{} pages already current.", report.skipped_current.len());
+    }
+    for note in &report.notes {
+        eprintln!("{note}");
+    }
+}
+
+/// A wiki write report as pretty JSON.
+pub fn wiki_report_json(
+    dir: Option<PathBuf>,
+    auto_index: bool,
+    stale_only: bool,
+) -> Result<String> {
+    let conn = open_wiki_db(auto_index)?;
+    let out_dir = wiki_out_dir(dir);
+    let report = if stale_only {
+        crate::wiki::update_stale(&conn, &out_dir)?
+    } else {
+        crate::wiki::generate_all(&conn, &out_dir)?
+    };
+    serde_json::to_string_pretty(&report).map_err(|e| KeelError::Watch(e.to_string()))
+}
+
+/// Print per-page wiki freshness (doctor-style, exit 0 in all cases).
+pub fn run_wiki_status(dir: Option<PathBuf>, auto_index: bool) -> Result<()> {
+    let conn = open_wiki_db(auto_index)?;
+    let out_dir = wiki_out_dir(dir);
+    let report = crate::wiki::status_report(&conn, &out_dir)?;
+    for page in &report.pages {
+        println!("{}:\t{}\t{}", page.path, page.state.as_str(), page.detail);
+    }
+    for note in &report.notes {
+        eprintln!("{note}");
+    }
+    Ok(())
+}
+
+/// A wiki status report as pretty JSON.
+pub fn wiki_status_json(dir: Option<PathBuf>, auto_index: bool) -> Result<String> {
+    let conn = open_wiki_db(auto_index)?;
+    let out_dir = wiki_out_dir(dir);
+    let report = crate::wiki::status_report(&conn, &out_dir)?;
+    serde_json::to_string_pretty(&report).map_err(|e| KeelError::Watch(e.to_string()))
+}
+
+/// Print an explanation: header, sections for non-empty evidence, notes to
+/// stderr (query convention: hits stdout, guidance stderr).
+pub fn print_explanation(explanation: &crate::explain::Explanation) {
+    use crate::explain::Explanation;
+    let Explanation {
+        target,
+        target_kind,
+        definition,
+        excerpt,
+        file,
+        module,
+        callers,
+        callers_total,
+        dependencies,
+        dependents,
+        implementations,
+        linked_knowledge,
+        disambiguation,
+        notes,
+        ..
+    } = explanation;
+    println!("# keel explain: {target} ({target_kind})");
+    if let Some(def) = definition {
+        println!(
+            "definition: {}:{} {} {} [{}]",
+            def.file, def.start_line, def.kind, def.name, def.module_path
+        );
+        if let Some(text) = excerpt {
+            for line in text.lines() {
+                println!("    {line}");
+            }
+        }
+    }
+    if let Some(f) = file {
+        println!(
+            "file: {} ({} symbols, hash {})",
+            f.path,
+            f.symbols_total,
+            short_hash(&f.content_hash)
+        );
+        for symbol in &f.symbols {
+            println!(
+                "    {}:{} {} {}",
+                symbol.file, symbol.start_line, symbol.kind, symbol.name
+            );
+        }
+    }
+    if let Some(m) = module {
+        println!("module: {} ({} files, {} symbols)", m.module_path, m.files.len(), m.symbols_total);
+        for symbol in &m.symbols {
+            println!(
+                "    {}:{} {} {}",
+                symbol.file, symbol.start_line, symbol.kind, symbol.name
+            );
+        }
+    }
+    if !callers.is_empty() {
+        println!("callers ({callers_total}):");
+        for caller in callers {
+            println!(
+                "    {}:{} {} [{}]",
+                caller.file, caller.start_line, caller.name, caller.kind
+            );
+        }
+    }
+    if !dependencies.is_empty() {
+        println!("dependencies:");
+        for dep in dependencies {
+            println!("    {}{}", dep.module_path, if dep.external { " [external]" } else { "" });
+        }
+    }
+    if !dependents.is_empty() {
+        println!("dependents:");
+        for dep in dependents {
+            println!("    {}{}", dep.module_path, if dep.external { " [external]" } else { "" });
+        }
+    }
+    if !implementations.is_empty() {
+        println!("implementations:");
+        for imp in implementations {
+            println!("    {}:{} {}", imp.file, imp.start_line, imp.type_name);
+        }
+    }
+    if !linked_knowledge.is_empty() {
+        println!("knowledge:");
+        for linked in linked_knowledge {
+            let verdict = if linked.fresh { "fresh" } else { "drifted" };
+            println!(
+                "    {} [{}|{}]: {}",
+                linked.record.id,
+                linked.record.status.as_db(),
+                verdict,
+                linked.record.title
+            );
+        }
+    }
+    if !disambiguation.is_empty() {
+        println!("candidates:");
+        for candidate in disambiguation {
+            println!(
+                "    {} [{}] {}:{}",
+                candidate.name, candidate.module_path, candidate.path, candidate.start_line
+            );
+        }
+    }
+    for note in notes {
+        eprintln!("{note}");
+    }
+}
+
+fn short_hash(hash: &str) -> &str {
+    hash.get(..12).unwrap_or(hash)
+}
+
+/// A context package as pretty JSON.
+pub fn context_json(
+    task: &str,
+    budget: Option<usize>,
+    include_tests: bool,
+    include_knowledge: bool,
+    auto_index: bool,
+) -> Result<String> {
+    let package = build_context_package(task, budget, include_tests, include_knowledge, auto_index)?;
+    serde_json::to_string_pretty(&package).map_err(|e| KeelError::Watch(e.to_string()))
+}
+
+/// Open the project index for drift sweeps (auto-index first unless
+/// disabled) with the schema initialized for empty projects.
+fn open_drift_db(auto_index: bool) -> Result<Connection> {
+    maybe_ensure_index(auto_index)?;
+    let conn = open_db()?;
+    schema::initialize(&conn)?;
+    Ok(conn)
+}
+
+/// Sweep project docs for drift. With `paths` empty, covers the
+/// discovered scope under the project root; otherwise checks exactly
+/// those files (relative paths resolve against the cwd, as typed).
+/// Missing scoped paths are reported in the notes, never silent.
+pub fn build_drift_report(
+    paths: &[PathBuf],
+    auto_index: bool,
+) -> Result<crate::drift::DriftReport> {
+    let conn = open_drift_db(auto_index)?;
+    let root = query_root();
+    let docs: Vec<PathBuf> = if paths.is_empty() {
+        crate::drift::discover_docs(&root)
+    } else {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        paths
+            .iter()
+            .map(|p| {
+                if p.is_absolute() {
+                    p.clone()
+                } else {
+                    cwd.join(p)
+                }
+            })
+            .collect()
+    };
+    let mut report = crate::drift::check_docs(&conn, &root, &docs)?;
+    if !paths.is_empty() {
+        for doc in &docs {
+            if !doc.is_file() {
+                report.notes.push(format!(
+                    "scoped path not found; skipped: {}",
+                    doc.to_string_lossy().replace('\\', "/")
+                ));
+            }
+        }
+        report.notes.sort();
+    }
+    Ok(report)
+}
+
+/// Print a drift report: one row per finding with its suggestion, then
+/// notes and a summary line. Returns the report so the caller can set
+/// the CI exit code (1 when findings remain).
+pub fn run_drift(paths: &[PathBuf], auto_index: bool) -> Result<crate::drift::DriftReport> {
+    let report = build_drift_report(paths, auto_index)?;
+    print_drift_report(&report);
+    Ok(report)
+}
+
+/// Render a drift report as pretty JSON (same shape as [`run_drift`]).
+pub fn drift_json(paths: &[PathBuf], auto_index: bool) -> Result<String> {
+    let report = build_drift_report(paths, auto_index)?;
+    serde_json::to_string_pretty(&report).map_err(|e| KeelError::Watch(e.to_string()))
+}
+
+/// Print one row per finding (`doc:line [verdict] `claim`: evidence`,
+/// page-level findings omit `:line`), then notes and a summary.
+fn print_drift_report(report: &crate::drift::DriftReport) {
+    for finding in &report.findings {
+        if finding.line == 0 {
+            println!(
+                "{} [{}] `{}`: {}",
+                finding.doc,
+                finding.verdict.as_str(),
+                finding.claim,
+                finding.evidence
+            );
+        } else {
+            println!(
+                "{}:{} [{}] `{}`: {}",
+                finding.doc,
+                finding.line,
+                finding.verdict.as_str(),
+                finding.claim,
+                finding.evidence
+            );
+        }
+        if let Some(suggestion) = &finding.suggestion {
+            println!("  suggestion: {suggestion}");
+        }
+    }
+    for note in &report.notes {
+        println!("note: {note}");
+    }
+    if report.is_clean() {
+        println!(
+            "No drift detected across {} doc(s) and {} wiki page(s).",
+            report.docs_checked, report.wiki_pages_checked
+        );
+    } else {
+        println!(
+            "{} finding(s) across {} doc(s) and {} wiki page(s) checked.",
+            report.findings.len(),
+            report.docs_checked,
+            report.wiki_pages_checked
+        );
+    }
 }
 
 /// One-shot project setup: index now, then print MCP config.

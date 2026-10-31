@@ -144,16 +144,23 @@ Stable tools:
 | Tool | Arguments | Description |
 |------|-----------|-------------|
 | `definition` | `{ "name", "module"?, "limit"?, "preview"? }` | Symbol definition(s); `module`, qualified `name`, or `Type.member` disambiguates |
-| `references` | `{ "name", "module"?, "limit"?, "preview"? }` | Reference sites (import-aware when module known) |
-| `callers` | `{ "name", "module"?, "limit"?, "preview"? }` | Call/use sites (import-aware when unique or provided) |
+| `references` | `{ "name", "module"?, "limit"?, "preview"? }` | Reference sites (import-aware when module known; `Type.member` attributes container-naming receivers) |
+| `callers` | `{ "name", "module"?, "limit"?, "preview"? }` | Call/use sites (import-aware when unique or provided; `Type.member` supported) |
 | `implementations` | `{ "name", "module"?, "limit"?, "preview"? }` | Trait/interface/base implementers (Rust, TS, Python, JS; Go explicit assertions only) |
 | `dependencies` | `{ "name", "limit"? }` | Module/file/symbol dependencies |
 | `dependents` | `{ "name", "limit"? }` | Reverse dependencies (modules importing the target) |
-| `impact` | `{ "name", "module"?, "limit"?, "preview"? }` | Candidate blast radius (`medium`/`low` when non-empty) |
+| `impact` | `{ "name", "module"?, "limit"?, "preview"? }` | Candidate blast radius (`medium`/`low` when non-empty; `Type.member` seeds from the member) |
 | `outline` | `{ "path", "limit"?, "preview"? }` | File/module/directory symbols in source order |
 | `search` | `{ "pattern", "limit"?, "preview"? }` | Substring symbol-name search (default 50, max 200) |
 | `unused` | `{ "path"?, "limit"?, "preview"?, "transitive"? }` | Candidate dead code (`low` when non-empty; default scope: project) |
 | `index` | `{ "path" }` | Index a repository; returns `IndexStats` JSON |
+| `knowledge_search` | `{ "query", "limit"? }` | Substring search over knowledge records (default 20, max 200); hits carry `record` + live `fresh` verdict |
+| `knowledge_get` | `{ "id" }` | One record by exact id + `fresh` verdict (`null` record + notes on miss) |
+| `knowledge_status` | `{ "id"? }` | Stored status + live verdict per record (all, or one by id) |
+| `knowledge_add` | `{ "record" }` | Create/update a record (writes; validates; human records reject non-human overwrites) |
+| `knowledge_validate` | `{ "id" }` | Re-pin + promote to `supported` when anchors resolve, else `stale` (writes) |
+| `get_task_context` | `{ "task", "token_budget"?, "include_tests"?, "include_knowledge"? }` | Ranked cited context package (default budget 8000) |
+| `explain` | `{ "name"?, "file"?, "module"? }` | Evidence package for one symbol/file/module (exactly one target; ambiguous names return candidates) |
 
 Query payloads include `confidence`, `resolution_tier`, and `notes`. See
 [root README — Upgrade](../README.md#upgrade) after a new release.

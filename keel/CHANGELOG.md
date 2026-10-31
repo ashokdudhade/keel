@@ -9,6 +9,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Source-linked knowledge store (roadmap Issue 1): durable architectural
+  records with provenance and evidence. New `knowledge` + `knowledge_evidence`
+  tables (schema v7, no index rebuild), `KnowledgeRecord`/`KnowledgeEvidence`
+  types with strict validation and roadmap-compatible JSON, and
+  `Index::knowledge_put`/`knowledge_get`/`knowledge_list`. Human-authored
+  records reject non-human overwrites instead of silently losing decisions;
+  evidence hashes mirror `files.content_hash` so later invalidation can
+  compare directly. Timestamps are store-owned (unix seconds).
+- Incremental knowledge invalidation (roadmap Issue 2): every index pass
+  automatically marks `supported` records `stale` when an evidence file is
+  removed, a named symbol disappears (renamed/removed/moved, with a
+  still-defined-elsewhere hint), or pinned content changes — without touching
+  unrelated records, unverified claims, or hashless evidence it cannot judge.
+  Promotion back is explicit only (`Index::knowledge_validate`,
+  `keel knowledge validate <id>`), which re-pins hashes to current revisions
+  when anchors resolve. `keel knowledge status` (text/`--json`) shows stored
+  status plus the live verdict per record; invalidation never fails the index
+  pass or consults provenance (human records must flag too).
+- MCP knowledge tools (roadmap Issue 3): `knowledge_search`, `knowledge_get`,
+  `knowledge_status` (read-only, `readOnlyHint`) plus explicit-write
+  `knowledge_add` and `knowledge_validate` (no read-only claim). Every read
+  response carries provenance (`origin`), freshness (`status`), source
+  `evidence`, and a live `fresh` verdict so agents can tell supported
+  knowledge from stale or inferred claims; misses are honest
+  (`{"record": null}` + notes, with id suggestions). Reads and validate
+  auto-index first; `knowledge_add` is a pure validated store write with the
+  human-provenance rule enforced.
+- Task-specific context packages (roadmap P0-4): `keel context "task"
+  [--budget N]` and MCP `get_task_context` build a deterministic, ranked,
+  cited package from exact/substring symbol matches, path relevance,
+  dependency proximity, linked knowledge, and test references — greedily
+  fitted to a token budget (default 8000, `chars/4` heuristic over emitted
+  text) with `omitted` counts and honest notes. `Index::task_context` is the
+  library entry point; results are byte-stable for identical task, options,
+  and index state.
+- Evidence-based explanations (roadmap P1-5): `keel explain <name>`,
+  `keel explain --file <path>`, `keel explain --module <mod>`, MCP `explain`,
+  and `Index::explain_symbol/file/module` return a deterministic evidence
+  package (definition + excerpt, callers, dependencies, dependents,
+  implementations, linked knowledge with live freshness, content-hash pins
+  for cache drift detection). Ambiguous names return disambiguation
+  candidates; `generated` stays false from the core engine as the seam for
+  an optional LLM renderer (which must identify itself).
+- Living architecture wiki (roadmap P1-6): `keel wiki generate|update|status`
+  (default output `<root>/docs/keel`, overridable `--dir`) writes
+  deterministic structural pages — `index.md`, `architecture.md` (mermaid
+  dependency graph), `modules/<dir>.md`, `flows/<dir>.md` (static call
+  graphs, labeled non-runtime), `decisions/index.md` — each citing
+  `path:line` evidence with freshness and content-hash pins. Updates rewrite
+  only stale pages (manifest-pinned inputs with reference closure);
+  human text outside managed markers is preserved byte-for-byte, markerless
+  pages are never touched, and orphaned generated-only pages are deleted
+  (human-bearing ones kept with a report). `Index::wiki_generate/update/
+  status` are the library entry points.
+- Documentation drift detection / KnowledgeCI (roadmap P1-7):
+  `keel drift [--path P]... [--json]` sweeps `docs/` (minus the generated
+  wiki), agent instructions (`AGENTS.md`, `CLAUDE.md`, …), and ADRs for
+  backticked claims that no longer match the index, plus wiki pages against
+  their manifest pins — and exits 1 when findings remain, so CI fails.
+  Three verdicts with evidence and human-reviewed suggestions (never
+  applied): `potentially stale` (gone with a rename candidate, or wiki
+  inputs changed), `unsupported` (resolves to nothing), `contradicted`
+  (adjacent kind word disagrees with the indexed kind). Fenced code blocks
+  are samples, not claims; misses resolve through a ladder (keywords,
+  schema names, external imports, case-insensitive matches, `KEEL_*`
+  config, project/MCP/CLI names, referenced-but-undefined names) before
+  becoming findings, and ambiguous paths skip with a counted note.
+  `Index::drift_check` is the library entry point.
+- `dependencies`/`dependents` follow qualified paths: a `Path` qualifier
+  that resolves to an indexed module (`crate::facade` in
+  `crate::facade::f()`) is import-strength edge evidence, so consumers
+  that qualify paths instead of importing them now appear in both
+  directions. Unresolved qualifiers (type names, `self`/`super`,
+  unindexed modules) add nothing — uses must resolve to count, and never
+  become external edges.
+- Miss recovery counts one adjacent transposition as a single typo, so
+  short swapped queries (`Inedx`) suggest the right symbol instead of
+  missing silently. Long nonsense still stays silent.
+- Member-qualified `references`/`callers`/`impact`: `C.method` (and
+  single-segment `Type::member` as a fallback) now works beyond
+  `definition`/`search`/`dependents`. `references`/`callers` attribute
+  only sites whose receiver names the container (`C()`/`C` with
+  same-module or import evidence, `self`/`this` via the enclosing
+  class; tier 1 exact, tier 2 for unresolved qualifier heads) and
+  count local-receiver/bare sites honestly instead of claiming them.
+  `impact` seeds the radius from the member and, when sibling definers
+  share the name in a def module, covers the module-level name with an
+  explicit note (Low). All three stay exact-case like `definition`.
 - File targets are suffix-tolerant: `dependents`/`outline`/`unused` file
   arguments accept cwd-relative (`../../x.py`), absolute, and bare-basename
   (`l.py` from a subdir) spellings when exactly one indexed file matches,
@@ -176,6 +264,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `unused` no longer reports Go exported (uppercase-initial) functions:
+  package API may be called from outside the indexed repo, so exports are
+  entry points like `init` (this subsumes the `Test`/`Benchmark`/`Example`/
+  `Fuzz` harness rules, which are all uppercase).
 - Python `except E as e` (and `except (A, B) as e`) no longer indexes the
   `as` alias as a type reference; the handler parses as an `as_pattern`
   whose alias binds a fresh local. The covering test asserted the wrong
