@@ -396,9 +396,9 @@ fn open_knowledge_db(auto_index: bool) -> Result<Connection> {
 ///
 /// Verdicts are informational (doctor-style): drifted records print, they
 /// don't fail — automation should parse `--json`.
-pub fn run_knowledge_status(auto_index: bool) -> Result<()> {
+pub fn run_knowledge_status(agent: Option<&str>, auto_index: bool) -> Result<()> {
     let conn = open_knowledge_db(auto_index)?;
-    let records = knowledge::check_freshness(&conn)?;
+    let records = knowledge_status_rows(&conn, agent)?;
     if records.is_empty() {
         println!("No knowledge records.");
         return Ok(());
@@ -407,6 +407,23 @@ pub fn run_knowledge_status(auto_index: bool) -> Result<()> {
         println!("{}:\t{}\t{}", f.id, f.status.as_db(), freshness_verdict(f));
     }
     Ok(())
+}
+
+/// Freshness rows, optionally narrowed to one writer identity. Shapes
+/// stay identical with or without the filter.
+fn knowledge_status_rows(
+    conn: &Connection,
+    agent: Option<&str>,
+) -> Result<Vec<RecordFreshness>> {
+    let records = knowledge::check_freshness(conn)?;
+    let Some(want) = agent else {
+        return Ok(records);
+    };
+    let ids: std::collections::HashSet<String> = knowledge::records_by_agent(conn, want)?
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    Ok(records.into_iter().filter(|f| ids.contains(&f.id)).collect())
 }
 
 /// One-line live verdict for a freshness check.
@@ -421,9 +438,9 @@ fn freshness_verdict(f: &RecordFreshness) -> String {
 }
 
 /// Knowledge freshness as JSON (`{"records": [{id, status, fresh, …}, …]}`).
-pub fn knowledge_status_json(auto_index: bool) -> Result<String> {
+pub fn knowledge_status_json(agent: Option<&str>, auto_index: bool) -> Result<String> {
     let conn = open_knowledge_db(auto_index)?;
-    let records = knowledge::check_freshness(&conn)?;
+    let records = knowledge_status_rows(&conn, agent)?;
     serde_json::to_string_pretty(&serde_json::json!({ "records": records }))
         .map_err(|e| KeelError::Watch(e.to_string()))
 }
@@ -852,9 +869,9 @@ pub fn context_json(
     serde_json::to_string_pretty(&package).map_err(|e| KeelError::Watch(e.to_string()))
 }
 
-/// Open the project index for drift sweeps (auto-index first unless
-/// disabled) with the schema initialized for empty projects.
-fn open_drift_db(auto_index: bool) -> Result<Connection> {
+/// Open the project index for doc sweeps (drift, ADRs): auto-index
+/// first unless disabled, schema initialized for empty projects.
+fn open_sweep_db(auto_index: bool) -> Result<Connection> {
     maybe_ensure_index(auto_index)?;
     let conn = open_db()?;
     schema::initialize(&conn)?;
@@ -869,7 +886,7 @@ pub fn build_drift_report(
     paths: &[PathBuf],
     auto_index: bool,
 ) -> Result<crate::drift::DriftReport> {
-    let conn = open_drift_db(auto_index)?;
+    let conn = open_sweep_db(auto_index)?;
     let root = query_root();
     let docs: Vec<PathBuf> = if paths.is_empty() {
         crate::drift::discover_docs(&root)
@@ -958,6 +975,121 @@ fn print_drift_report(report: &crate::drift::DriftReport) {
             report.wiki_pages_checked
         );
     }
+}
+
+/// List ADRs under the project root (auto-index first unless disabled).
+pub fn build_adr_list(auto_index: bool) -> Result<crate::adr::AdrList> {
+    let conn = open_sweep_db(auto_index)?;
+    let root = query_root();
+    crate::adr::list_adrs(&conn, &root)
+}
+
+/// Show one ADR by id or path (`None` when nothing matches).
+pub fn build_adr_show(
+    id_or_path: &str,
+    auto_index: bool,
+) -> Result<Option<crate::adr::AdrDetail>> {
+    let conn = open_sweep_db(auto_index)?;
+    let root = query_root();
+    crate::adr::show_adr(&conn, &root, id_or_path)
+}
+
+/// Print an ADR list: one tab-separated row per ADR plus notes.
+pub fn run_adr_list(auto_index: bool) -> Result<()> {
+    let list = build_adr_list(auto_index)?;
+    for adr in &list.adrs {
+        println!(
+            "{}\t{}\t{}\t{} link(s)\t{}",
+            adr.id,
+            adr.declared.as_str(),
+            adr.verdict.as_str(),
+            adr.links,
+            adr.title.as_deref().unwrap_or("(untitled)")
+        );
+    }
+    for note in &list.notes {
+        println!("note: {note}");
+    }
+    if list.adrs.is_empty() {
+        println!("No ADRs found under the project root.");
+    }
+    Ok(())
+}
+
+/// Print one ADR's detail: header, links, knowledge, and history.
+/// Returns whether anything matched (miss recovery lives in `main`).
+pub fn run_adr_show(id_or_path: &str, auto_index: bool) -> Result<bool> {
+    let detail = build_adr_show(id_or_path, auto_index)?;
+    let Some(detail) = &detail else {
+        return Ok(false);
+    };
+    println!(
+        "{} — {}",
+        detail.id,
+        detail.title.as_deref().unwrap_or("(untitled)")
+    );
+    println!(
+        "declared: {} | verdict: {} | {}",
+        detail.declared.as_str(),
+        detail.verdict.as_str(),
+        detail.path
+    );
+    if let Some(date) = &detail.date {
+        println!("date: {date}");
+    }
+    println!("links:");
+    if detail.links.is_empty() {
+        println!("  (none)");
+    }
+    for link in &detail.links {
+        let state = if link.live { "live" } else { "dead" };
+        match &link.target {
+            Some(target) => println!(
+                "  {}:{} [{} {}] `{}` -> {}",
+                detail.path, link.line, link.kind, state, link.claim, target
+            ),
+            None => println!(
+                "  {}:{} [{} {}] `{}`",
+                detail.path, link.line, link.kind, state, link.claim
+            ),
+        }
+    }
+    println!("knowledge:");
+    if detail.records.is_empty() {
+        println!("  (none linked)");
+    }
+    for record in &detail.records {
+        println!("  {} — {}", record.id, record.title);
+    }
+    println!("history:");
+    if detail.history.is_empty() {
+        println!("  (none)");
+    }
+    for entry in &detail.history {
+        let short = entry.hash.chars().take(12).collect::<String>();
+        println!("  {} {} {}", short, entry.date, entry.subject);
+    }
+    for note in &detail.notes {
+        println!("note: {note}");
+    }
+    Ok(true)
+}
+
+/// Render an ADR list as pretty JSON.
+pub fn adr_list_json(auto_index: bool) -> Result<String> {
+    let list = build_adr_list(auto_index)?;
+    serde_json::to_string_pretty(&list).map_err(|e| KeelError::Watch(e.to_string()))
+}
+
+/// Render one ADR's detail as pretty JSON (`None` when nothing matches).
+pub fn adr_show_json(
+    id_or_path: &str,
+    auto_index: bool,
+) -> Result<Option<String>> {
+    let detail = build_adr_show(id_or_path, auto_index)?;
+    detail
+        .map(|d| serde_json::to_string_pretty(&d).map_err(|e| KeelError::Watch(e.to_string())))
+        .transpose()
 }
 
 /// One-shot project setup: index now, then print MCP config.

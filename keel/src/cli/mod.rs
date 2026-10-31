@@ -297,6 +297,24 @@ pub enum Commands {
         #[arg(long = "path")]
         path: Vec<PathBuf>,
     },
+    /// List and inspect architecture decision records and their links.
+    Adr {
+        /// The ADR action to run.
+        #[command(subcommand)]
+        action: AdrCommands,
+    },
+}
+
+/// ADR actions.
+#[derive(Subcommand)]
+pub enum AdrCommands {
+    /// List ADRs with declared status, link counts, and verdicts.
+    List,
+    /// Show one ADR's links, linked knowledge, and file history.
+    Show {
+        /// ADR stem id, relative path, or absolute path.
+        id: String,
+    },
 }
 
 /// Wiki actions.
@@ -326,7 +344,11 @@ pub enum WikiCommands {
 #[derive(Subcommand)]
 pub enum KnowledgeCommands {
     /// Show the stored status plus the live freshness verdict per record.
-    Status,
+    Status {
+        /// Only records written by this agent identity (exact match).
+        #[arg(long)]
+        agent: Option<String>,
+    },
     /// Re-check one record: refresh pins and promote to supported when its
     /// anchors resolve, else mark stale.
     Validate {

@@ -457,6 +457,7 @@ mod tests {
             title: "T".to_string(),
             content: "C".to_string(),
             origin: KnowledgeOrigin::Agent,
+            agent: None,
             status: KnowledgeStatus::Supported,
             created_at: String::new(),
             updated_at: String::new(),

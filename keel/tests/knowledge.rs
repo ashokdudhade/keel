@@ -181,3 +181,130 @@ fn cli_empty_store_and_unknown_id() {
     assert!(ok);
     assert!(stdout.contains("Unknown knowledge id: nope"), "{stdout}");
 }
+
+fn agent_record(id: &str, agent: Option<&str>, origin: KnowledgeOrigin) -> KnowledgeRecord {
+    let mut record = KnowledgeRecord::new(
+        id,
+        KnowledgeType::Fact,
+        format!("title {id}"),
+        format!("content mentions jwt for {id}"),
+        origin,
+    );
+    record.agent = agent.map(str::to_string);
+    record
+}
+
+#[test]
+fn agent_identity_roundtrips_and_filters() {
+    let (_dir, mut index, _hash) = indexed_project();
+    index
+        .knowledge_put(&agent_record("a.one", Some("codex"), KnowledgeOrigin::Agent))
+        .unwrap();
+    index
+        .knowledge_put(&agent_record("a.two", Some("claude-code"), KnowledgeOrigin::Agent))
+        .unwrap();
+    index
+        .knowledge_put(&agent_record("a.three", None, KnowledgeOrigin::Human))
+        .unwrap();
+
+    let got = index.knowledge_get("a.one").unwrap().expect("stored");
+    assert_eq!(got.agent.as_deref(), Some("codex"));
+
+    let codex = index.knowledge_by_agent("codex").unwrap();
+    assert_eq!(codex.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec!["a.one"]);
+    assert!(index.knowledge_by_agent("Codex").unwrap().is_empty());
+    assert!(index.knowledge_by_agent("nobody").unwrap().is_empty());
+
+    // JSON carries agent when present, omits it when absent.
+    let json = serde_json::to_value(&got).unwrap();
+    assert_eq!(json.get("agent").and_then(|v| v.as_str()), Some("codex"));
+    let plain = index.knowledge_get("a.three").unwrap().expect("stored");
+    assert!(serde_json::to_value(&plain).unwrap().get("agent").is_none());
+
+    // Updates replace the writer identity wholesale, like evidence.
+    let mut updated = got.clone();
+    updated.agent = Some("cursor".to_string());
+    index.knowledge_put(&updated).unwrap();
+    assert_eq!(
+        index.knowledge_get("a.one").unwrap().expect("stored").agent.as_deref(),
+        Some("cursor")
+    );
+    assert!(index.knowledge_by_agent("codex").unwrap().is_empty());
+}
+
+#[test]
+fn agent_validation_rejects_blank_and_oversize() {
+    let (_dir, mut index, _hash) = indexed_project();
+    let err = index
+        .knowledge_put(&agent_record("bad.blank", Some("  "), KnowledgeOrigin::Agent))
+        .unwrap_err();
+    assert!(matches!(err, keel::KeelError::KnowledgeValidation(_)), "{err:?}");
+    let err = index
+        .knowledge_put(&agent_record("bad.long", Some(&"x".repeat(65)), KnowledgeOrigin::Agent))
+        .unwrap_err();
+    assert!(matches!(err, keel::KeelError::KnowledgeValidation(_)), "{err:?}");
+}
+
+#[test]
+fn search_filters_compose_before_caps() {
+    let (dir, mut index, _hash) = indexed_project();
+    for (id, agent, origin) in [
+        ("jwt.a", Some("codex"), KnowledgeOrigin::Agent),
+        ("jwt.b", Some("codex"), KnowledgeOrigin::Agent),
+        ("jwt.c", Some("claude-code"), KnowledgeOrigin::Agent),
+        ("jwt.d", None, KnowledgeOrigin::Human),
+    ] {
+        index.knowledge_put(&agent_record(id, agent, origin)).unwrap();
+    }
+    let db = dir.path().join("index.db");
+    drop(index);
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let codex = keel::knowledge::search_records_filtered(&conn, "jwt", None, Some("codex"), None)
+        .unwrap();
+    assert_eq!(codex.len(), 2);
+    let human =
+        keel::knowledge::search_records_filtered(&conn, "jwt", None, None, Some("HUMAN")).unwrap();
+    assert_eq!(human.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec!["jwt.d"]);
+    let both = keel::knowledge::search_records_filtered(
+        &conn,
+        "jwt",
+        None,
+        Some("codex"),
+        Some("agent_generated"),
+    )
+    .unwrap();
+    assert_eq!(both.len(), 2);
+    let capped =
+        keel::knowledge::search_records_filtered(&conn, "jwt", Some(1), Some("codex"), None)
+            .unwrap();
+    assert_eq!(capped.len(), 1);
+}
+
+#[test]
+fn cli_status_filters_by_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/a.rs"), "pub fn alpha() {}\n").unwrap();
+    assert!(run_knowledge(&["index", "."], root).0);
+
+    let db = root.join(".keel/index.db");
+    let mut index = Index::open(&db).unwrap();
+    index
+        .knowledge_put(&agent_record("k.one", Some("codex"), KnowledgeOrigin::Agent))
+        .unwrap();
+    index
+        .knowledge_put(&agent_record("k.two", Some("claude-code"), KnowledgeOrigin::Agent))
+        .unwrap();
+    drop(index);
+
+    let (ok, stdout) = run_knowledge(&["knowledge", "status", "--agent", "codex"], root);
+    assert!(ok);
+    assert!(stdout.contains("k.one"), "{stdout}");
+    assert!(!stdout.contains("k.two"), "{stdout}");
+
+    let (ok, stdout) = run_knowledge(&["knowledge", "status"], root);
+    assert!(ok);
+    assert!(stdout.contains("k.one"), "{stdout}");
+    assert!(stdout.contains("k.two"), "{stdout}");
+}

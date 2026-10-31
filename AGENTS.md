@@ -10,7 +10,7 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
 | Path | What it is |
 |---|---|
 | `keel/` | The Rust crate (binary + library in one package). All engine work happens here. |
-| `keel/src/` | `lib.rs`, `main.rs`, `facade.rs` (`Index`), `cli/`, `db/`, `graph/`, `index/`, `languages/`, `daemon.rs`, `mcp/`, `api/`, `usage.rs` (Insights telemetry), `knowledge/` (records/store/freshness), `context/` (task packages), `explain/` (evidence packages), `wiki/` (generate/render/update), `drift/` (scan/check) |
+| `keel/src/` | `lib.rs`, `main.rs`, `facade.rs` (`Index`), `cli/`, `db/`, `graph/`, `index/`, `languages/`, `daemon.rs`, `mcp/`, `api/`, `usage.rs` (Insights telemetry), `knowledge/` (records/store/freshness), `context/` (task packages), `explain/` (evidence packages), `wiki/` (generate/render/update), `drift/` (scan/check), `adr/` (parse/link/history) |
 | `keel/tests/` | `integration.rs`, `common_path.rs`, `languages.rs`, `service.rs` + inline unit tests |
 | `benchmarks/` | `accuracy/` + `impact/` + `references/` fixtures + `gold.json`; `realworld/` gold files + `repos.json` |
 | `scripts/` | Benchmark runners, `keel-mcp.sh`, `mcp-trust-smoke.py`, `test-install.sh` |
@@ -53,12 +53,14 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
   Parsing runs on a dedicated 64 MiB-stack rayon pool, and every
   extraction walk enforces `MAX_WALK_DEPTH` (1024; real max observed: 89):
   deeper files fail loudly per file instead of overflowing a stack.
-- **Storage:** `rusqlite` bundled SQLite, `PRAGMA user_version = 7`
-  (`db/schema.rs` migrates v0–v6 → v7 idempotently in one transaction;
+- **Storage:** `rusqlite` bundled SQLite, `PRAGMA user_version = 8`
+  (`db/schema.rs` migrates v0–v7 → v8 idempotently in one transaction;
   v6 adds the `symbols.container` column + index and forces one rebuild;
-  v7 adds the `knowledge` + `knowledge_evidence` tables, no rebuild).
+  v7 adds the `knowledge` + `knowledge_evidence` tables, no rebuild;
+  v8 adds the nullable `knowledge.agent` writer column, no rebuild).
   Tables: `files`, `symbols` (+`module_path`, +`container`), `"references"` (+`kind`,
-  +`container`, +`qualifier`), `imports`, `impls`, `meta` (writer stamps).
+  +`container`, +`qualifier`), `imports`, `impls`, `meta` (writer stamps),
+  `knowledge` (+`agent` writer identity, nullable) + `knowledge_evidence`.
   `INDEX_FORMAT_VERSION` (=2) tracks content semantics separately from schema:
   the indexer auto-rebuilds stale content; reads via facade/HTTP refuse with
   `KeelError::StaleIndex` when bypassing auto-index. `meta` also holds
@@ -137,6 +139,15 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
   and ambiguous paths skip honestly with a counted note. Suggestions
   are human-reviewed, never applied. Doc conventions the checker
   honors: fence samples, quote prose, `<placeholder>` hypotheticals.
+- **ADR:** `adr/` (`parse.rs` discovery/headers, `mod.rs` links/records/git
+  history) + `Index::adr_list`/`adr_show` + `keel adr list|show <id>`. ADR
+  files: adr/ or decisions/ trees, or `*adr*.md` names; id is the file
+  stem. Links reuse drift's scan + shared resolvers (`lookup_symbol`,
+  `resolve_path`); knowledge via `records_linked`; history is one
+  `git log` over linked files (degrades to notes without git). Verdicts
+  (`supported`/`stale`/`unlinked`) describe link freshness, never the
+  declared `Status:` line. `list` skips history (one subprocess per ADR
+  is too slow); `show` misses suggest substring ids.
 - **HTTP:** `api/mod.rs` via `keel serve` on `127.0.0.1:7645`:
   `GET /health`, `GET /symbol/{name}[?limit=N]`, `GET /outline/{path}[?limit=N]`,
   `GET /search/{pattern}[?limit=N]`, `GET /impact/{name}[?module=M]`,
@@ -171,7 +182,7 @@ tag `v1.4.1`); session work below is implemented but uncommitted — verify with
   in a "db.get()"-style call) — all five languages — so module-scoped
   callers can break
   import-tier ties; undecided ties stay dropped with an honest note.
-  Schema v7, index format 3 (migrations via `schema::initialize`). Member
+  Schema v8, index format 3 (migrations via `schema::initialize`). Member
   symbols record their enclosing type in `symbols.container`, so
   `definition` accepts `Type.member` (and single-segment `Type::member`
   as a fallback when the module reading misses).

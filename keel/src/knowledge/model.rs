@@ -19,6 +19,8 @@ pub const MAX_TITLE_LEN: usize = 512;
 pub const MAX_CONTENT_LEN: usize = 1_000_000;
 /// Maximum evidence entries per record.
 pub const MAX_EVIDENCE: usize = 256;
+/// Maximum writer-identity length (`agent` field).
+pub const MAX_AGENT_LEN: usize = 64;
 /// Maximum evidence path/symbol lengths in bytes.
 pub const MAX_EVIDENCE_PATH_LEN: usize = 1024;
 pub const MAX_EVIDENCE_SYMBOL_LEN: usize = 512;
@@ -226,6 +228,11 @@ pub struct KnowledgeRecord {
     pub content: String,
     /// Who produced this record.
     pub origin: KnowledgeOrigin,
+    /// Writer identity for cross-agent memory (`claude-code`, `codex`,
+    /// a session tag). `None` predates attribution; it never affects
+    /// provenance protection, which keys on `origin` alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
     /// Freshness against the current code.
     pub status: KnowledgeStatus,
     /// Decimal unix seconds, stamped by the store on insert.
@@ -256,6 +263,7 @@ impl KnowledgeRecord {
             title: title.into(),
             content: content.into(),
             origin,
+            agent: None,
             status: KnowledgeStatus::Unverified,
             created_at: now.clone(),
             updated_at: now,
@@ -286,6 +294,16 @@ impl KnowledgeRecord {
             return Err(validation(format!(
                 "evidence exceeds {MAX_EVIDENCE} entries"
             )));
+        }
+        if let Some(agent) = &self.agent {
+            if agent.trim().is_empty() {
+                return Err(validation("agent must not be blank"));
+            }
+            if agent.len() > MAX_AGENT_LEN {
+                return Err(validation(format!(
+                    "agent exceeds {MAX_AGENT_LEN} bytes"
+                )));
+            }
         }
         for (i, e) in self.evidence.iter().enumerate() {
             e.validate(i)?;
@@ -429,6 +447,7 @@ mod tests {
             title: "JWT validation".to_string(),
             content: "JWT validation occurs in AuthMiddleware".to_string(),
             origin: KnowledgeOrigin::Agent,
+            agent: None,
             status: KnowledgeStatus::Unverified,
             created_at: "1700000000".to_string(),
             updated_at: "1700000000".to_string(),

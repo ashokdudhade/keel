@@ -11,6 +11,7 @@ use crate::graph::query_result::QueryResult;
 use crate::graph::resolve;
 use crate::graph::target;
 use crate::graph::types::{ImplRecord, Reference, Symbol};
+use crate::adr;
 use crate::context;
 use crate::drift;
 use crate::explain;
@@ -251,6 +252,12 @@ impl Index {
         knowledge::list_records(&self.conn)
     }
 
+    /// List one agent's records ordered by id: the cross-agent handoff
+    /// ("what did codex learn here?"). Exact identity match.
+    pub fn knowledge_by_agent(&self, agent: &str) -> Result<Vec<KnowledgeRecord>> {
+        knowledge::records_by_agent(&self.conn, agent)
+    }
+
     /// Check every record's evidence against the current index (read-only).
     ///
     /// Like [`Index::knowledge_get`], not gated on the index-format check:
@@ -369,6 +376,26 @@ impl Index {
             report.notes.sort();
         }
         Ok(report)
+    }
+
+    /// List every ADR under `project_root` with link counts and verdicts.
+    /// Skips git history per ADR (see [`Index::adr_show`]).
+    pub fn adr_list(&self, project_root: &Path) -> Result<adr::AdrList> {
+        ensure_index_current(&self.conn)?;
+        adr::list_adrs(&self.conn, project_root)
+    }
+
+    /// Show one ADR by stem id, relative path, or absolute path: links,
+    /// linked knowledge records, and linked files' git history. Returns
+    /// `None` when nothing matches (use [`adr::suggest_adr_ids`] to
+    /// recover honestly).
+    pub fn adr_show(
+        &self,
+        project_root: &Path,
+        id_or_path: &str,
+    ) -> Result<Option<adr::AdrDetail>> {
+        ensure_index_current(&self.conn)?;
+        adr::show_adr(&self.conn, project_root, id_or_path)
     }
 }
 

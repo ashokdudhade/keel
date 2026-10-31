@@ -217,12 +217,12 @@ fn covers_doc(rel: &Path) -> bool {
 /// same snapshot. Honors `.gitignore`/`.keelignore` and prunes the same
 /// junk dirs as the indexer, but keeps hidden trees (`.github/`) since
 /// docs legitimately reference them.
-struct RepoFiles {
+pub(crate) struct RepoFiles {
     paths: Vec<String>,
 }
 
 impl RepoFiles {
-    fn collect(root: &Path) -> Vec<String> {
+    pub(crate) fn collect(root: &Path) -> Vec<String> {
         let mut paths: Vec<String> = WalkBuilder::new(root)
             .standard_filters(true)
             .hidden(false)
@@ -257,7 +257,7 @@ impl RepoFiles {
     }
 
     /// Repo paths whose final segment is `name` (files and dirs alike).
-    fn basename_hits(&self, name: &str) -> Vec<&str> {
+    pub(crate) fn basename_hits(&self, name: &str) -> Vec<&str> {
         self.paths
             .iter()
             .filter(|p| p.rsplit('/').next() == Some(name))
@@ -266,7 +266,7 @@ impl RepoFiles {
     }
 
     /// Repo paths ending at multi-segment `suffix` on a `/` boundary.
-    fn suffix_hits(&self, suffix: &str) -> Vec<&str> {
+    pub(crate) fn suffix_hits(&self, suffix: &str) -> Vec<&str> {
         self.paths
             .iter()
             .filter(|p| {
@@ -281,10 +281,11 @@ impl RepoFiles {
 
 /// Per-sweep resolution context: everything a claim can resolve
 /// against besides symbol definitions, collected once so every doc sees
-/// the same snapshot.
-struct SweepCtx {
+/// the same snapshot. Shared with the ADR module, which resolves the
+/// same claims into links instead of findings.
+pub(crate) struct SweepCtx {
     /// Every file and directory in the repo (path ladder).
-    repo: RepoFiles,
+    pub(crate) repo: RepoFiles,
     /// Lowercased external import modules plus their last segments and
     /// aliases (`rusqlite`, `sync` from `std::sync`).
     external: HashSet<String>,
@@ -303,7 +304,7 @@ struct SweepCtx {
 }
 
 impl SweepCtx {
-    fn collect(conn: &Connection, root: &Path) -> Result<Self> {
+    pub(crate) fn collect(conn: &Connection, root: &Path) -> Result<Self> {
         let mut external = HashSet::new();
         for module in queries::distinct_import_modules(conn)? {
             // Root and leaf (`serde`, `serialize` from `serde::Serialize`):
@@ -557,6 +558,176 @@ fn doc_kind(word: &str) -> Option<&'static str> {
     }
 }
 
+/// Symbol lookup ingredients shared by drift findings and ADR links:
+/// container-scoped defs, bare-name defs, container defs, plus the two
+/// miss-ladder outcomes. `quiet_early` (single-char spans, `self`/`this`
+/// receivers, schema pairs) wins over definitions; `quiet_late` (the
+/// bare-name ladder) is consulted only when nothing is defined.
+pub(crate) struct SymbolLookup {
+    pub(crate) scoped: Vec<Symbol>,
+    pub(crate) bare: Vec<Symbol>,
+    pub(crate) container_defs: Vec<Symbol>,
+    pub(crate) quiet_early: bool,
+    pub(crate) quiet_late: bool,
+}
+
+/// Look up a symbol claim once for every consumer. The scoped lookup
+/// short-circuits on hit; misses fetch bare and container defs together
+/// so shaping never re-queries.
+pub(crate) fn lookup_symbol(
+    conn: &Connection,
+    name: &str,
+    container: Option<&str>,
+    ctx: &SweepCtx,
+) -> Result<SymbolLookup> {
+    let mut out = SymbolLookup {
+        scoped: Vec::new(),
+        bare: Vec::new(),
+        container_defs: Vec::new(),
+        quiet_early: false,
+        quiet_late: false,
+    };
+    if name.chars().count() < 2 {
+        out.quiet_early = true;
+        return Ok(out);
+    }
+    if let Some(want) = container {
+        if want == "self" || want == "this" {
+            out.quiet_early = true;
+            return Ok(out);
+        }
+        if ctx.tables.contains(&want.to_lowercase())
+            && ctx.columns.contains(&name.to_lowercase())
+        {
+            out.quiet_early = true;
+            return Ok(out);
+        }
+        out.scoped = queries::find_definition_by_container(conn, want, name)?;
+        if out.scoped.is_empty() {
+            if scan::is_reserved_word(name) {
+                return Ok(out);
+            }
+            // Both stay queried: shaping needs container defs even when
+            // the bare member exists elsewhere (`db.get` with top-level
+            // `get` still reads as a receiver sample).
+            out.bare = queries::find_definition(conn, name)?;
+            out.container_defs = queries::find_definition(conn, want)?;
+        }
+        return Ok(out);
+    }
+    out.bare = queries::find_definition(conn, name)?;
+    if out.bare.is_empty() {
+        let lower = name.to_lowercase();
+        out.quiet_late = scan::is_reserved_word(name)
+            || ctx.tables.contains(&lower)
+            || ctx.columns.contains(&lower)
+            || ctx.meta_keys.contains(&lower)
+            || ctx.external.contains(&lower)
+            || queries::symbol_names_matching_nocase(conn, name)?.len() == 1
+            || is_keel_env(name)
+            || ctx.root_name.as_deref() == Some(lower.as_str())
+            || ctx.mcp_tools.contains(name)
+            || ctx.cli_verbs.contains(name);
+    }
+    Ok(out)
+}
+
+/// Path resolution shared by drift findings and ADR links: a display
+/// path on hit (repo-relative when under the root), a quiet skip
+/// (MCP/runtime/escape claims, or ambiguous multi-hits), else a miss.
+pub(crate) enum PathResolution {
+    Hit(String),
+    Skip { ambiguous: bool },
+    Miss,
+}
+
+/// Resolve a path claim through the full ladder: `:LINE` suffixes
+/// strip, `path::symbol` hybrids resolve both halves, then doc dir,
+/// root escape, MCP/runtime names, and unique basename/suffix.
+pub(crate) fn resolve_path(
+    conn: &Connection,
+    root: &Path,
+    doc: &Path,
+    raw: &str,
+    repo: &RepoFiles,
+) -> Result<PathResolution> {
+    let normalized = raw.replace('\\', "/");
+    let target = strip_line_suffix(&normalized);
+    if let Some((head, tail)) = target.split_once("::") {
+        if !head.is_empty() && head.contains('/') {
+            if let scan::ClaimKind::Symbol { name: tail_name, .. } = scan::classify(tail) {
+                if !queries::find_definition(conn, &tail_name)?.is_empty() {
+                    if let Some(hit) = hit_display(root, doc, repo, head) {
+                        return Ok(PathResolution::Hit(hit));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(hit) = hit_display(root, doc, repo, target) {
+        return Ok(PathResolution::Hit(hit));
+    }
+    if let Some(parent) = doc.parent() {
+        if escapes_root(parent, target, root) {
+            return Ok(PathResolution::Skip { ambiguous: false });
+        }
+    }
+    let trimmed = target.trim_end_matches('/');
+    if scan::MCP_PATHS.contains(&trimmed) {
+        return Ok(PathResolution::Skip { ambiguous: false });
+    }
+    if let Some(base) = trimmed.rsplit('/').next() {
+        if scan::RUNTIME_FILES.contains(&base) {
+            return Ok(PathResolution::Skip { ambiguous: false });
+        }
+    }
+    let hits = if trimmed.contains('/') {
+        repo.suffix_hits(trimmed)
+    } else {
+        repo.basename_hits(trimmed)
+    };
+    if hits.is_empty() {
+        return Ok(PathResolution::Miss);
+    }
+    if hits.len() > 1 {
+        return Ok(PathResolution::Skip { ambiguous: true });
+    }
+    Ok(PathResolution::Hit(hits[0].to_string()))
+}
+
+/// Display path for a claim that hits the filesystem or the repo list:
+/// repo-relative when under the root, absolute otherwise. Doc dir and
+/// root existence win over basename/suffix matches.
+fn hit_display(root: &Path, doc: &Path, repo: &RepoFiles, target: &str) -> Option<String> {
+    if let Some(parent) = doc.parent() {
+        let joined = parent.join(target);
+        if joined.exists() {
+            return Some(display_path(root, &joined));
+        }
+    }
+    if root.join(target).exists() {
+        return Some(crate::graph::target::clean_path(target));
+    }
+    let trimmed = target.trim_end_matches('/');
+    let hits = if trimmed.contains('/') {
+        repo.suffix_hits(trimmed)
+    } else {
+        repo.basename_hits(trimmed)
+    };
+    if hits.len() == 1 {
+        return Some(hits[0].to_string());
+    }
+    None
+}
+
+/// Render an absolute path repo-relative when it sits under `root`.
+fn display_path(root: &Path, abs: &Path) -> String {
+    match abs.strip_prefix(root) {
+        Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+        Err(_) => abs.to_string_lossy().replace('\\', "/"),
+    }
+}
+
 /// Per-document check state: the shared sweep inputs plus the doc's
 /// identity and the sweep's ambiguity counter.
 struct DocCheck<'a> {
@@ -584,43 +755,31 @@ impl DocCheck<'_> {
         name: &str,
         container: Option<&str>,
     ) -> Result<Option<DriftFinding>> {
-        // Single-char spans are metavariables (`C`, `f` from `b::f()`).
-        if name.chars().count() < 2 {
+        let lookup = lookup_symbol(self.conn, name, container, self.ctx)?;
+        if lookup.quiet_early {
             return Ok(None);
         }
         // Member-qualified form first: `Widget.show` claims `show` on `Widget`.
         if let Some(want) = container {
-            // Receiver-relative claims (`self.save`) need their enclosing
-            // type to attribute; without it they are illustration-shaped.
-            if want == "self" || want == "this" {
-                return Ok(None);
-            }
-            // Schema pair (`symbols.container`): table + column resolve it.
-            if self.ctx.tables.contains(&want.to_lowercase())
-                && self.ctx.columns.contains(&name.to_lowercase())
-            {
-                return Ok(None);
-            }
-            let scoped = queries::find_definition_by_container(self.conn, want, name)?;
-            if !scoped.is_empty() {
-                return check_kind(self.rel, span, &scoped);
+            if !lookup.scoped.is_empty() {
+                return check_kind(self.rel, span, &lookup.scoped);
             }
             // A referenced-but-undefined container is a value, not a type
             // (`db.get()`), so the claim is a receiver sample without an
             // attributable type — quiet, like `self.save`. Checked before
             // the member lookup: the member existing elsewhere doesn't make
             // the receiver attributable.
-            let container_defs = queries::find_definition(self.conn, want)?;
-            if container_defs.is_empty() && queries::name_is_referenced(self.conn, want)? {
+            if lookup.container_defs.is_empty()
+                && queries::name_is_referenced(self.conn, want)?
+            {
                 return Ok(None);
             }
             if scan::is_reserved_word(name) {
                 return Ok(None);
             }
-            let bare = queries::find_definition(self.conn, name)?;
-            if !bare.is_empty() {
+            if !lookup.bare.is_empty() {
                 let mut holders: Vec<String> =
-                    bare.iter().map(|s| s.container.clone()).collect();
+                    lookup.bare.iter().map(|s| s.container.clone()).collect();
                 holders.sort();
                 holders.dedup();
                 holders.retain(|c| !c.is_empty());
@@ -643,7 +802,7 @@ impl DocCheck<'_> {
             // unknown everywhere is illustration-shaped (`Type.member`) —
             // unsupported without noise suggestions. A known container keeps
             // rename suggestions (`Widget.bogus` → `show`).
-            if container_defs.is_empty() {
+            if lookup.container_defs.is_empty() {
                 return Ok(Some(DriftFinding {
                     doc: self.rel.to_string(),
                     line: span.line,
@@ -655,33 +814,10 @@ impl DocCheck<'_> {
             }
             return missing_symbol(self.conn, self.rel, span);
         }
-        let defs = queries::find_definition(self.conn, name)?;
-        if !defs.is_empty() {
-            return check_kind(self.rel, span, &defs);
+        if !lookup.bare.is_empty() {
+            return check_kind(self.rel, span, &lookup.bare);
         }
-        let lower = name.to_lowercase();
-        if scan::is_reserved_word(name) {
-            return Ok(None);
-        }
-        if self.ctx.tables.contains(&lower)
-            || self.ctx.columns.contains(&lower)
-            || self.ctx.meta_keys.contains(&lower)
-        {
-            return Ok(None);
-        }
-        if self.ctx.external.contains(&lower) {
-            return Ok(None);
-        }
-        if queries::symbol_names_matching_nocase(self.conn, name)?.len() == 1 {
-            return Ok(None);
-        }
-        if is_keel_env(name) {
-            return Ok(None);
-        }
-        if self.ctx.root_name.as_deref() == Some(lower.as_str()) {
-            return Ok(None);
-        }
-        if self.ctx.mcp_tools.contains(name) || self.ctx.cli_verbs.contains(name) {
+        if lookup.quiet_late {
             return Ok(None);
         }
         missing_symbol(self.conn, self.rel, span)
@@ -703,59 +839,23 @@ impl DocCheck<'_> {
         span: &scan::ClaimSpan,
         raw: &str,
     ) -> Result<Option<DriftFinding>> {
-        let normalized = raw.replace('\\', "/");
-        let target = strip_line_suffix(&normalized);
-        if let Some((head, tail)) = target.split_once("::") {
-            if !head.is_empty() && head.contains('/') {
-                if let scan::ClaimKind::Symbol { name: tail_name, .. } = scan::classify(tail) {
-                    let head_hit = self.doc.parent().is_some_and(|p| p.join(head).exists())
-                        || self.root.join(head).exists()
-                        || self.ctx.repo.suffix_hits(head).len() == 1;
-                    if head_hit && !queries::find_definition(self.conn, &tail_name)?.is_empty() {
-                        return Ok(None);
-                    }
+        match resolve_path(self.conn, self.root, self.doc, raw, &self.ctx.repo)? {
+            PathResolution::Hit(_) => Ok(None),
+            PathResolution::Skip { ambiguous } => {
+                if ambiguous {
+                    *self.ambiguous_paths += 1;
                 }
+                Ok(None)
             }
+            PathResolution::Miss => Ok(Some(DriftFinding {
+                doc: self.rel.to_string(),
+                line: span.line,
+                claim: raw.to_string(),
+                verdict: DriftVerdict::Unsupported,
+                evidence: format!("linked path `{raw}` not found in the repo"),
+                suggestion: None,
+            })),
         }
-        if let Some(parent) = self.doc.parent() {
-            if parent.join(target).exists() {
-                return Ok(None);
-            }
-            if escapes_root(parent, target, self.root) {
-                return Ok(None);
-            }
-        }
-        if self.root.join(target).exists() {
-            return Ok(None);
-        }
-        let trimmed = target.trim_end_matches('/');
-        if scan::MCP_PATHS.contains(&trimmed) {
-            return Ok(None);
-        }
-        if let Some(base) = trimmed.rsplit('/').next() {
-            if scan::RUNTIME_FILES.contains(&base) {
-                return Ok(None);
-            }
-        }
-        let hits = if trimmed.contains('/') {
-            self.ctx.repo.suffix_hits(trimmed)
-        } else {
-            self.ctx.repo.basename_hits(trimmed)
-        };
-        if !hits.is_empty() {
-            if hits.len() > 1 {
-                *self.ambiguous_paths += 1;
-            }
-            return Ok(None);
-        }
-        Ok(Some(DriftFinding {
-            doc: self.rel.to_string(),
-            line: span.line,
-            claim: raw.to_string(),
-            verdict: DriftVerdict::Unsupported,
-            evidence: format!("linked path `{raw}` not found in the repo"),
-            suggestion: None,
-        }))
     }
 }
 

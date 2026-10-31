@@ -25,6 +25,6 @@ pub use model::{
     KnowledgeEvidence, KnowledgeOrigin, KnowledgeRecord, KnowledgeStatus, KnowledgeType,
 };
 pub use store::{
-    get_record, list_records, put_record, records_linked, search_records, DEFAULT_SEARCH_LIMIT,
-    MAX_SEARCH_LIMIT,
+    get_record, list_records, put_record, records_by_agent, records_linked, search_records,
+    search_records_filtered, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT,
 };

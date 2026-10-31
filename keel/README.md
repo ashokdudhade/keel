@@ -154,10 +154,10 @@ Stable tools:
 | `search` | `{ "pattern", "limit"?, "preview"? }` | Substring symbol-name search (default 50, max 200) |
 | `unused` | `{ "path"?, "limit"?, "preview"?, "transitive"? }` | Candidate dead code (`low` when non-empty; default scope: project) |
 | `index` | `{ "path" }` | Index a repository; returns `IndexStats` JSON |
-| `knowledge_search` | `{ "query", "limit"? }` | Substring search over knowledge records (default 20, max 200); hits carry `record` + live `fresh` verdict |
+| `knowledge_search` | `{ "query", "agent"?, "origin"?, "limit"? }` | Substring search over knowledge records (default 20, max 200), filterable by writer `agent` and `origin`; hits carry `record` + live `fresh` verdict |
 | `knowledge_get` | `{ "id" }` | One record by exact id + `fresh` verdict (`null` record + notes on miss) |
 | `knowledge_status` | `{ "id"? }` | Stored status + live verdict per record (all, or one by id) |
-| `knowledge_add` | `{ "record" }` | Create/update a record (writes; validates; human records reject non-human overwrites) |
+| `knowledge_add` | `{ "record" }` | Create/update a record (writes; validates; `record.agent` stamps the writing agent; human records reject non-human overwrites) |
 | `knowledge_validate` | `{ "id" }` | Re-pin + promote to `supported` when anchors resolve, else `stale` (writes) |
 | `get_task_context` | `{ "task", "token_budget"?, "include_tests"?, "include_knowledge"? }` | Ranked cited context package (default budget 8000) |
 | `explain` | `{ "name"?, "file"?, "module"? }` | Evidence package for one symbol/file/module (exactly one target; ambiguous names return candidates) |

@@ -517,6 +517,14 @@ pub(crate) fn tools_list_result() -> Value {
                         "limit": {
                             "type": "integer",
                             "description": "Maximum matches to return (1-200, default 20). Capped responses carry a note with the true total."
+                        },
+                        "agent": {
+                            "type": "string",
+                            "description": "Only records written by this agent identity (exact match; cross-agent handoff)"
+                        },
+                        "origin": {
+                            "type": "string",
+                            "description": "Only records with this provenance (human|agent_generated|inferred|deterministic, case-insensitive)"
                         }
                     },
                     "required": ["query"]
@@ -555,7 +563,7 @@ pub(crate) fn tools_list_result() -> Value {
             ),
             tool_def(
                 "knowledge_add",
-                "Create or update a knowledge record with source evidence (WRITES the project index). Provide the full record object: `id`, `type` (architecture_fact|decision|explanation|pattern|constraint), `title`, `content` (the claim), `origin` (human|agent_generated|inferred|deterministic), and `evidence` ([{source_path, symbol?, source_hash?, commit_hash?}] with indexed-relative file paths). New records should start `unverified` and earn `supported` via `knowledge_validate`; human-authored records reject non-human overwrites. Timestamps are stamped by the store.",
+                "Create or update a knowledge record with source evidence (WRITES the project index). Provide the full record object: `id`, `type` (architecture_fact|decision|explanation|pattern|constraint), `title`, `content` (the claim), `origin` (human|agent_generated|inferred|deterministic), optional `agent` (writer identity for cross-agent handoff), and `evidence` ([{source_path, symbol?, source_hash?, commit_hash?}] with indexed-relative file paths). New records should start `unverified` and earn `supported` via `knowledge_validate`; human-authored records reject non-human overwrites. Timestamps are stamped by the store.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -826,6 +834,15 @@ fn optional_limit_arg(arguments: &Value) -> Option<usize> {
         .and_then(|n| usize::try_from(n).ok())
 }
 
+/// Optional trimmed string argument; blanks read as absent.
+fn optional_string_arg(arguments: &Value, key: &str) -> Option<String> {
+    arguments
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+}
+
 fn call_tool(
     conn: &mut Connection,
     params: &Value,
@@ -1058,7 +1075,15 @@ fn call_tool(
             let effective = optional_limit_arg(&arguments)
                 .unwrap_or(knowledge::DEFAULT_SEARCH_LIMIT)
                 .clamp(1, knowledge::MAX_SEARCH_LIMIT);
-            let hits = knowledge::search_records(conn, &query, Some(effective))?;
+            let agent = optional_string_arg(&arguments, "agent");
+            let origin = optional_string_arg(&arguments, "origin");
+            let hits = knowledge::search_records_filtered(
+                conn,
+                &query,
+                Some(effective),
+                agent.as_deref(),
+                origin.as_deref(),
+            )?;
             let freshness: std::collections::HashMap<String, (bool, Vec<String>)> =
                 knowledge::check_freshness(conn)?
                     .into_iter()
@@ -1078,8 +1103,13 @@ fn call_tool(
             let total = if hits.len() < effective {
                 hits.len()
             } else {
-                let full =
-                    knowledge::search_records(conn, &query, Some(knowledge::MAX_SEARCH_LIMIT))?;
+                let full = knowledge::search_records_filtered(
+                    conn,
+                    &query,
+                    Some(knowledge::MAX_SEARCH_LIMIT),
+                    agent.as_deref(),
+                    origin.as_deref(),
+                )?;
                 if full.len() < knowledge::MAX_SEARCH_LIMIT {
                     notes.push(format!(
                         "Showing {effective} of {} matches; narrow the query or raise `limit`.",
@@ -2388,6 +2418,70 @@ mod tests {
             capped["notes"][0].as_str().unwrap_or("").contains("Showing 1 of 3"),
             "got: {capped}"
         );
+    }
+
+    #[test]
+    fn knowledge_search_filters_by_agent_and_origin() {
+        let (dir, mut conn) = knowledge_db();
+        let root = dir.path();
+        for (id, origin, agent) in [
+            ("jwt.a", "agent_generated", Some("codex")),
+            ("jwt.b", "agent_generated", Some("claude-code")),
+            ("jwt.c", "human", None),
+        ] {
+            let mut record = sample_record_json(id, origin);
+            if let Some(agent) = agent {
+                record["agent"] = json!(agent);
+            }
+            call_tool_payload(
+                &mut conn,
+                root,
+                "knowledge_add",
+                json!({ "record": record }),
+                1,
+            );
+        }
+
+        let by_agent = call_tool_payload(
+            &mut conn,
+            root,
+            "knowledge_search",
+            json!({ "query": "jwt", "agent": "codex" }),
+            2,
+        );
+        assert_eq!(by_agent["total"], 1);
+        assert_eq!(by_agent["results"][0]["record"]["id"], "jwt.a");
+        assert_eq!(by_agent["results"][0]["record"]["agent"], "codex");
+
+        let by_origin = call_tool_payload(
+            &mut conn,
+            root,
+            "knowledge_search",
+            json!({ "query": "jwt", "origin": "HUMAN" }),
+            3,
+        );
+        assert_eq!(by_origin["total"], 1);
+        assert_eq!(by_origin["results"][0]["record"]["id"], "jwt.c");
+        // Absent agent serializes as nothing, not null.
+        assert!(by_origin["results"][0]["record"].get("agent").is_none());
+
+        let both = call_tool_payload(
+            &mut conn,
+            root,
+            "knowledge_search",
+            json!({ "query": "jwt", "agent": "codex", "origin": "agent_generated" }),
+            4,
+        );
+        assert_eq!(both["total"], 1);
+        let none = call_tool_payload(
+            &mut conn,
+            root,
+            "knowledge_search",
+            json!({ "query": "jwt", "agent": "nobody" }),
+            5,
+        );
+        assert_eq!(none["total"], 0);
+        assert!(none["results"].as_array().unwrap().is_empty());
     }
 
     #[test]

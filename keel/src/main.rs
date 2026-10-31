@@ -3,8 +3,18 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use keel::api::{DependencyDto, ImplDto, ReferenceDto, SymbolDto};
-use keel::cli::{commands, Cli, Commands, KnowledgeCommands, WikiCommands};
+use keel::cli::{commands, AdrCommands, Cli, Commands, KnowledgeCommands, WikiCommands};
 use std::path::Path;
+
+/// Honest miss for `adr show`: names what was tried plus substring matches.
+fn adr_miss(id: &str) -> String {
+    let suggestions = keel::adr::suggest_adr_ids(&commands::query_root(), id);
+    if suggestions.is_empty() {
+        format!("no ADR matches {id:?}; run `keel adr list` to see ids")
+    } else {
+        format!("no ADR matches {id:?}; did you mean: {}?", suggestions.join(", "))
+    }
+}
 
 /// Record one CLI query for the Insights portal (best-effort, local only).
 fn log_cli_query<T>(
@@ -529,15 +539,15 @@ fn main() -> Result<()> {
             }
         }
         Commands::Knowledge { action } => match action {
-            KnowledgeCommands::Status => {
+            KnowledgeCommands::Status { agent } => {
                 if json {
                     println!(
                         "{}",
-                        commands::knowledge_status_json(auto_index)
+                        commands::knowledge_status_json(agent.as_deref(), auto_index)
                             .context("checking knowledge freshness")?
                     );
                 } else {
-                    commands::run_knowledge_status(auto_index)
+                    commands::run_knowledge_status(agent.as_deref(), auto_index)
                         .context("checking knowledge freshness")?;
                 }
             }
@@ -551,6 +561,32 @@ fn main() -> Result<()> {
                 } else {
                     commands::run_knowledge_validate(&id, auto_index)
                         .with_context(|| format!("validating knowledge {id}"))?;
+                }
+            }
+        },
+        Commands::Adr { action } => match action {
+            AdrCommands::List => {
+                if json {
+                    println!(
+                        "{}",
+                        commands::adr_list_json(auto_index).context("listing ADRs")?
+                    );
+                } else {
+                    commands::run_adr_list(auto_index).context("listing ADRs")?;
+                }
+            }
+            AdrCommands::Show { id } => {
+                if json {
+                    match commands::adr_show_json(&id, auto_index)
+                        .with_context(|| format!("showing ADR {id}"))?
+                    {
+                        Some(rendered) => println!("{rendered}"),
+                        None => anyhow::bail!("{}", adr_miss(&id)),
+                    }
+                } else if !commands::run_adr_show(&id, auto_index)
+                    .with_context(|| format!("showing ADR {id}"))?
+                {
+                    anyhow::bail!("{}", adr_miss(&id));
                 }
             }
         },

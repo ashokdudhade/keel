@@ -40,12 +40,13 @@ pub fn put_record(conn: &mut Connection, record: &KnowledgeRecord) -> Result<()>
             });
         }
         tx.execute(
-            "UPDATE knowledge SET type = ?1, title = ?2, content = ?3, origin = ?4, status = ?5, updated_at = ?6 WHERE id = ?7",
+            "UPDATE knowledge SET type = ?1, title = ?2, content = ?3, origin = ?4, agent = ?5, status = ?6, updated_at = ?7 WHERE id = ?8",
             params![
                 record.record_type.as_db(),
                 record.title,
                 record.content,
                 record.origin.as_db(),
+                record.agent,
                 record.status.as_db(),
                 now,
                 id,
@@ -53,13 +54,14 @@ pub fn put_record(conn: &mut Connection, record: &KnowledgeRecord) -> Result<()>
         )?;
     } else {
         tx.execute(
-            "INSERT INTO knowledge (id, type, title, content, origin, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO knowledge (id, type, title, content, origin, agent, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 id,
                 record.record_type.as_db(),
                 record.title,
                 record.content,
                 record.origin.as_db(),
+                record.agent,
                 record.status.as_db(),
                 now,
                 now,
@@ -93,21 +95,22 @@ pub fn put_record(conn: &mut Connection, record: &KnowledgeRecord) -> Result<()>
 pub fn get_record(conn: &Connection, id: &str) -> Result<Option<KnowledgeRecord>> {
     let record: Option<KnowledgeRecord> = conn
         .query_row(
-            "SELECT id, type, title, content, origin, status, created_at, updated_at FROM knowledge WHERE id = ?1",
+            "SELECT id, type, title, content, origin, agent, status, created_at, updated_at FROM knowledge WHERE id = ?1",
             params![id],
             |row| {
                 let type_: String = row.get(1)?;
                 let origin: String = row.get(4)?;
-                let status: String = row.get(5)?;
+                let status: String = row.get(6)?;
                 Ok(KnowledgeRecord {
                     id: row.get(0)?,
                     record_type: KnowledgeType::from_db(&type_),
                     title: row.get(2)?,
                     content: row.get(3)?,
                     origin: KnowledgeOrigin::from_db(&origin),
+                    agent: row.get(5)?,
                     status: KnowledgeStatus::from_db(&status),
-                    created_at: row.get(6)?,
-                    updated_at: row.get(7)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
                     evidence: Vec::new(),
                 })
             },
@@ -156,14 +159,54 @@ pub fn search_records(
     query: &str,
     limit: Option<usize>,
 ) -> Result<Vec<KnowledgeRecord>> {
+    search_records_filtered(conn, query, limit, None, None)
+}
+
+/// Records written by one agent identity (exact match), ordered by id.
+/// Powers cross-agent handoff ("what did codex learn here?").
+pub fn records_by_agent(conn: &Connection, agent: &str) -> Result<Vec<KnowledgeRecord>> {
+    let mut stmt = conn.prepare("SELECT id FROM knowledge WHERE agent = ?1 ORDER BY id")?;
+    let ids: Vec<String> = stmt
+        .query_map(params![agent], |row| row.get(0))?
+        .collect::<std::result::Result<_, _>>()?;
+    let mut out = Vec::with_capacity(ids.len());
+    for id in &ids {
+        if let Some(record) = get_record(conn, id)? {
+            out.push(record);
+        }
+    }
+    Ok(out)
+}
+
+/// [`search_records`] plus exact `agent` and case-insensitive `origin`
+/// filters (each `None` disables that filter). Ranking and limits match
+/// [`search_records`]; filters apply before truncation so caps stay honest.
+pub fn search_records_filtered(
+    conn: &Connection,
+    query: &str,
+    limit: Option<usize>,
+    agent: Option<&str>,
+    origin: Option<&str>,
+) -> Result<Vec<KnowledgeRecord>> {
     let limit = limit.unwrap_or(DEFAULT_SEARCH_LIMIT).clamp(1, MAX_SEARCH_LIMIT);
     let q = query.trim().to_lowercase();
     if q.is_empty() {
         return Ok(Vec::new());
     }
+    let origin = origin.map(|o| o.trim().to_lowercase());
     let mut ranked: Vec<(u8, KnowledgeRecord)> = Vec::new();
     // `list_records` orders by id, so the rank sort below is stable on ties.
     for record in list_records(conn)? {
+        if let Some(want) = agent {
+            if record.agent.as_deref() != Some(want) {
+                continue;
+            }
+        }
+        if let Some(want) = &origin {
+            if record.origin.as_db().to_lowercase() != *want {
+                continue;
+            }
+        }
         let id = record.id.to_lowercase();
         let title = record.title.to_lowercase();
         let content = record.content.to_lowercase();
@@ -259,6 +302,7 @@ mod tests {
             title: "JWT validation".to_string(),
             content: "JWT validation occurs in AuthMiddleware".to_string(),
             origin,
+            agent: None,
             status: KnowledgeStatus::Unverified,
             created_at: String::new(),
             updated_at: String::new(),

@@ -77,6 +77,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   config, project/MCP/CLI names, referenced-but-undefined names) before
   becoming findings, and ambiguous paths skip with a counted note.
   `Index::drift_check` is the library entry point.
+- ADR intelligence (roadmap §8): `keel adr list|show <id>` (text/`--json`)
+  connects decision records to implementation and history. Each ADR gets
+  implementation links (cited symbols/files resolved through the same
+  drift extractors, so the tools never disagree), linked knowledge
+  records whose evidence touches the same code, and the linked files'
+  recent git history (read-only `git log`; honest notes outside git
+  checkouts or without a `git` binary). Verdicts are about the links,
+  orthogonal to the declared `Status:` line: `supported` (all live),
+  `stale` (some dead), `unlinked` (nothing checkable cited).
+  `Index::adr_list/adr_show` are the library entry points.
+- Cross-agent memory (roadmap §8): knowledge records carry an optional
+  writer `agent` identity (new nullable column, schema v8, existing rows
+  keep NULL; provenance protection still keys on `origin` alone).
+  `Index::knowledge_by_agent`, MCP `knowledge_search` `agent`/`origin`
+  filters, `knowledge_add` `agent` field, and
+  `keel knowledge status --agent` let agents find what each other
+  learned; `knowledge_validate` stays the reuse handshake (re-pin and
+  promote on confirm).
 - `dependencies`/`dependents` follow qualified paths: a `Path` qualifier
   that resolves to an indexed module (`crate::facade` in
   `crate::facade::f()`) is import-strength edge evidence, so consumers
